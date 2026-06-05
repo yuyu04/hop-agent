@@ -48,6 +48,9 @@ export interface AgentSidebarDeps {
 
 const PROVIDERS = ['mock', 'openai', 'anthropic', 'gemini', 'ollama'] as const;
 
+/** API 키가 필요한 provider(mock/ollama는 키 없이 동작). 스펙 6장. */
+const KEY_PROVIDERS = new Set<string>(['openai', 'anthropic', 'gemini']);
+
 export class AgentSidebar {
   private readonly panel: HTMLElement;
   private readonly promptInput: HTMLTextAreaElement;
@@ -58,8 +61,14 @@ export class AgentSidebar {
   private readonly statusArea: HTMLElement;
   private readonly acceptBtn: HTMLButtonElement;
   private readonly rejectBtn: HTMLButtonElement;
+  private readonly keyRow: HTMLElement;
+  private readonly keyInput: HTMLInputElement;
+  private readonly keyStatus: HTMLElement;
+  private readonly keyClearBtn: HTMLButtonElement;
 
   private readonly session: AiSessionMachine;
+  /** provider_id → 키 저장 여부(보안 저장소 조회 캐시). */
+  private readonly keyState = new Map<string, boolean>();
   private unsubscribe: AiEventUnsubscribe | null = null;
   private requestId: string | null = null;
   private context: DocumentContext | null = null;
@@ -77,6 +86,10 @@ export class AgentSidebar {
     this.statusArea = built.statusArea;
     this.acceptBtn = built.acceptBtn;
     this.rejectBtn = built.rejectBtn;
+    this.keyRow = built.keyRow;
+    this.keyInput = built.keyInput;
+    this.keyStatus = built.keyStatus;
+    this.keyClearBtn = built.keyClearBtn;
 
     built.sendBtn.addEventListener('click', () => void this.send());
     built.cancelBtn.addEventListener('click', () => void this.cancel());
@@ -84,11 +97,16 @@ export class AgentSidebar {
     this.rejectBtn.addEventListener('click', () => this.reject());
     built.closeBtn.addEventListener('click', () => this.toggle(false));
     built.toggleBtn.addEventListener('click', () => this.toggle());
+    this.providerSelect.addEventListener('change', () => void this.refreshKeyState());
+    built.keySaveBtn.addEventListener('click', () => void this.saveKey());
+    this.keyClearBtn.addEventListener('click', () => void this.clearKey());
 
     document.body.appendChild(built.toggleBtn);
     document.body.appendChild(this.panel);
     this.setPreviewEnabled(false);
+    this.keyRow.classList.add('hop-ai-hidden');
     void this.subscribe();
+    void this.refreshKeyState();
   }
 
   private async subscribe(): Promise<void> {
@@ -122,10 +140,15 @@ export class AgentSidebar {
       return;
     }
 
+    const provider = this.providerSelect.value;
+    if (KEY_PROVIDERS.has(provider) && this.keyState.get(provider) === false) {
+      this.setStatus('API 키를 먼저 저장하세요.', 'warn');
+      return;
+    }
+
     this.session.startRequest();
     this.streamArea.textContent = '';
     this.setStatus('요청 중…');
-    const provider = this.providerSelect.value;
     const model = this.modelInput.value.trim() || defaultModel(provider);
 
     try {
@@ -148,6 +171,57 @@ export class AgentSidebar {
     this.session.cancel();
     this.requestId = null;
     this.setStatus('취소했습니다.');
+  }
+
+  /** 선택된 provider의 키 필요 여부/저장 상태로 키 입력 영역을 갱신한다(스펙 6장). */
+  private async refreshKeyState(): Promise<void> {
+    const provider = this.providerSelect.value;
+    const needsKey = KEY_PROVIDERS.has(provider);
+    this.keyRow.classList.toggle('hop-ai-hidden', !needsKey);
+    if (!needsKey) return;
+
+    let present = false;
+    try {
+      present = await this.deps.bridge.aiHasApiKey(provider);
+    } catch {
+      present = false;
+    }
+    // 조회 중 다른 provider로 바뀌었으면 늦게 도착한 응답은 버린다.
+    if (this.providerSelect.value !== provider) return;
+    this.keyState.set(provider, present);
+    this.keyStatus.textContent = present ? '키 저장됨' : '키 없음';
+    this.keyStatus.dataset.tone = present ? 'ok' : 'warn';
+    this.keyClearBtn.disabled = !present;
+  }
+
+  private async saveKey(): Promise<void> {
+    const provider = this.providerSelect.value;
+    if (!KEY_PROVIDERS.has(provider)) return;
+    const key = this.keyInput.value.trim();
+    if (!key) {
+      this.setStatus('API 키를 입력하세요.', 'warn');
+      return;
+    }
+    try {
+      await this.deps.bridge.aiSetApiKey(provider, key);
+      this.keyInput.value = '';
+      await this.refreshKeyState();
+      this.setStatus(`${provider} API 키를 저장했습니다.`, 'ok');
+    } catch (error) {
+      this.setStatus(`키 저장 실패: ${String(error)}`, 'error');
+    }
+  }
+
+  private async clearKey(): Promise<void> {
+    const provider = this.providerSelect.value;
+    if (!KEY_PROVIDERS.has(provider)) return;
+    try {
+      await this.deps.bridge.aiDeleteApiKey(provider);
+      await this.refreshKeyState();
+      this.setStatus(`${provider} API 키를 삭제했습니다.`);
+    } catch (error) {
+      this.setStatus(`키 삭제 실패: ${String(error)}`, 'error');
+    }
   }
 
   private onDelta(delta: AiStreamDelta): void {
@@ -293,6 +367,11 @@ interface PanelParts {
   statusArea: HTMLElement;
   acceptBtn: HTMLButtonElement;
   rejectBtn: HTMLButtonElement;
+  keyRow: HTMLElement;
+  keyInput: HTMLInputElement;
+  keySaveBtn: HTMLButtonElement;
+  keyClearBtn: HTMLButtonElement;
+  keyStatus: HTMLElement;
 }
 
 function buildPanel(): PanelParts {
@@ -325,6 +404,20 @@ function buildPanel(): PanelParts {
   const row = el('div', 'hop-ai-row');
   row.append(providerSelect, modelInput);
 
+  // API 키 입력 영역(키가 필요한 provider에서만 노출). 평문 노출을 줄이려 password 입력.
+  const keyInput = document.createElement('input');
+  keyInput.className = 'hop-ai-key';
+  keyInput.type = 'password';
+  keyInput.placeholder = 'API 키';
+  keyInput.autocomplete = 'off';
+  const keySaveBtn = el('button', 'hop-ai-key-save') as HTMLButtonElement;
+  keySaveBtn.textContent = '키 저장';
+  const keyClearBtn = el('button', 'hop-ai-key-clear') as HTMLButtonElement;
+  keyClearBtn.textContent = '삭제';
+  const keyStatus = el('span', 'hop-ai-key-status');
+  const keyRow = el('div', 'hop-ai-key-row');
+  keyRow.append(keyInput, keySaveBtn, keyClearBtn, keyStatus);
+
   const promptInput = document.createElement('textarea');
   promptInput.className = 'hop-ai-prompt';
   promptInput.rows = 3;
@@ -349,7 +442,7 @@ function buildPanel(): PanelParts {
 
   const statusArea = el('div', 'hop-ai-status');
 
-  panel.append(header, row, promptInput, actions, statusArea, streamArea, diffArea, decision);
+  panel.append(header, row, keyRow, promptInput, actions, statusArea, streamArea, diffArea, decision);
 
   return {
     panel,
@@ -365,6 +458,11 @@ function buildPanel(): PanelParts {
     statusArea,
     acceptBtn,
     rejectBtn,
+    keyRow,
+    keyInput,
+    keySaveBtn,
+    keyClearBtn,
+    keyStatus,
   };
 }
 

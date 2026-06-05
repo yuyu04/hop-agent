@@ -69,6 +69,36 @@
   min-width: 0;
 }
 
+.hop-ai-key-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.hop-ai-key {
+  flex: 1 1 auto;
+  min-width: 0;
+  font: inherit;
+}
+.hop-ai-key-row button {
+  padding: 4px 8px;
+  cursor: pointer;
+}
+.hop-ai-key-row button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.hop-ai-key-status {
+  font-size: 11px;
+  color: #946200;
+}
+.hop-ai-key-status[data-tone='ok'] {
+  color: #1a7f37;
+}
+
+.hop-ai-hidden {
+  display: none;
+}
+
 .hop-ai-prompt {
   width: 100%;
   box-sizing: border-box;

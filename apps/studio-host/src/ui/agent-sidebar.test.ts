@@ -112,7 +112,11 @@ class FakeElement {
   }
 
   click(): void {
-    this.listeners.get('click')?.forEach((fn) => fn({}));
+    this.fire('click');
+  }
+
+  fire(type: string): void {
+    this.listeners.get(type)?.forEach((fn) => fn({}));
   }
 
   querySelector(selector: string): FakeElement | null {
@@ -333,5 +337,51 @@ describe('AgentSidebar', () => {
 
     expect(find('hop-ai-status').textContent).toContain('편집 변환 실패');
     expect(find('hop-ai-accept').disabled).toBe(true);
+  });
+
+  async function selectProvider(id: string): Promise<void> {
+    const select = find('hop-ai-provider');
+    select.value = id;
+    select.fire('change');
+    await flush();
+  }
+
+  it('hides the key row for keyless providers and shows it for key providers', async () => {
+    bridge.aiHasApiKey.mockResolvedValue(true);
+    build();
+    await flush();
+    // 기본 provider(mock)는 키가 필요 없다.
+    expect(find('hop-ai-key-row').classList.contains('hop-ai-hidden')).toBe(true);
+
+    await selectProvider('anthropic');
+    expect(find('hop-ai-key-row').classList.contains('hop-ai-hidden')).toBe(false);
+    expect(bridge.aiHasApiKey).toHaveBeenCalledWith('anthropic');
+    expect(find('hop-ai-key-status').textContent).toBe('키 저장됨');
+  });
+
+  it('saves an api key through the bridge and clears the input', async () => {
+    build();
+    await flush();
+    await selectProvider('openai');
+
+    find('hop-ai-key').value = 'sk-secret';
+    find('hop-ai-key-save').click();
+    await flush();
+
+    expect(bridge.aiSetApiKey).toHaveBeenCalledWith('openai', 'sk-secret');
+    expect(find('hop-ai-key').value).toBe('');
+  });
+
+  it('blocks sending when the selected provider has no stored key', async () => {
+    build();
+    await flush();
+    await selectProvider('gemini'); // aiHasApiKey 기본값 false → 키 없음
+    find('hop-ai-prompt').value = '요약해줘';
+
+    find('hop-ai-send').click();
+    await flush();
+
+    expect(bridge.aiRequestEdit).not.toHaveBeenCalled();
+    expect(find('hop-ai-status').textContent).toBe('API 키를 먼저 저장하세요.');
   });
 });
