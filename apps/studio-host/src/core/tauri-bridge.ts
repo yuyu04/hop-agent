@@ -2,6 +2,7 @@ import { WasmBridge } from '@/core/wasm-bridge';
 import type { DocumentInfo } from '@/core/types';
 import { remove, stat } from '@tauri-apps/plugin-fs';
 import { finiteFileSize, readFileInChunks, writeFileInChunks } from './chunked-fs';
+import type { DocumentContext } from './ai-bridge';
 
 type DocumentFormat = 'hwp' | 'hwpx';
 
@@ -93,12 +94,38 @@ export interface DesktopBridgeApi {
   confirmWindowClose(): Promise<boolean>;
 }
 
-export class TauriBridge extends WasmBridge implements DesktopBridgeApi {
+/** AI Agent 인라인 편집 브리지(스펙 1장). */
+export interface AiBridgeApi {
+  /** 현재 문서를 직렬화한 LLM 컨텍스트를 반환한다(스펙 2장). */
+  aiGetDocumentContext(docId: string, currentSelectionOnly: boolean): Promise<DocumentContext>;
+  /** 편집 요청을 시작하고 request_id를 반환한다. 결과는 `hop-ai-*` 이벤트로 전달된다. */
+  aiRequestEdit(
+    docId: string,
+    userPrompt: string,
+    providerId: string,
+    modelId: string,
+  ): Promise<string>;
+  /** 진행 중인 요청을 취소한다(스펙 7장). */
+  aiCancelRequest(requestId: string): Promise<void>;
+  /** provider API 키를 OS 보안 저장소에 저장한다(스펙 6장). */
+  aiSetApiKey(providerId: string, apiKey: string): Promise<void>;
+  /** provider 키가 저장돼 있는지 확인한다. 키 자체는 반환하지 않는다. */
+  aiHasApiKey(providerId: string): Promise<boolean>;
+  /** 저장된 provider 키를 삭제한다. */
+  aiDeleteApiKey(providerId: string): Promise<void>;
+}
+
+export class TauriBridge extends WasmBridge implements DesktopBridgeApi, AiBridgeApi {
   private docId: string | null = null;
   private sourcePath: string | null = null;
   private sourceFormat: DocumentFormat = 'hwp';
   private revision = 0;
   private dirty = false;
+
+  /** 현재 네이티브 문서 세션 ID. AI 커맨드 호출에 사용한다. */
+  currentDocId(): string | null {
+    return this.docId;
+  }
 
   async openDocumentFromDialog(): Promise<DesktopLoadPayload | null> {
     const { open } = await import('@tauri-apps/plugin-dialog');
@@ -264,6 +291,46 @@ export class TauriBridge extends WasmBridge implements DesktopBridgeApi {
     const canClose = await this.confirmReadyForDocumentReplacement();
     if (canClose) await this.releaseCurrentNativeDocument();
     return canClose;
+  }
+
+  async aiGetDocumentContext(
+    docId: string,
+    currentSelectionOnly: boolean,
+  ): Promise<DocumentContext> {
+    return this.invoke<DocumentContext>('ai_get_document_context', {
+      docId,
+      currentSelectionOnly,
+    });
+  }
+
+  async aiRequestEdit(
+    docId: string,
+    userPrompt: string,
+    providerId: string,
+    modelId: string,
+  ): Promise<string> {
+    return this.invoke<string>('ai_request_edit', {
+      docId,
+      userPrompt,
+      providerId,
+      modelId,
+    });
+  }
+
+  async aiCancelRequest(requestId: string): Promise<void> {
+    await this.invoke<void>('ai_cancel_request', { requestId });
+  }
+
+  async aiSetApiKey(providerId: string, apiKey: string): Promise<void> {
+    await this.invoke<void>('ai_set_api_key', { providerId, apiKey });
+  }
+
+  async aiHasApiKey(providerId: string): Promise<boolean> {
+    return this.invoke<boolean>('ai_has_api_key', { providerId });
+  }
+
+  async aiDeleteApiKey(providerId: string): Promise<void> {
+    await this.invoke<void>('ai_delete_api_key', { providerId });
   }
 
   private async invoke<T>(command: string, args: Record<string, unknown> = {}): Promise<T> {

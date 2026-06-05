@@ -110,6 +110,7 @@ pub struct AppState {
     pub(crate) pending_open_paths: PendingOpenPaths,
     pub quit_requests: Mutex<crate::app_quit::AppQuitState>,
     pub updater: Mutex<crate::updates::UpdateManagerState>,
+    pub ai: crate::ai::AiState,
 }
 
 impl DocumentSessionManager {

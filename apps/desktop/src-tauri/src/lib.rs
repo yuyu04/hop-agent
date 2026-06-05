@@ -1,3 +1,4 @@
+mod ai;
 mod app_quit;
 mod commands;
 mod font_catalog;
@@ -31,6 +32,10 @@ use commands::{
     prepare_staged_hwp_save, print_webview, query_document, read_local_font,
     record_recent_document, render_document_preview, render_page_svg, reveal_in_folder,
     take_pending_open_paths,
+};
+use ai::{
+    ai_cancel_request, ai_delete_api_key, ai_get_document_context, ai_has_api_key, ai_request_edit,
+    ai_set_api_key,
 };
 use state::AppState;
 use updates::{get_update_state, restart_to_apply_update, start_update_install};
@@ -110,6 +115,12 @@ pub fn run() {
             get_update_state,
             start_update_install,
             restart_to_apply_update,
+            ai_get_document_context,
+            ai_request_edit,
+            ai_cancel_request,
+            ai_set_api_key,
+            ai_delete_api_key,
+            ai_has_api_key,
         ])
         .build(tauri::generate_context!())
         .expect("failed to build HOP desktop app");

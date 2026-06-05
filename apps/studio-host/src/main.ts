@@ -11,6 +11,7 @@ import { CanvasView } from '@/view/canvas-view';
 import { InputHandler } from '@upstream/engine/input-handler';
 import { Toolbar } from '@/ui/toolbar';
 import { MenuBar } from '@/ui/menu-bar';
+import { AgentSidebar } from '@/ui/agent-sidebar';
 import { loadWebFonts } from '@/core/font-loader';
 import { isSupportedDocumentPath } from '@/core/document-files';
 import { CommandRegistry } from '@/command/registry';
@@ -60,6 +61,7 @@ let inputHandler: InputHandler | null = null;
 let toolbar: Toolbar | null = null;
 let ruler: Ruler | null = null;
 let homeScreen: HomeScreen | null = null;
+let agentSidebar: AgentSidebar | null = null;
 
 
 // ─── 커맨드 시스템 ─────────────────────────────
@@ -127,6 +129,20 @@ async function initialize(): Promise<void> {
 
     const container = document.getElementById('scroll-container')!;
     canvasView = new CanvasView(container, wasm, eventBus);
+
+    // AI Agent Sidebar — 데스크톱(Tauri) 런타임에서만(네이티브 AI 커맨드 필요).
+    if (tauriRuntime && !agentSidebar) {
+      const scrollContent = container.querySelector<HTMLElement>('#scroll-content');
+      if (scrollContent) {
+        agentSidebar = new AgentSidebar({
+          bridge: wasm as unknown as ConstructorParameters<typeof AgentSidebar>[0]['bridge'],
+          eventBus,
+          getCanvasView: () => canvasView,
+          scrollContent,
+          scrollContainer: container,
+        });
+      }
+    }
     homeScreen = new HomeScreen(container, wasm, {
       openFile: () => {
         dispatcher.dispatch('file:open');

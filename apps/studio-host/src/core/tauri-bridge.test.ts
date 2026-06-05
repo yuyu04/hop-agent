@@ -668,6 +668,72 @@ function applyOpenResult(bridge: TauriBridge, result: Record<string, unknown>) {
     .applyNativeOpenResult(result);
 }
 
+describe('TauriBridge AI commands', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('aiGetDocumentContext invokes ai_get_document_context with camelCase args', async () => {
+    const bridge = new TauriBridge();
+    const context = { document_metadata: { total_sections: 1 }, content: [] };
+    invokeMock.mockResolvedValue(context);
+
+    await expect(bridge.aiGetDocumentContext('doc-1', false)).resolves.toEqual(context);
+    expect(invokeMock).toHaveBeenCalledWith('ai_get_document_context', {
+      docId: 'doc-1',
+      currentSelectionOnly: false,
+    });
+  });
+
+  it('aiRequestEdit invokes ai_request_edit and returns the request id', async () => {
+    const bridge = new TauriBridge();
+    invokeMock.mockResolvedValue('req-1');
+
+    await expect(bridge.aiRequestEdit('doc-1', '표 추가', 'mock', 'mock-1')).resolves.toBe('req-1');
+    expect(invokeMock).toHaveBeenCalledWith('ai_request_edit', {
+      docId: 'doc-1',
+      userPrompt: '표 추가',
+      providerId: 'mock',
+      modelId: 'mock-1',
+    });
+  });
+
+  it('aiCancelRequest invokes ai_cancel_request', async () => {
+    const bridge = new TauriBridge();
+    invokeMock.mockResolvedValue(undefined);
+
+    await bridge.aiCancelRequest('req-1');
+    expect(invokeMock).toHaveBeenCalledWith('ai_cancel_request', { requestId: 'req-1' });
+  });
+
+  it('aiSetApiKey invokes ai_set_api_key', async () => {
+    const bridge = new TauriBridge();
+    invokeMock.mockResolvedValue(undefined);
+
+    await bridge.aiSetApiKey('openai', 'sk-test');
+    expect(invokeMock).toHaveBeenCalledWith('ai_set_api_key', {
+      providerId: 'openai',
+      apiKey: 'sk-test',
+    });
+  });
+
+  it('aiHasApiKey invokes ai_has_api_key and returns the boolean', async () => {
+    const bridge = new TauriBridge();
+    invokeMock.mockResolvedValue(true);
+
+    await expect(bridge.aiHasApiKey('anthropic')).resolves.toBe(true);
+    expect(invokeMock).toHaveBeenCalledWith('ai_has_api_key', { providerId: 'anthropic' });
+  });
+
+  it('aiDeleteApiKey invokes ai_delete_api_key', async () => {
+    const bridge = new TauriBridge();
+    invokeMock.mockResolvedValue(undefined);
+
+    await bridge.aiDeleteApiKey('gemini');
+    expect(invokeMock).toHaveBeenCalledWith('ai_delete_api_key', { providerId: 'gemini' });
+  });
+});
+
 function nativeOpenResult(overrides: Record<string, unknown> = {}) {
   return {
     docId: 'doc-1',

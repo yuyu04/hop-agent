@@ -1,0 +1,175 @@
+/* AI Agent Sidebar (PR3) — 우측 고정 패널 + 토글 버튼 + 페이지 하이라이트 */
+
+.hop-ai-toggle {
+  position: fixed;
+  right: 16px;
+  bottom: 48px;
+  z-index: 1000;
+  width: 44px;
+  height: 44px;
+  border-radius: 22px;
+  border: none;
+  background: #2563eb;
+  color: #fff;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+
+.hop-ai-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  width: 340px;
+  height: 100vh;
+  z-index: 1001;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  box-sizing: border-box;
+  background: #f7f8fa;
+  border-left: 1px solid #d0d4da;
+  box-shadow: -2px 0 10px rgba(0, 0, 0, 0.08);
+  transform: translateX(100%);
+  transition: transform 0.18s ease;
+  overflow-y: auto;
+}
+.hop-ai-panel.open {
+  transform: translateX(0);
+}
+
+.hop-ai-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.hop-ai-title {
+  font-weight: 700;
+  font-size: 14px;
+}
+.hop-ai-close {
+  border: none;
+  background: transparent;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  color: #555;
+}
+
+.hop-ai-row {
+  display: flex;
+  gap: 6px;
+}
+.hop-ai-provider {
+  flex: 0 0 110px;
+}
+.hop-ai-model {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.hop-ai-prompt {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  font: inherit;
+}
+
+.hop-ai-actions,
+.hop-ai-decision {
+  display: flex;
+  gap: 8px;
+}
+.hop-ai-actions button,
+.hop-ai-decision button {
+  flex: 1;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+.hop-ai-accept {
+  background: #ddffdd;
+}
+.hop-ai-reject {
+  background: #ffdddd;
+}
+.hop-ai-decision button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.hop-ai-status {
+  font-size: 12px;
+  min-height: 16px;
+  color: #444;
+}
+.hop-ai-status[data-tone='error'] {
+  color: #b00020;
+}
+.hop-ai-status[data-tone='warn'] {
+  color: #946200;
+}
+.hop-ai-status[data-tone='ok'] {
+  color: #1a7f37;
+}
+
+.hop-ai-stream {
+  margin: 0;
+  max-height: 120px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 11px;
+  color: #666;
+  background: #eef0f3;
+  border-radius: 4px;
+  padding: 6px;
+}
+.hop-ai-stream:empty {
+  display: none;
+}
+
+.hop-ai-diff {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.hop-ai-diff-item {
+  border: 1px solid #e0e3e8;
+  border-radius: 6px;
+  padding: 8px;
+  background: #fff;
+}
+.hop-ai-diff-head {
+  font-size: 11px;
+  color: #888;
+  margin-bottom: 4px;
+}
+.hop-ai-diff-before {
+  background: rgb(255, 221, 221);
+  text-decoration: line-through;
+  padding: 2px 4px;
+  border-radius: 3px;
+  white-space: pre-wrap;
+}
+.hop-ai-diff-after {
+  background: rgb(221, 255, 221);
+  text-decoration: underline;
+  padding: 2px 4px;
+  border-radius: 3px;
+  white-space: pre-wrap;
+  margin-top: 4px;
+}
+
+/* 페이지 위 휘발성 하이라이트 */
+.hop-ai-highlight {
+  border-radius: 3px;
+}
+.hop-ai-highlight-insert {
+  background: rgba(34, 197, 94, 0.22);
+  outline: 1px solid rgba(34, 197, 94, 0.6);
+}
+.hop-ai-highlight-remove {
+  background: rgba(239, 68, 68, 0.22);
+  outline: 1px solid rgba(239, 68, 68, 0.6);
+}
