@@ -99,6 +99,18 @@
   display: none;
 }
 
+.hop-ai-sensitive-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #444;
+  cursor: pointer;
+}
+.hop-ai-sensitive {
+  margin: 0;
+}
+
 .hop-ai-prompt {
   width: 100%;
   box-sizing: border-box;

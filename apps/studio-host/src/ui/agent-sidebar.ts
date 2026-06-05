@@ -51,6 +51,9 @@ const PROVIDERS = ['mock', 'openai', 'anthropic', 'gemini', 'ollama'] as const;
 /** API 키가 필요한 provider(mock/ollama는 키 없이 동작). 스펙 6장. */
 const KEY_PROVIDERS = new Set<string>(['openai', 'anthropic', 'gemini']);
 
+/** 본문이 외부로 나가지 않는 로컬 provider. 민감 문서에서도 허용된다(스펙 6장). */
+const LOCAL_PROVIDERS = new Set<string>(['mock', 'ollama']);
+
 export class AgentSidebar {
   private readonly panel: HTMLElement;
   private readonly promptInput: HTMLTextAreaElement;
@@ -65,10 +68,13 @@ export class AgentSidebar {
   private readonly keyInput: HTMLInputElement;
   private readonly keyStatus: HTMLElement;
   private readonly keyClearBtn: HTMLButtonElement;
+  private readonly sensitiveCheckbox: HTMLInputElement;
 
   private readonly session: AiSessionMachine;
   /** provider_id → 키 저장 여부(보안 저장소 조회 캐시). */
   private readonly keyState = new Map<string, boolean>();
+  /** 민감 문서 표시 여부(스펙 6장). true면 외부 provider 전송을 막는다. */
+  private sensitive = false;
   private unsubscribe: AiEventUnsubscribe | null = null;
   private requestId: string | null = null;
   private context: DocumentContext | null = null;
@@ -90,6 +96,7 @@ export class AgentSidebar {
     this.keyInput = built.keyInput;
     this.keyStatus = built.keyStatus;
     this.keyClearBtn = built.keyClearBtn;
+    this.sensitiveCheckbox = built.sensitiveCheckbox;
 
     built.sendBtn.addEventListener('click', () => void this.send());
     built.cancelBtn.addEventListener('click', () => void this.cancel());
@@ -100,6 +107,7 @@ export class AgentSidebar {
     this.providerSelect.addEventListener('change', () => void this.refreshKeyState());
     built.keySaveBtn.addEventListener('click', () => void this.saveKey());
     this.keyClearBtn.addEventListener('click', () => void this.clearKey());
+    this.sensitiveCheckbox.addEventListener('change', () => void this.onSensitivityToggle());
 
     document.body.appendChild(built.toggleBtn);
     document.body.appendChild(this.panel);
@@ -141,9 +149,20 @@ export class AgentSidebar {
     }
 
     const provider = this.providerSelect.value;
+    if (this.sensitive && !LOCAL_PROVIDERS.has(provider)) {
+      this.setStatus('민감 문서로 표시됨 — 로컬 모델(ollama)이나 mock만 사용할 수 있습니다.', 'warn');
+      return;
+    }
     if (KEY_PROVIDERS.has(provider) && this.keyState.get(provider) === false) {
       this.setStatus('API 키를 먼저 저장하세요.', 'warn');
       return;
+    }
+
+    // 네이티브에 현재 문서의 민감 표시를 동기화한다(차단의 2중 방어, 스펙 6장).
+    try {
+      await this.deps.bridge.aiSetDocumentSensitivity(docId, this.sensitive);
+    } catch {
+      /* 동기화 실패는 무시 — 프론트 가드가 이미 외부 전송을 막았다. */
     }
 
     this.session.startRequest();
@@ -222,6 +241,24 @@ export class AgentSidebar {
     } catch (error) {
       this.setStatus(`키 삭제 실패: ${String(error)}`, 'error');
     }
+  }
+
+  /** 민감 문서 토글. 열린 문서가 있으면 네이티브에도 표시를 반영한다(스펙 6장). */
+  private async onSensitivityToggle(): Promise<void> {
+    this.sensitive = this.sensitiveCheckbox.checked;
+    const docId = this.deps.bridge.currentDocId();
+    if (docId) {
+      try {
+        await this.deps.bridge.aiSetDocumentSensitivity(docId, this.sensitive);
+      } catch {
+        /* 표시 실패는 무시 — 전송 시 send()에서 다시 동기화한다. */
+      }
+    }
+    this.setStatus(
+      this.sensitive
+        ? '민감 문서로 표시됨 — 외부 AI 제공자 전송이 차단됩니다.'
+        : '민감 문서 표시를 해제했습니다.',
+    );
   }
 
   private onDelta(delta: AiStreamDelta): void {
@@ -372,6 +409,7 @@ interface PanelParts {
   keySaveBtn: HTMLButtonElement;
   keyClearBtn: HTMLButtonElement;
   keyStatus: HTMLElement;
+  sensitiveCheckbox: HTMLInputElement;
 }
 
 function buildPanel(): PanelParts {
@@ -418,6 +456,15 @@ function buildPanel(): PanelParts {
   const keyRow = el('div', 'hop-ai-key-row');
   keyRow.append(keyInput, keySaveBtn, keyClearBtn, keyStatus);
 
+  // 민감 문서 토글 — 체크 시 외부 provider 전송을 차단한다(스펙 6장, 공문서 보호).
+  const sensitiveCheckbox = document.createElement('input');
+  sensitiveCheckbox.className = 'hop-ai-sensitive';
+  sensitiveCheckbox.type = 'checkbox';
+  const sensitiveText = el('span', 'hop-ai-sensitive-text');
+  sensitiveText.textContent = '민감 문서 — 외부 전송 차단';
+  const sensitiveRow = el('label', 'hop-ai-sensitive-row');
+  sensitiveRow.append(sensitiveCheckbox, sensitiveText);
+
   const promptInput = document.createElement('textarea');
   promptInput.className = 'hop-ai-prompt';
   promptInput.rows = 3;
@@ -442,7 +489,18 @@ function buildPanel(): PanelParts {
 
   const statusArea = el('div', 'hop-ai-status');
 
-  panel.append(header, row, keyRow, promptInput, actions, statusArea, streamArea, diffArea, decision);
+  panel.append(
+    header,
+    row,
+    keyRow,
+    sensitiveRow,
+    promptInput,
+    actions,
+    statusArea,
+    streamArea,
+    diffArea,
+    decision,
+  );
 
   return {
     panel,
@@ -463,6 +521,7 @@ function buildPanel(): PanelParts {
     keySaveBtn,
     keyClearBtn,
     keyStatus,
+    sensitiveCheckbox,
   };
 }
 

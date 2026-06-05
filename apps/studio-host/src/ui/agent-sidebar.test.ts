@@ -36,6 +36,7 @@ class FakeElement {
   rows = 0;
   placeholder = '';
   disabled = false;
+  checked = false;
   dataset: Record<string, string> = {};
   style: Record<string, string> = {};
   children: FakeElement[] = [];
@@ -180,6 +181,7 @@ function createBridge() {
     aiSetApiKey: vi.fn(async () => undefined),
     aiHasApiKey: vi.fn(async () => false),
     aiDeleteApiKey: vi.fn(async () => undefined),
+    aiSetDocumentSensitivity: vi.fn(async () => undefined),
     currentDocId: vi.fn(() => 'doc-1' as string | null),
     getCursorRect: vi.fn(() => ({ pageIndex: 0, x: 0, y: 0, height: 10 })),
     getPageInfo: vi.fn(() => ({ width: 100, height: 100 })),
@@ -383,5 +385,47 @@ describe('AgentSidebar', () => {
 
     expect(bridge.aiRequestEdit).not.toHaveBeenCalled();
     expect(find('hop-ai-status').textContent).toBe('API 키를 먼저 저장하세요.');
+  });
+
+  async function toggleSensitive(on: boolean): Promise<void> {
+    const box = find('hop-ai-sensitive');
+    box.checked = on;
+    box.fire('change');
+    await flush();
+  }
+
+  it('marks the document sensitive through the bridge when toggled', async () => {
+    build();
+    await flush();
+    await toggleSensitive(true);
+    expect(bridge.aiSetDocumentSensitivity).toHaveBeenCalledWith('doc-1', true);
+  });
+
+  it('blocks external providers while the document is sensitive', async () => {
+    build();
+    await flush();
+    await toggleSensitive(true);
+    await selectProvider('anthropic');
+    find('hop-ai-prompt').value = '요약해줘';
+
+    find('hop-ai-send').click();
+    await flush();
+
+    expect(bridge.aiRequestEdit).not.toHaveBeenCalled();
+    expect(find('hop-ai-status').textContent).toContain('민감 문서');
+  });
+
+  it('still allows local providers (ollama) on a sensitive document', async () => {
+    build();
+    await flush();
+    await toggleSensitive(true);
+    await selectProvider('ollama');
+    find('hop-ai-prompt').value = '요약해줘';
+
+    find('hop-ai-send').click();
+    await flush();
+
+    expect(bridge.aiRequestEdit).toHaveBeenCalledWith('doc-1', '요약해줘', 'ollama', 'llama3.1');
+    expect(bridge.aiSetDocumentSensitivity).toHaveBeenCalledWith('doc-1', true);
   });
 });

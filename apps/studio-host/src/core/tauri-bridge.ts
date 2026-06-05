@@ -113,6 +113,8 @@ export interface AiBridgeApi {
   aiHasApiKey(providerId: string): Promise<boolean>;
   /** 저장된 provider 키를 삭제한다. */
   aiDeleteApiKey(providerId: string): Promise<void>;
+  /** 문서를 민감(기밀)으로 표시/해제한다. 표시 시 외부 provider 전송이 차단된다(스펙 6장). */
+  aiSetDocumentSensitivity(docId: string, sensitive: boolean): Promise<void>;
 }
 
 export class TauriBridge extends WasmBridge implements DesktopBridgeApi, AiBridgeApi {
@@ -331,6 +333,10 @@ export class TauriBridge extends WasmBridge implements DesktopBridgeApi, AiBridg
 
   async aiDeleteApiKey(providerId: string): Promise<void> {
     await this.invoke<void>('ai_delete_api_key', { providerId });
+  }
+
+  async aiSetDocumentSensitivity(docId: string, sensitive: boolean): Promise<void> {
+    await this.invoke<void>('ai_set_document_sensitivity', { docId, sensitive });
   }
 
   private async invoke<T>(command: string, args: Record<string, unknown> = {}): Promise<T> {

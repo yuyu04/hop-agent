@@ -16,16 +16,18 @@ pub use secrets::{ai_delete_api_key, ai_has_api_key, ai_set_api_key};
 use crate::state::AppState;
 use provider::{CancelToken, DeltaSink, LlmProvider, LlmRequest, MockProvider};
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager, State};
 use uuid::Uuid;
 
-/// 진행 중인 AI 요청의 취소 토큰을 보관한다(스펙 7장).
+/// 진행 중인 AI 요청의 취소 토큰(스펙 7장)과 민감 문서 표시(스펙 6장)를 보관한다.
 #[derive(Default)]
 pub struct AiState {
     requests: Mutex<HashMap<String, CancelToken>>,
+    /// 외부 provider 전송을 차단할 민감(기밀) 문서 doc_id 집합.
+    sensitive_docs: Mutex<HashSet<String>>,
 }
 
 impl AiState {
@@ -50,6 +52,29 @@ impl AiState {
             requests.remove(request_id);
         }
     }
+
+    fn set_sensitive(&self, doc_id: String, sensitive: bool) {
+        if let Ok(mut docs) = self.sensitive_docs.lock() {
+            if sensitive {
+                docs.insert(doc_id);
+            } else {
+                docs.remove(&doc_id);
+            }
+        }
+    }
+
+    fn is_sensitive(&self, doc_id: &str) -> bool {
+        self.sensitive_docs
+            .lock()
+            .map(|docs| docs.contains(doc_id))
+            .unwrap_or(false)
+    }
+}
+
+/// 민감 문서에서도 허용되는 provider — 문서 본문이 외부로 나가지 않는 것만(스펙 6장).
+/// in-process `mock`과 로컬 `ollama`(localhost)만 로컬로 간주한다.
+fn is_local_provider(provider_id: &str) -> bool {
+    matches!(provider_id, "mock" | "ollama")
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -103,6 +128,13 @@ pub fn ai_request_edit(
     model_id: String,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
+    // 민감 문서는 외부 provider 전송을 차단한다(스펙 6장 — 공문서 보호).
+    if state.ai.is_sensitive(&doc_id) && !is_local_provider(&provider_id) {
+        return Err("민감 문서로 표시되어 외부 AI 제공자 전송이 차단되었습니다. \
+                    로컬 모델(ollama) 또는 mock만 사용할 수 있습니다."
+            .to_string());
+    }
+
     let provider = select_provider(&provider_id, model_id)?;
 
     // 문서 컨텍스트와 화이트리스트는 세션 잠금이 필요하므로 spawn 전에 만든다.
@@ -144,6 +176,18 @@ pub fn ai_request_edit(
 #[tauri::command]
 pub fn ai_cancel_request(request_id: String, state: State<'_, AppState>) -> Result<(), String> {
     state.ai.cancel(&request_id);
+    Ok(())
+}
+
+/// 문서를 민감(기밀)으로 표시/해제한다(스펙 6장). 표시된 문서는 `ai_request_edit`에서
+/// 외부 provider(Anthropic/OpenAI/Gemini 등) 전송이 차단되고 로컬 모델만 허용된다.
+#[tauri::command]
+pub fn ai_set_document_sensitivity(
+    doc_id: String,
+    sensitive: bool,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state.ai.set_sensitive(doc_id, sensitive);
     Ok(())
 }
 
@@ -262,5 +306,28 @@ mod tests {
         // 실제 provider는 보안 저장소를 거치므로(OS 의존) 여기서는 mock만 검증한다.
         // provider 분기/키 요구는 adapters::build_provider 테스트가 담당한다.
         assert!(select_provider("mock", "mock-1".to_string()).is_ok());
+    }
+
+    #[test]
+    fn only_mock_and_ollama_are_local_providers() {
+        assert!(is_local_provider("mock"));
+        assert!(is_local_provider("ollama"));
+        assert!(!is_local_provider("openai"));
+        assert!(!is_local_provider("anthropic"));
+        assert!(!is_local_provider("gemini"));
+        assert!(!is_local_provider("gateway"));
+    }
+
+    #[test]
+    fn sensitive_docs_can_be_marked_and_cleared() {
+        let state = AiState::default();
+        assert!(!state.is_sensitive("doc-1"));
+
+        state.set_sensitive("doc-1".to_string(), true);
+        assert!(state.is_sensitive("doc-1"));
+        assert!(!state.is_sensitive("doc-2"));
+
+        state.set_sensitive("doc-1".to_string(), false);
+        assert!(!state.is_sensitive("doc-1"));
     }
 }
