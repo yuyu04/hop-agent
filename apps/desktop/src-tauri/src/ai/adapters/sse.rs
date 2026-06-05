@@ -107,4 +107,54 @@ mod tests {
         assert_eq!(truncate("abc", 5), "abc");
         assert_eq!(truncate("abcdef", 3), "abc…");
     }
+
+    #[test]
+    fn non_timeout_reqwest_errors_become_provider_errors() {
+        use std::net::TcpListener;
+        // 포트를 바인딩했다가 즉시 닫아 "확실히 닫힌" 주소를 얻는다 → 연결 거부.
+        let addr = {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            listener.local_addr().unwrap()
+        };
+        let client = reqwest::Client::new();
+        let err = tauri::async_runtime::block_on(async {
+            client
+                .get(format!("http://{}/", addr))
+                .send()
+                .await
+                .unwrap_err()
+        });
+        assert!(!err.is_timeout());
+        assert!(matches!(map_reqwest_err(err), ProviderError::Provider(_)));
+    }
+
+    #[test]
+    fn real_request_timeout_maps_to_timeout_error() {
+        use std::net::TcpListener;
+        use std::time::Duration;
+
+        // 연결은 수락하되 응답하지 않는 서버 → 클라이언트가 타임아웃되게 한다.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let _accepted = listener.accept();
+            std::thread::sleep(Duration::from_millis(500));
+        });
+
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_millis(150))
+            .build()
+            .unwrap();
+        let err = tauri::async_runtime::block_on(async {
+            client
+                .get(format!("http://{}/", addr))
+                .send()
+                .await
+                .unwrap_err()
+        });
+
+        assert!(err.is_timeout(), "기대: 타임아웃 오류, 실제: {err}");
+        assert_eq!(map_reqwest_err(err), ProviderError::Timeout);
+        let _ = server.join();
+    }
 }
