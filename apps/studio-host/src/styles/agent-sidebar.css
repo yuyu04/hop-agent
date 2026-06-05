@@ -95,6 +95,23 @@
   color: #1a7f37;
 }
 
+.hop-ai-custom-row {
+  display: flex;
+  gap: 6px;
+}
+.hop-ai-preset {
+  flex: 0 0 96px;
+}
+.hop-ai-base-url {
+  flex: 1 1 auto;
+  min-width: 0;
+  font: inherit;
+}
+
+.hop-ai-key-status[data-tone='info'] {
+  color: #666;
+}
+
 .hop-ai-hidden {
   display: none;
 }

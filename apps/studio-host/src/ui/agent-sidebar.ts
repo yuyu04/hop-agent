@@ -48,13 +48,27 @@ export interface AgentSidebarDeps {
   scrollContainer: HTMLElement;
 }
 
-const PROVIDERS = ['mock', 'openai', 'anthropic', 'gemini', 'ollama'] as const;
+/** 커스텀 OpenAI 호환 엔드포인트(Groq/OpenRouter/Together/LM Studio/게이트웨이). 스펙 5.3장. */
+const CUSTOM_PROVIDER = 'openai-compat';
 
-/** API 키가 필요한 provider(mock/ollama는 키 없이 동작). 스펙 6장. */
+const PROVIDERS = ['mock', 'openai', 'anthropic', 'gemini', 'ollama', CUSTOM_PROVIDER] as const;
+
+const PROVIDER_LABELS: Record<string, string> = {
+  [CUSTOM_PROVIDER]: 'OpenAI 호환 (Groq 등)',
+};
+
+/** API 키가 필수인 provider(mock/ollama는 불필요, openai-compat은 선택). 스펙 6장. */
 const KEY_PROVIDERS = new Set<string>(['openai', 'anthropic', 'gemini']);
 
 /** 본문이 외부로 나가지 않는 로컬 provider. 민감 문서에서도 허용된다(스펙 6장). */
 const LOCAL_PROVIDERS = new Set<string>(['mock', 'ollama']);
+
+/** openai-compat 프리셋 — Base URL + 추천 모델 자동 채움. base는 `/v1/chat/completions`를 덧붙인다. */
+const CUSTOM_PRESETS: Record<string, { baseUrl: string; model: string }> = {
+  groq: { baseUrl: 'https://api.groq.com/openai', model: 'llama-3.1-8b-instant' },
+  openrouter: { baseUrl: 'https://openrouter.ai/api', model: 'meta-llama/llama-3.1-8b-instruct:free' },
+  together: { baseUrl: 'https://api.together.xyz', model: 'meta-llama/Llama-3.1-8B-Instruct-Turbo' },
+};
 
 export class AgentSidebar {
   private readonly panel: HTMLElement;
@@ -71,6 +85,9 @@ export class AgentSidebar {
   private readonly keyStatus: HTMLElement;
   private readonly keyClearBtn: HTMLButtonElement;
   private readonly sensitiveCheckbox: HTMLInputElement;
+  private readonly customRow: HTMLElement;
+  private readonly baseUrlInput: HTMLInputElement;
+  private readonly presetSelect: HTMLSelectElement;
 
   private readonly session: AiSessionMachine;
   /** provider_id → 키 저장 여부(보안 저장소 조회 캐시). */
@@ -99,6 +116,9 @@ export class AgentSidebar {
     this.keyStatus = built.keyStatus;
     this.keyClearBtn = built.keyClearBtn;
     this.sensitiveCheckbox = built.sensitiveCheckbox;
+    this.customRow = built.customRow;
+    this.baseUrlInput = built.baseUrlInput;
+    this.presetSelect = built.presetSelect;
 
     built.sendBtn.addEventListener('click', () => void this.send());
     built.cancelBtn.addEventListener('click', () => void this.cancel());
@@ -110,11 +130,13 @@ export class AgentSidebar {
     built.keySaveBtn.addEventListener('click', () => void this.saveKey());
     this.keyClearBtn.addEventListener('click', () => void this.clearKey());
     this.sensitiveCheckbox.addEventListener('change', () => void this.onSensitivityToggle());
+    this.presetSelect.addEventListener('change', () => this.applyPreset());
 
     document.body.appendChild(built.toggleBtn);
     document.body.appendChild(this.panel);
     this.setPreviewEnabled(false);
     this.keyRow.classList.add('hop-ai-hidden');
+    this.customRow.classList.add('hop-ai-hidden');
     void this.subscribe();
     void this.refreshKeyState();
   }
@@ -159,6 +181,11 @@ export class AgentSidebar {
       this.setStatus('API 키를 먼저 저장하세요.', 'warn');
       return;
     }
+    const baseUrl = provider === CUSTOM_PROVIDER ? this.baseUrlInput.value.trim() : null;
+    if (provider === CUSTOM_PROVIDER && !baseUrl) {
+      this.setStatus('Base URL을 입력하세요 (예: https://api.groq.com/openai).', 'warn');
+      return;
+    }
 
     // 네이티브에 현재 문서의 민감 표시를 동기화한다(차단의 2중 방어, 스펙 6장).
     try {
@@ -175,7 +202,14 @@ export class AgentSidebar {
     const cursorPath = this.currentCursorPath();
     try {
       this.context = await this.deps.bridge.aiGetDocumentContext(docId, false, cursorPath);
-      this.requestId = await this.deps.bridge.aiRequestEdit(docId, prompt, provider, model, cursorPath);
+      this.requestId = await this.deps.bridge.aiRequestEdit(
+        docId,
+        prompt,
+        provider,
+        model,
+        cursorPath,
+        baseUrl,
+      );
     } catch (error) {
       this.session.onFailed();
       this.setStatus(`요청 실패: ${String(error)}`, 'error');
@@ -205,9 +239,13 @@ export class AgentSidebar {
   /** 선택된 provider의 키 필요 여부/저장 상태로 키 입력 영역을 갱신한다(스펙 6장). */
   private async refreshKeyState(): Promise<void> {
     const provider = this.providerSelect.value;
-    const needsKey = KEY_PROVIDERS.has(provider);
-    this.keyRow.classList.toggle('hop-ai-hidden', !needsKey);
-    if (!needsKey) return;
+    const requiresKey = KEY_PROVIDERS.has(provider);
+    const isCustom = provider === CUSTOM_PROVIDER;
+    // openai-compat은 키가 선택사항이라 입력칸은 보여주되 send를 막지는 않는다.
+    const showsKey = requiresKey || isCustom;
+    this.keyRow.classList.toggle('hop-ai-hidden', !showsKey);
+    this.customRow.classList.toggle('hop-ai-hidden', !isCustom);
+    if (!showsKey) return;
 
     let present = false;
     try {
@@ -218,9 +256,17 @@ export class AgentSidebar {
     // 조회 중 다른 provider로 바뀌었으면 늦게 도착한 응답은 버린다.
     if (this.providerSelect.value !== provider) return;
     this.keyState.set(provider, present);
-    this.keyStatus.textContent = present ? '키 저장됨' : '키 없음';
-    this.keyStatus.dataset.tone = present ? 'ok' : 'warn';
+    this.keyStatus.textContent = present ? '키 저장됨' : isCustom ? '키 없음(선택)' : '키 없음';
+    this.keyStatus.dataset.tone = present ? 'ok' : isCustom ? 'info' : 'warn';
     this.keyClearBtn.disabled = !present;
+  }
+
+  /** openai-compat 프리셋(Groq/OpenRouter/Together)을 Base URL·모델 입력에 채운다. */
+  private applyPreset(): void {
+    const preset = CUSTOM_PRESETS[this.presetSelect.value];
+    if (!preset) return;
+    this.baseUrlInput.value = preset.baseUrl;
+    this.modelInput.value = preset.model;
   }
 
   private async saveKey(): Promise<void> {
@@ -371,6 +417,8 @@ function defaultModel(provider: string): string {
       return 'gemini-2.0-flash';
     case 'ollama':
       return 'llama3.1';
+    case CUSTOM_PROVIDER:
+      return 'llama-3.1-8b-instant';
     default:
       return 'mock-1';
   }
@@ -420,6 +468,9 @@ interface PanelParts {
   keyClearBtn: HTMLButtonElement;
   keyStatus: HTMLElement;
   sensitiveCheckbox: HTMLInputElement;
+  customRow: HTMLElement;
+  baseUrlInput: HTMLInputElement;
+  presetSelect: HTMLSelectElement;
 }
 
 function buildPanel(): PanelParts {
@@ -441,7 +492,7 @@ function buildPanel(): PanelParts {
   for (const id of PROVIDERS) {
     const opt = document.createElement('option');
     opt.value = id;
-    opt.textContent = id;
+    opt.textContent = PROVIDER_LABELS[id] ?? id;
     providerSelect.appendChild(opt);
   }
   const modelInput = document.createElement('input');
@@ -465,6 +516,27 @@ function buildPanel(): PanelParts {
   const keyStatus = el('span', 'hop-ai-key-status');
   const keyRow = el('div', 'hop-ai-key-row');
   keyRow.append(keyInput, keySaveBtn, keyClearBtn, keyStatus);
+
+  // 커스텀 OpenAI 호환 엔드포인트(Groq 등) — 프리셋 + Base URL 입력(스펙 5.3장).
+  const presetSelect = document.createElement('select');
+  presetSelect.className = 'hop-ai-preset';
+  for (const [value, label] of [
+    ['', '프리셋'],
+    ['groq', 'Groq'],
+    ['openrouter', 'OpenRouter'],
+    ['together', 'Together'],
+  ] as const) {
+    const opt = document.createElement('option');
+    opt.value = value;
+    opt.textContent = label;
+    presetSelect.appendChild(opt);
+  }
+  const baseUrlInput = document.createElement('input');
+  baseUrlInput.className = 'hop-ai-base-url';
+  baseUrlInput.type = 'text';
+  baseUrlInput.placeholder = 'Base URL (예: https://api.groq.com/openai)';
+  const customRow = el('div', 'hop-ai-custom-row');
+  customRow.append(presetSelect, baseUrlInput);
 
   // 민감 문서 토글 — 체크 시 외부 provider 전송을 차단한다(스펙 6장, 공문서 보호).
   const sensitiveCheckbox = document.createElement('input');
@@ -502,6 +574,7 @@ function buildPanel(): PanelParts {
   panel.append(
     header,
     row,
+    customRow,
     keyRow,
     sensitiveRow,
     promptInput,
@@ -532,6 +605,9 @@ function buildPanel(): PanelParts {
     keyClearBtn,
     keyStatus,
     sensitiveCheckbox,
+    customRow,
+    baseUrlInput,
+    presetSelect,
   };
 }
 

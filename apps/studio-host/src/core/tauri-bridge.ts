@@ -102,13 +102,15 @@ export interface AiBridgeApi {
     currentSelectionOnly: boolean,
     cursorPath?: string | null,
   ): Promise<DocumentContext>;
-  /** 편집 요청을 시작하고 request_id를 반환한다. 결과는 `hop-ai-*` 이벤트로 전달된다. */
+  /** 편집 요청을 시작하고 request_id를 반환한다. 결과는 `hop-ai-*` 이벤트로 전달된다.
+   *  `baseUrl`은 `openai-compat`(커스텀 OpenAI 호환 엔드포인트)에서만 쓰인다. */
   aiRequestEdit(
     docId: string,
     userPrompt: string,
     providerId: string,
     modelId: string,
     cursorPath?: string | null,
+    baseUrl?: string | null,
   ): Promise<string>;
   /** 진행 중인 요청을 취소한다(스펙 7장). */
   aiCancelRequest(requestId: string): Promise<void>;
@@ -318,6 +320,7 @@ export class TauriBridge extends WasmBridge implements DesktopBridgeApi, AiBridg
     providerId: string,
     modelId: string,
     cursorPath?: string | null,
+    baseUrl?: string | null,
   ): Promise<string> {
     return this.invoke<string>('ai_request_edit', {
       docId,
@@ -325,6 +328,7 @@ export class TauriBridge extends WasmBridge implements DesktopBridgeApi, AiBridg
       providerId,
       modelId,
       cursorPath: cursorPath ?? null,
+      baseUrl: baseUrl ?? null,
     });
   }
 

@@ -709,6 +709,29 @@ describe('TauriBridge AI commands', () => {
       providerId: 'mock',
       modelId: 'mock-1',
       cursorPath: null,
+      baseUrl: null,
+    });
+  });
+
+  it('aiRequestEdit forwards the base URL for openai-compat', async () => {
+    const bridge = new TauriBridge();
+    invokeMock.mockResolvedValue('req-2');
+
+    await bridge.aiRequestEdit(
+      'doc-1',
+      '요약',
+      'openai-compat',
+      'llama-3.1-8b-instant',
+      null,
+      'https://api.groq.com/openai',
+    );
+    expect(invokeMock).toHaveBeenCalledWith('ai_request_edit', {
+      docId: 'doc-1',
+      userPrompt: '요약',
+      providerId: 'openai-compat',
+      modelId: 'llama-3.1-8b-instant',
+      cursorPath: null,
+      baseUrl: 'https://api.groq.com/openai',
     });
   });
 

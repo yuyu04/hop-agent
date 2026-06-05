@@ -271,6 +271,7 @@ describe('AgentSidebar', () => {
       'mock',
       'mock-1',
       null,
+      null,
     );
 
     captured!.onDelta?.({ requestId: 'req-1', partialText: '부분 ' });
@@ -437,6 +438,7 @@ describe('AgentSidebar', () => {
       'ollama',
       'llama3.1',
       null,
+      null,
     );
     expect(bridge.aiSetDocumentSensitivity).toHaveBeenCalledWith('doc-1', true);
   });
@@ -460,6 +462,46 @@ describe('AgentSidebar', () => {
       'mock',
       'mock-1',
       'sec[0].p[7]',
+      null,
+    );
+  });
+
+  it('requires a base URL for the openai-compat provider', async () => {
+    build();
+    await flush();
+    await selectProvider('openai-compat');
+    expect(find('hop-ai-custom-row').classList.contains('hop-ai-hidden')).toBe(false);
+    find('hop-ai-prompt').value = '요약해줘';
+
+    find('hop-ai-send').click();
+    await flush();
+
+    expect(bridge.aiRequestEdit).not.toHaveBeenCalled();
+    expect(find('hop-ai-status').textContent).toContain('Base URL');
+  });
+
+  it('fills a preset and forwards the base URL to the request (Groq)', async () => {
+    build();
+    await flush();
+    await selectProvider('openai-compat');
+
+    const preset = find('hop-ai-preset');
+    preset.value = 'groq';
+    preset.fire('change');
+    expect(find('hop-ai-base-url').value).toBe('https://api.groq.com/openai');
+    expect(find('hop-ai-model').value).toBe('llama-3.1-8b-instant');
+
+    find('hop-ai-prompt').value = '요약해줘';
+    find('hop-ai-send').click();
+    await flush();
+
+    expect(bridge.aiRequestEdit).toHaveBeenCalledWith(
+      'doc-1',
+      '요약해줘',
+      'openai-compat',
+      'llama-3.1-8b-instant',
+      null,
+      'https://api.groq.com/openai',
     );
   });
 });

@@ -122,6 +122,7 @@ pub fn ai_get_document_context(
 
 /// 편집 요청을 시작한다. `request_id`를 즉시 반환하고 결과는 이벤트로 보낸다.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // Tauri 커맨드 인자(provider/model/cursor/base_url 등)는 평면 전달이 필요.
 pub fn ai_request_edit(
     app: AppHandle,
     doc_id: String,
@@ -129,6 +130,7 @@ pub fn ai_request_edit(
     provider_id: String,
     model_id: String,
     cursor_path: Option<String>,
+    base_url: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
     // 민감 문서는 외부 provider 전송을 차단한다(스펙 6장 — 공문서 보호).
@@ -138,7 +140,7 @@ pub fn ai_request_edit(
             .to_string());
     }
 
-    let provider = select_provider(&provider_id, model_id)?;
+    let provider = select_provider(&provider_id, model_id, base_url)?;
     let cursor = cursor_path.as_deref().and_then(serialize::parse_cursor_path);
 
     // 문서 컨텍스트와 화이트리스트는 세션 잠금이 필요하므로 spawn 전에 만든다.
@@ -272,13 +274,18 @@ fn emit_failed(app: &AppHandle, request_id: &str, reason: String, code: &str) {
     );
 }
 
-fn select_provider(provider_id: &str, model_id: String) -> Result<Box<dyn LlmProvider>, String> {
+fn select_provider(
+    provider_id: &str,
+    model_id: String,
+    base_url: Option<String>,
+) -> Result<Box<dyn LlmProvider>, String> {
     if provider_id == "mock" {
         return Ok(Box::new(MockProvider));
     }
     // 키가 필요한 provider는 보안 저장소에서 키를 읽어 어댑터를 만든다.
+    // `base_url`은 openai-compat(커스텀 OpenAI 호환 엔드포인트)에서만 쓰인다.
     let api_key = secrets::get_api_key(provider_id)?;
-    adapters::build_provider(provider_id, model_id, api_key)
+    adapters::build_provider(provider_id, model_id, api_key, base_url)
 }
 
 fn system_prompt() -> String {
@@ -311,7 +318,7 @@ mod tests {
     fn select_provider_accepts_mock() {
         // 실제 provider는 보안 저장소를 거치므로(OS 의존) 여기서는 mock만 검증한다.
         // provider 분기/키 요구는 adapters::build_provider 테스트가 담당한다.
-        assert!(select_provider("mock", "mock-1".to_string()).is_ok());
+        assert!(select_provider("mock", "mock-1".to_string(), None).is_ok());
     }
 
     #[test]

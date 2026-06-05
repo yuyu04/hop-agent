@@ -20,10 +20,15 @@ const OLLAMA_BASE_URL: &str = "http://localhost:11434";
 
 /// `provider_id`에 맞는 어댑터를 만든다. 키가 필요한 provider인데 키가 없으면
 /// 명확한 에러를 반환한다. `"mock"`은 코어(`ai/mod.rs`)에서 직접 처리한다.
+///
+/// `"openai-compat"`은 Groq/OpenRouter/Together/LM Studio/사내 게이트웨이 등
+/// 임의의 OpenAI 호환 엔드포인트를 위한 범용 어댑터다(스펙 5.3장). `base_url`은
+/// 필수, 키는 선택(로컬 LM Studio 등은 키 불필요).
 pub fn build_provider(
     provider_id: &str,
     model_id: String,
     api_key: Option<String>,
+    base_url: Option<String>,
 ) -> Result<Box<dyn LlmProvider>, String> {
     match provider_id {
         "openai" => Ok(Box::new(OpenAiProvider {
@@ -38,6 +43,13 @@ pub fn build_provider(
             model: model_id,
             structured: StructuredMode::JsonObject,
         })),
+        "openai-compat" => Ok(Box::new(OpenAiProvider {
+            base_url: require_base_url(base_url)?,
+            api_key: api_key.filter(|key| !key.is_empty()),
+            model: model_id,
+            // 호환 게이트웨이는 strict json_schema 미지원이 흔하므로 json_object로 강제.
+            structured: StructuredMode::JsonObject,
+        })),
         "anthropic" => Ok(Box::new(AnthropicProvider {
             api_key: require_key(provider_id, api_key)?,
             model: model_id,
@@ -48,6 +60,17 @@ pub fn build_provider(
         })),
         other => Err(format!("알 수 없는 provider입니다: {}", other)),
     }
+}
+
+fn require_base_url(base_url: Option<String>) -> Result<String, String> {
+    base_url
+        .map(|url| url.trim().to_string())
+        .filter(|url| !url.is_empty())
+        .ok_or_else(|| {
+            "OpenAI 호환 endpoint의 Base URL이 설정되지 않았습니다. \
+             예: https://api.groq.com/openai"
+                .to_string()
+        })
 }
 
 fn require_key(provider_id: &str, api_key: Option<String>) -> Result<String, String> {
@@ -82,19 +105,42 @@ mod tests {
 
     #[test]
     fn build_provider_requires_key_for_cloud_providers() {
-        assert!(build_provider("openai", "m".to_string(), None).is_err());
-        assert!(build_provider("anthropic", "m".to_string(), Some(String::new())).is_err());
-        assert!(build_provider("gemini", "m".to_string(), None).is_err());
+        assert!(build_provider("openai", "m".to_string(), None, None).is_err());
+        assert!(build_provider("anthropic", "m".to_string(), Some(String::new()), None).is_err());
+        assert!(build_provider("gemini", "m".to_string(), None, None).is_err());
     }
 
     #[test]
     fn build_provider_allows_ollama_without_key() {
-        assert!(build_provider("ollama", "llama3".to_string(), None).is_ok());
+        assert!(build_provider("ollama", "llama3".to_string(), None, None).is_ok());
     }
 
     #[test]
     fn build_provider_rejects_unknown() {
-        assert!(build_provider("bogus", "m".to_string(), Some("k".to_string())).is_err());
+        assert!(build_provider("bogus", "m".to_string(), Some("k".to_string()), None).is_err());
+    }
+
+    #[test]
+    fn build_provider_openai_compat_requires_base_url() {
+        // Base URL 없으면(키만 있어도) 거부.
+        assert!(build_provider("openai-compat", "m".to_string(), Some("k".to_string()), None).is_err());
+        assert!(build_provider("openai-compat", "m".to_string(), None, Some("  ".to_string())).is_err());
+        // Base URL이 있으면 키 없이도(LM Studio 등) 허용.
+        assert!(build_provider(
+            "openai-compat",
+            "llama-3.1-8b-instant".to_string(),
+            None,
+            Some("https://api.groq.com/openai".to_string()),
+        )
+        .is_ok());
+        // 키 + Base URL(Groq/OpenRouter) 조합도 허용.
+        assert!(build_provider(
+            "openai-compat",
+            "llama-3.1-8b-instant".to_string(),
+            Some("gsk_xxx".to_string()),
+            Some("https://api.groq.com/openai".to_string()),
+        )
+        .is_ok());
     }
 
     #[test]
