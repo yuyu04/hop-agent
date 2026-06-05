@@ -70,11 +70,26 @@ const CUSTOM_PRESETS: Record<string, { baseUrl: string; model: string }> = {
   together: { baseUrl: 'https://api.together.xyz', model: 'meta-llama/Llama-3.1-8B-Instruct-Turbo' },
 };
 
+/** 모델 드롭다운에서 "직접 입력"을 고를 때의 sentinel 값. */
+const CUSTOM_MODEL = '__custom__';
+
+/** provider별 선택 가능한 모델 목록(첫 항목이 기본 선택). 직접 입력 옵션이 항상 뒤따른다. */
+const MODELS: Record<string, string[]> = {
+  mock: ['mock-1'],
+  openai: ['gpt-4o-mini', 'gpt-4o', 'gpt-4.1-mini'],
+  anthropic: ['claude-3-5-haiku-latest', 'claude-3-5-sonnet-latest'],
+  gemini: ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash-lite', 'gemini-flash-latest'],
+  ollama: ['llama3.1', 'llama3.2', 'qwen2.5', 'mistral'],
+  [CUSTOM_PROVIDER]: ['llama-3.1-8b-instant', 'llama-3.3-70b-versatile'],
+};
+
 export class AgentSidebar {
   private readonly panel: HTMLElement;
   private readonly promptInput: HTMLTextAreaElement;
   private readonly providerSelect: HTMLSelectElement;
+  private readonly modelSelect: HTMLSelectElement;
   private readonly modelInput: HTMLInputElement;
+  private readonly settingsPanel: HTMLElement;
   private readonly streamArea: HTMLElement;
   private readonly diffArea: HTMLElement;
   private readonly statusArea: HTMLElement;
@@ -105,7 +120,9 @@ export class AgentSidebar {
     this.panel = built.panel;
     this.promptInput = built.promptInput;
     this.providerSelect = built.providerSelect;
+    this.modelSelect = built.modelSelect;
     this.modelInput = built.modelInput;
+    this.settingsPanel = built.settingsPanel;
     this.streamArea = built.streamArea;
     this.diffArea = built.diffArea;
     this.statusArea = built.statusArea;
@@ -126,7 +143,9 @@ export class AgentSidebar {
     this.rejectBtn.addEventListener('click', () => this.reject());
     built.closeBtn.addEventListener('click', () => this.toggle(false));
     built.toggleBtn.addEventListener('click', () => this.toggle());
-    this.providerSelect.addEventListener('change', () => void this.refreshKeyState());
+    built.settingsBtn.addEventListener('click', () => this.toggleSettings());
+    this.providerSelect.addEventListener('change', () => void this.onProviderChange());
+    this.modelSelect.addEventListener('change', () => this.updateModelVisibility());
     built.keySaveBtn.addEventListener('click', () => void this.saveKey());
     this.keyClearBtn.addEventListener('click', () => void this.clearKey());
     this.sensitiveCheckbox.addEventListener('change', () => void this.onSensitivityToggle());
@@ -137,6 +156,8 @@ export class AgentSidebar {
     this.setPreviewEnabled(false);
     this.keyRow.classList.add('hop-ai-hidden');
     this.customRow.classList.add('hop-ai-hidden');
+    this.settingsPanel.classList.add('hop-ai-hidden');
+    this.populateModels(this.providerSelect.value);
     void this.subscribe();
     void this.refreshKeyState();
   }
@@ -178,12 +199,14 @@ export class AgentSidebar {
       return;
     }
     if (KEY_PROVIDERS.has(provider) && this.keyState.get(provider) === false) {
-      this.setStatus('API 키를 먼저 저장하세요.', 'warn');
+      this.toggleSettings(true);
+      this.setStatus('API 키를 먼저 저장하세요. (⚙ 옵션에서 입력)', 'warn');
       return;
     }
     const baseUrl = provider === CUSTOM_PROVIDER ? this.baseUrlInput.value.trim() : null;
     if (provider === CUSTOM_PROVIDER && !baseUrl) {
-      this.setStatus('Base URL을 입력하세요 (예: https://api.groq.com/openai).', 'warn');
+      this.toggleSettings(true);
+      this.setStatus('Base URL을 입력하세요 (⚙ 옵션, 예: https://api.groq.com/openai).', 'warn');
       return;
     }
 
@@ -197,7 +220,7 @@ export class AgentSidebar {
     this.session.startRequest();
     this.streamArea.textContent = '';
     this.setStatus('요청 중…');
-    const model = this.modelInput.value.trim() || defaultModel(provider);
+    const model = this.currentModel();
 
     const cursorPath = this.currentCursorPath();
     try {
@@ -214,6 +237,39 @@ export class AgentSidebar {
       this.session.onFailed();
       this.setStatus(`요청 실패: ${String(error)}`, 'error');
     }
+  }
+
+  private toggleSettings(open?: boolean): void {
+    const show = open ?? this.settingsPanel.classList.contains('hop-ai-hidden');
+    this.settingsPanel.classList.toggle('hop-ai-hidden', !show);
+  }
+
+  /** provider 변경 시 모델 목록을 다시 채우고 키 상태를 갱신한다. */
+  private async onProviderChange(): Promise<void> {
+    this.populateModels(this.providerSelect.value);
+    await this.refreshKeyState();
+  }
+
+  /** 선택된 provider의 모델 드롭다운을 채운다. 마지막 항목은 항상 "직접 입력". */
+  private populateModels(provider: string): void {
+    const models = MODELS[provider] ?? [];
+    this.modelSelect.replaceChildren();
+    for (const model of models) this.modelSelect.appendChild(option(model, model));
+    this.modelSelect.appendChild(option(CUSTOM_MODEL, '직접 입력…'));
+    this.modelSelect.value = models[0] ?? CUSTOM_MODEL;
+    this.updateModelVisibility();
+  }
+
+  /** "직접 입력"을 고른 경우에만 자유 입력칸을 보인다. */
+  private updateModelVisibility(): void {
+    this.modelInput.classList.toggle('hop-ai-hidden', this.modelSelect.value !== CUSTOM_MODEL);
+  }
+
+  /** 실제 요청에 쓸 모델 ID(드롭다운 값 또는 직접 입력값). */
+  private currentModel(): string {
+    const selected = this.modelSelect.value;
+    const model = selected === CUSTOM_MODEL ? this.modelInput.value.trim() : selected;
+    return model || defaultModel(this.providerSelect.value);
   }
 
   /** 캐럿 위치를 `sec[s].p[p]` 경로로 만든다(Sliding Window 기준, 스펙 4장). */
@@ -266,7 +322,10 @@ export class AgentSidebar {
     const preset = CUSTOM_PRESETS[this.presetSelect.value];
     if (!preset) return;
     this.baseUrlInput.value = preset.baseUrl;
+    // 프리셋 모델은 직접 입력값으로 채운다(OpenRouter/Together 등은 목록에 없을 수 있음).
+    this.modelSelect.value = CUSTOM_MODEL;
     this.modelInput.value = preset.model;
+    this.updateModelVisibility();
   }
 
   private async saveKey(): Promise<void> {
@@ -414,7 +473,7 @@ function defaultModel(provider: string): string {
     case 'anthropic':
       return 'claude-3-5-haiku-latest';
     case 'gemini':
-      return 'gemini-2.0-flash';
+      return 'gemini-2.5-flash';
     case 'ollama':
       return 'llama3.1';
     case CUSTOM_PROVIDER:
@@ -454,7 +513,10 @@ interface PanelParts {
   closeBtn: HTMLButtonElement;
   promptInput: HTMLTextAreaElement;
   providerSelect: HTMLSelectElement;
+  modelSelect: HTMLSelectElement;
   modelInput: HTMLInputElement;
+  settingsBtn: HTMLButtonElement;
+  settingsPanel: HTMLElement;
   sendBtn: HTMLButtonElement;
   cancelBtn: HTMLButtonElement;
   streamArea: HTMLElement;
@@ -483,25 +545,28 @@ function buildPanel(): PanelParts {
   const header = el('div', 'hop-ai-header');
   const title = el('span', 'hop-ai-title');
   title.textContent = 'AI 편집';
+  const settingsBtn = el('button', 'hop-ai-settings-btn') as HTMLButtonElement;
+  settingsBtn.textContent = '⚙';
+  settingsBtn.title = '옵션 (API 키·엔드포인트·민감 문서)';
   const closeBtn = el('button', 'hop-ai-close') as HTMLButtonElement;
   closeBtn.textContent = '×';
-  header.append(title, closeBtn);
+  header.append(title, settingsBtn, closeBtn);
 
   const providerSelect = document.createElement('select');
   providerSelect.className = 'hop-ai-provider';
   for (const id of PROVIDERS) {
-    const opt = document.createElement('option');
-    opt.value = id;
-    opt.textContent = PROVIDER_LABELS[id] ?? id;
-    providerSelect.appendChild(opt);
+    providerSelect.appendChild(option(id, PROVIDER_LABELS[id] ?? id));
   }
+  // 모델 선택 드롭다운(provider 변경 시 채워짐) + "직접 입력" 시에만 보이는 자유 입력칸.
+  const modelSelect = document.createElement('select');
+  modelSelect.className = 'hop-ai-model-select';
   const modelInput = document.createElement('input');
   modelInput.className = 'hop-ai-model';
   modelInput.type = 'text';
-  modelInput.placeholder = '모델 (기본값 자동)';
+  modelInput.placeholder = '모델 ID 직접 입력';
 
   const row = el('div', 'hop-ai-row');
-  row.append(providerSelect, modelInput);
+  row.append(providerSelect, modelSelect, modelInput);
 
   // API 키 입력 영역(키가 필요한 provider에서만 노출). 평문 노출을 줄이려 password 입력.
   const keyInput = document.createElement('input');
@@ -547,6 +612,10 @@ function buildPanel(): PanelParts {
   const sensitiveRow = el('label', 'hop-ai-sensitive-row');
   sensitiveRow.append(sensitiveCheckbox, sensitiveText);
 
+  // ⚙ 옵션 패널 — 기본 숨김. API 키·커스텀 엔드포인트·민감 문서 설정을 모은다.
+  const settingsPanel = el('div', 'hop-ai-settings');
+  settingsPanel.append(customRow, keyRow, sensitiveRow);
+
   const promptInput = document.createElement('textarea');
   promptInput.className = 'hop-ai-prompt';
   promptInput.rows = 3;
@@ -574,9 +643,7 @@ function buildPanel(): PanelParts {
   panel.append(
     header,
     row,
-    customRow,
-    keyRow,
-    sensitiveRow,
+    settingsPanel,
     promptInput,
     actions,
     statusArea,
@@ -591,7 +658,10 @@ function buildPanel(): PanelParts {
     closeBtn,
     promptInput,
     providerSelect,
+    modelSelect,
     modelInput,
+    settingsBtn,
+    settingsPanel,
     sendBtn,
     cancelBtn,
     streamArea,
@@ -614,5 +684,12 @@ function buildPanel(): PanelParts {
 function el(tag: string, className: string): HTMLElement {
   const node = document.createElement(tag);
   node.className = className;
+  return node;
+}
+
+function option(value: string, label: string): HTMLOptionElement {
+  const node = document.createElement('option') as HTMLOptionElement;
+  node.value = value;
+  node.textContent = label;
   return node;
 }

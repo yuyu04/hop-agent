@@ -60,13 +60,36 @@
 .hop-ai-row {
   display: flex;
   gap: 6px;
+  flex-wrap: wrap;
 }
 .hop-ai-provider {
   flex: 0 0 110px;
 }
-.hop-ai-model {
+.hop-ai-model-select {
   flex: 1 1 auto;
   min-width: 0;
+}
+.hop-ai-model {
+  flex: 1 1 100%;
+  min-width: 0;
+}
+
+.hop-ai-settings-btn {
+  border: none;
+  background: transparent;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  color: #555;
+}
+.hop-ai-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid #e0e3e8;
+  border-radius: 6px;
+  background: #eef0f3;
 }
 
 .hop-ai-key-row {

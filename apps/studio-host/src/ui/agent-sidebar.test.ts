@@ -391,7 +391,66 @@ describe('AgentSidebar', () => {
     await flush();
 
     expect(bridge.aiRequestEdit).not.toHaveBeenCalled();
-    expect(find('hop-ai-status').textContent).toBe('API 키를 먼저 저장하세요.');
+    expect(find('hop-ai-status').textContent).toContain('API 키를 먼저 저장하세요');
+  });
+
+  it('opens the options panel only when the ⚙ button is pressed', async () => {
+    build();
+    await flush();
+    expect(find('hop-ai-settings').classList.contains('hop-ai-hidden')).toBe(true);
+
+    find('hop-ai-settings-btn').click();
+    expect(find('hop-ai-settings').classList.contains('hop-ai-hidden')).toBe(false);
+
+    find('hop-ai-settings-btn').click();
+    expect(find('hop-ai-settings').classList.contains('hop-ai-hidden')).toBe(true);
+  });
+
+  it('populates the model dropdown per provider and sends the selected model', async () => {
+    bridge.aiHasApiKey.mockResolvedValue(true); // gemini 키 있음 → 전송 허용
+    build();
+    await flush();
+    await selectProvider('gemini');
+
+    expect(find('hop-ai-model-select').value).toBe('gemini-2.5-flash');
+    find('hop-ai-prompt').value = '요약';
+    find('hop-ai-send').click();
+    await flush();
+
+    expect(bridge.aiRequestEdit).toHaveBeenCalledWith(
+      'doc-1',
+      '요약',
+      'gemini',
+      'gemini-2.5-flash',
+      null,
+      null,
+    );
+  });
+
+  it('lets the user type a custom model via 직접 입력', async () => {
+    bridge.aiHasApiKey.mockResolvedValue(true);
+    build();
+    await flush();
+    await selectProvider('gemini');
+
+    const select = find('hop-ai-model-select');
+    select.value = '__custom__';
+    select.fire('change');
+    expect(find('hop-ai-model').classList.contains('hop-ai-hidden')).toBe(false);
+
+    find('hop-ai-model').value = 'gemini-3-flash-preview';
+    find('hop-ai-prompt').value = '요약';
+    find('hop-ai-send').click();
+    await flush();
+
+    expect(bridge.aiRequestEdit).toHaveBeenCalledWith(
+      'doc-1',
+      '요약',
+      'gemini',
+      'gemini-3-flash-preview',
+      null,
+      null,
+    );
   });
 
   async function toggleSensitive(on: boolean): Promise<void> {
