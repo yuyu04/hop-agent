@@ -26,6 +26,18 @@ class FakeWasm implements WasmEditing {
     this.calls.push(`mergeParagraph(${sec},${para})`);
     return '';
   }
+  getCellParagraphLength(s: number, pp: number, ci: number, ce: number, cp: number): number {
+    this.calls.push(`getCellParagraphLength(${s},${pp},${ci},${ce},${cp})`);
+    return this.lengths[`${s}.${pp}.${ci}.${ce}.${cp}`] ?? 0;
+  }
+  insertTextInCell(s: number, pp: number, ci: number, ce: number, cp: number, off: number, text: string): string {
+    this.calls.push(`insertTextInCell(${s},${pp},${ci},${ce},${cp},${off},"${text}")`);
+    return '';
+  }
+  deleteTextInCell(s: number, pp: number, ci: number, ce: number, cp: number, off: number, count: number): string {
+    this.calls.push(`deleteTextInCell(${s},${pp},${ci},${ce},${cp},${off},${count})`);
+    return '';
+  }
 }
 
 function script(edits: ActionScript['edits']): ActionScript {
@@ -119,6 +131,57 @@ describe('applyActionScript', () => {
     expect(result.skipped).toHaveLength(2);
     expect(result.skipped[0].reason).toContain('payload.text');
     // 어떤 편집 프리미티브도 호출되지 않아야 한다(내용 손실 없음).
+    expect(wasm.calls).toEqual([]);
+  });
+
+  it('REPLACE on a table cell clears then inserts in the cell', () => {
+    const wasm = new FakeWasm();
+    wasm.lengths['0.2.0.5.0'] = 11; // sec0,p2,tbl0,cell5,p0 길이
+    const result = applyActionScript(
+      wasm,
+      script([
+        {
+          command: 'REPLACE',
+          target_id: 'sec[0].p[2].tbl[0].cell[5].p[0]',
+          payload: { type: 'paragraph', text: '총 사업비 10억' },
+        },
+      ]),
+    );
+    expect(result.applied).toBe(1);
+    expect(wasm.calls).toEqual([
+      'getCellParagraphLength(0,2,0,5,0)',
+      'deleteTextInCell(0,2,0,5,0,0,11)',
+      'insertTextInCell(0,2,0,5,0,0,"총 사업비 10억")',
+    ]);
+  });
+
+  it('DELETE on a table cell empties the cell text (no paragraph removal)', () => {
+    const wasm = new FakeWasm();
+    wasm.lengths['0.2.0.5.0'] = 4;
+    applyActionScript(
+      wasm,
+      script([{ command: 'DELETE', target_id: 'sec[0].p[2].tbl[0].cell[5].p[0]', payload: {} }]),
+    );
+    expect(wasm.calls).toEqual([
+      'getCellParagraphLength(0,2,0,5,0)',
+      'deleteTextInCell(0,2,0,5,0,0,4)',
+    ]);
+  });
+
+  it('skips paragraph insertion into a table cell (structure change unsupported)', () => {
+    const wasm = new FakeWasm();
+    const result = applyActionScript(
+      wasm,
+      script([
+        {
+          command: 'INSERT_AFTER',
+          target_id: 'sec[0].p[2].tbl[0].cell[5].p[0]',
+          payload: { text: 'x' },
+        },
+      ]),
+    );
+    expect(result.applied).toBe(0);
+    expect(result.skipped[0].reason).toContain('표 셀');
     expect(wasm.calls).toEqual([]);
   });
 

@@ -295,6 +295,8 @@ fn system_prompt() -> String {
      REPLACE·INSERT_BEFORE·INSERT_AFTER 명령은 payload.text에 새 문단의 전체 \
      텍스트를 반드시 채워야 합니다. text가 비어 있으면 안 됩니다. 내용을 비우려는 \
      경우에만 DELETE를 쓰세요. \
+     표 셀은 `sec[s].p[p].tbl[c].cell[k].p[i]` 형식의 ID로 제공됩니다. 표 안의 값을 \
+     바꿀 때는 그 셀 ID를 target_id로 하여 REPLACE 하세요. \
      설명 문장이나 Markdown 없이 JSON만 반환하세요."
         .to_string()
 }

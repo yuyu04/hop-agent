@@ -15,6 +15,8 @@ use std::collections::HashSet;
 const WINDOW_CHAR_THRESHOLD: usize = 30_000;
 /// 커서 기준 앞/뒤로 포함할 문단 수(앞 5 + 뒤 5).
 const WINDOW_RADIUS: usize = 5;
+/// 표 셀 탐색 상한(무한 루프 방지). 일반 문서의 표 셀 수를 충분히 덮는다.
+const MAX_TABLE_CELLS: usize = 4096;
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct DocumentMetadata {
@@ -65,21 +67,27 @@ pub fn build_windowed_context(
     let cursor_path = cursor.map(|(sec, para)| format!("sec[{}].p[{}]", sec, para));
 
     let windowed = selection_only || total_chars > WINDOW_CHAR_THRESHOLD;
-    if !windowed {
-        let selected: Vec<&Paragraph> = paragraphs.iter().collect();
-        return Ok(assemble(selected, total_sections, cursor_path));
-    }
+    let body: Vec<(String, String)> = if !windowed {
+        paragraphs.iter().map(body_node).collect()
+    } else {
+        // 커서를 찾지 못하면 문서 앞쪽(0번)을 기준으로 윈도우를 잡는다.
+        let anchor = cursor
+            .and_then(|(sec, para)| paragraphs.iter().position(|(s, p, _)| *s == sec && *p == para))
+            .unwrap_or(0);
+        let start = anchor.saturating_sub(WINDOW_RADIUS);
+        let end = (anchor + WINDOW_RADIUS + 1).min(paragraphs.len());
+        paragraphs[start..end].iter().map(body_node).collect()
+    };
 
-    // 커서를 찾지 못하면 문서 앞쪽(0번)을 기준으로 윈도우를 잡는다.
-    let anchor = cursor
-        .and_then(|(sec, para)| {
-            paragraphs.iter().position(|(s, p, _)| *s == sec && *p == para)
-        })
-        .unwrap_or(0);
-    let start = anchor.saturating_sub(WINDOW_RADIUS);
-    let end = (anchor + WINDOW_RADIUS + 1).min(paragraphs.len());
-    let selected: Vec<&Paragraph> = paragraphs[start..end].iter().collect();
-    Ok(assemble(selected, total_sections, cursor_path))
+    // 표 셀(스펙 2장)은 본문 윈도우와 무관하게 항상 포함한다 — 편집의 핵심 타깃이다.
+    let mut nodes = body;
+    nodes.extend(collect_table_cells(core));
+
+    Ok(assemble(nodes, total_sections, cursor_path))
+}
+
+fn body_node(p: &Paragraph) -> (String, String) {
+    (format!("sec[{}].p[{}]", p.0, p.1), p.2.clone())
 }
 
 /// `sec[<s>].p[<p>]` 형식의 커서 경로를 `(section, paragraph)`로 파싱한다.
@@ -122,19 +130,18 @@ fn collect_paragraphs(core: &DocumentCore) -> Result<(Vec<Paragraph>, u32), Stri
     Ok((out, total_sections))
 }
 
-/// 선택된 문단 목록으로 `DocumentContext` + 화이트리스트를 조립한다.
+/// `(id, text)` 노드 목록으로 `DocumentContext` + 화이트리스트를 조립한다.
 fn assemble(
-    selected: Vec<&Paragraph>,
+    nodes: Vec<(String, String)>,
     total_sections: u32,
     cursor_path: Option<String>,
 ) -> (DocumentContext, HashSet<String>) {
-    let mut content = Vec::with_capacity(selected.len());
-    let mut whitelist = HashSet::with_capacity(selected.len());
+    let mut content = Vec::with_capacity(nodes.len());
+    let mut whitelist = HashSet::with_capacity(nodes.len());
 
-    for (sec, para, text) in selected {
-        let id = format!("sec[{}].p[{}]", sec, para);
+    for (id, text) in nodes {
         whitelist.insert(id.clone());
-        content.push(ContentNode::Paragraph { id, text: text.clone() });
+        content.push(ContentNode::Paragraph { id, text });
     }
 
     let context = DocumentContext {
@@ -145,6 +152,73 @@ fn assemble(
         content,
     };
     (context, whitelist)
+}
+
+/// `get_page_control_layout_native`의 JSON에서 표 컨트롤 좌표 `(sec, para, ctrl)`만 뽑는다.
+fn parse_table_controls(layout_json: &str) -> Vec<(usize, usize, usize)> {
+    let value: serde_json::Value = match serde_json::from_str(layout_json) {
+        Ok(value) => value,
+        Err(_) => return Vec::new(),
+    };
+    let mut out = Vec::new();
+    if let Some(controls) = value.get("controls").and_then(|c| c.as_array()) {
+        for ctrl in controls {
+            if ctrl.get("type").and_then(|t| t.as_str()) != Some("table") {
+                continue;
+            }
+            if let (Some(s), Some(p), Some(c)) = (
+                ctrl.get("secIdx").and_then(|v| v.as_u64()),
+                ctrl.get("paraIdx").and_then(|v| v.as_u64()),
+                ctrl.get("controlIdx").and_then(|v| v.as_u64()),
+            ) {
+                out.push((s as usize, p as usize, c as usize));
+            }
+        }
+    }
+    out
+}
+
+/// 모든 페이지의 표 셀을 직렬화한다(스펙 2장). 셀 ID는 `sec[S].p[P].tbl[C].cell[K].p[I]`.
+///
+/// 표 위치는 페이지 레이아웃에서 열거하고(다중 페이지 표는 중복 제거), 각 표의 셀은
+/// `get_cell_paragraph_count_native`가 범위 초과로 실패할 때까지 0부터 훑는다.
+fn collect_table_cells(core: &DocumentCore) -> Vec<(String, String)> {
+    let mut tables: Vec<(usize, usize, usize)> = Vec::new();
+    let mut seen: HashSet<(usize, usize, usize)> = HashSet::new();
+    for page in 0..core.page_count() {
+        if let Ok(layout) = core.get_page_control_layout_native(page) {
+            for coords in parse_table_controls(&layout) {
+                if seen.insert(coords) {
+                    tables.push(coords);
+                }
+            }
+        }
+    }
+
+    let mut out = Vec::new();
+    for (sec, para, ctrl) in tables {
+        let mut cell = 0usize;
+        while cell < MAX_TABLE_CELLS {
+            let cell_para_count = match core.get_cell_paragraph_count_native(sec, para, ctrl, cell) {
+                Ok(count) => count,
+                Err(_) => break, // 셀 인덱스 범위 초과 — 표 끝.
+            };
+            for cp in 0..cell_para_count {
+                let length = core
+                    .get_cell_paragraph_length_native(sec, para, ctrl, cell, cp)
+                    .unwrap_or(0);
+                let text = core
+                    .get_text_in_cell_native(sec, para, ctrl, cell, cp, 0, length)
+                    .unwrap_or_default();
+                out.push((
+                    format!("sec[{}].p[{}].tbl[{}].cell[{}].p[{}]", sec, para, ctrl, cell, cp),
+                    text,
+                ));
+            }
+            cell += 1;
+        }
+    }
+    out
 }
 
 /// `get_document_info()` JSON에서 `sectionCount`를 읽는다.
@@ -223,6 +297,23 @@ mod tests {
             );
         }
         assert_eq!(whitelist.len(), context.content.len());
+    }
+
+    #[test]
+    fn parses_table_controls_from_layout_json() {
+        let json = r#"{"controls":[
+            {"type":"table","secIdx":0,"paraIdx":2,"controlIdx":0,"cells":[]},
+            {"type":"image","secIdx":0,"paraIdx":3,"controlIdx":0},
+            {"type":"table","secIdx":1,"paraIdx":0,"controlIdx":1}
+        ]}"#;
+        assert_eq!(parse_table_controls(json), vec![(0, 2, 0), (1, 0, 1)]);
+    }
+
+    #[test]
+    fn parse_table_controls_tolerates_non_table_and_garbage() {
+        assert!(parse_table_controls("not json").is_empty());
+        assert!(parse_table_controls("{}").is_empty());
+        assert!(parse_table_controls(r#"{"controls":[{"type":"image"}]}"#).is_empty());
     }
 
     #[test]

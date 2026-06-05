@@ -15,6 +15,32 @@ export interface WasmEditing {
   deleteText(sec: number, para: number, charOffset: number, count: number): string;
   splitParagraph(sec: number, para: number, charOffset: number): string;
   mergeParagraph(sec: number, para: number): string;
+  // 표 셀 편집(스펙 2장 — 표 지원).
+  getCellParagraphLength(
+    sec: number,
+    parentPara: number,
+    controlIdx: number,
+    cellIdx: number,
+    cellParaIdx: number,
+  ): number;
+  insertTextInCell(
+    sec: number,
+    parentPara: number,
+    controlIdx: number,
+    cellIdx: number,
+    cellParaIdx: number,
+    charOffset: number,
+    text: string,
+  ): string;
+  deleteTextInCell(
+    sec: number,
+    parentPara: number,
+    controlIdx: number,
+    cellIdx: number,
+    cellParaIdx: number,
+    charOffset: number,
+    count: number,
+  ): string;
 }
 
 export interface ApplySkip {
@@ -28,6 +54,7 @@ export interface ApplyResult {
 }
 
 const TARGET_PATTERN = /^sec\[(\d+)\]\.p\[(\d+)\]$/;
+const CELL_PATTERN = /^sec\[(\d+)\]\.p\[(\d+)\]\.tbl\[(\d+)\]\.cell\[(\d+)\]\.p\[(\d+)\]$/;
 
 /** `sec[s].p[p]` 형식의 문단 타깃을 파싱한다. 다른 형식이면 `null`. */
 export function parseParagraphTarget(targetId: string): { sec: number; para: number } | null {
@@ -36,10 +63,36 @@ export function parseParagraphTarget(targetId: string): { sec: number; para: num
   return { sec: Number(match[1]), para: Number(match[2]) };
 }
 
-interface LocatedEdit {
-  edit: Edit;
+export interface CellTarget {
   sec: number;
-  para: number;
+  parentPara: number;
+  controlIdx: number;
+  cellIdx: number;
+  cellParaIdx: number;
+}
+
+/** `sec[s].p[p].tbl[c].cell[k].p[i]` 형식의 표 셀 타깃을 파싱한다. 다른 형식이면 `null`. */
+export function parseCellTarget(targetId: string): CellTarget | null {
+  const match = CELL_PATTERN.exec(targetId);
+  if (!match) return null;
+  return {
+    sec: Number(match[1]),
+    parentPara: Number(match[2]),
+    controlIdx: Number(match[3]),
+    cellIdx: Number(match[4]),
+    cellParaIdx: Number(match[5]),
+  };
+}
+
+type LocatedEdit =
+  | { kind: 'body'; edit: Edit; sec: number; para: number }
+  | { kind: 'cell'; edit: Edit; cell: CellTarget };
+
+function locatedSec(item: LocatedEdit): number {
+  return item.kind === 'body' ? item.sec : item.cell.sec;
+}
+function locatedPara(item: LocatedEdit): number {
+  return item.kind === 'body' ? item.para : item.cell.parentPara;
 }
 
 /**
@@ -53,32 +106,53 @@ export function applyActionScript(wasm: WasmEditing, script: ActionScript): Appl
   const skipped: ApplySkip[] = [];
 
   for (const edit of script.edits) {
-    const target = parseParagraphTarget(edit.target_id);
-    if (!target) {
-      skipped.push({
-        targetId: edit.target_id,
-        reason: '문단 대상이 아닙니다(표/셀 등은 아직 미지원).',
-      });
-      continue;
-    }
     // INSERT/REPLACE는 새 텍스트가 반드시 있어야 한다. text가 비면 적용 시 원문이
     // 빈 문단으로 지워지므로(조용한 내용 손실), 적용하지 않고 건너뛴다.
-    if (edit.command !== 'DELETE' && (edit.payload.text ?? '') === '') {
+    const needsText = edit.command !== 'DELETE';
+    if (needsText && (edit.payload.text ?? '') === '') {
       skipped.push({
         targetId: edit.target_id,
         reason: '새 텍스트(payload.text)가 비어 있어 건너뜀 — 모델이 본문을 채우지 못했습니다.',
       });
       continue;
     }
-    located.push({ edit, sec: target.sec, para: target.para });
+
+    const cell = parseCellTarget(edit.target_id);
+    if (cell) {
+      if (edit.command === 'INSERT_BEFORE' || edit.command === 'INSERT_AFTER') {
+        skipped.push({
+          targetId: edit.target_id,
+          reason: '표 셀에는 문단 삽입이 아직 미지원입니다. 셀 값 변경은 REPLACE를 쓰세요.',
+        });
+        continue;
+      }
+      located.push({ kind: 'cell', edit, cell });
+      continue;
+    }
+
+    const target = parseParagraphTarget(edit.target_id);
+    if (!target) {
+      skipped.push({
+        targetId: edit.target_id,
+        reason: '문단/표 셀 대상이 아닙니다(글상자 등은 아직 미지원).',
+      });
+      continue;
+    }
+    located.push({ kind: 'body', edit, sec: target.sec, para: target.para });
   }
 
-  located.sort((a, b) => b.sec - a.sec || b.para - a.para);
+  // 문단 인덱스가 큰 것부터 적용해, 앞선 편집이 뒤 target의 인덱스를 어긋나게
+  // 만들지 않도록 한다. 셀은 본문 parentPara 기준으로 같이 정렬한다.
+  located.sort((a, b) => locatedSec(b) - locatedSec(a) || locatedPara(b) - locatedPara(a));
 
   let applied = 0;
   for (const item of located) {
     try {
-      applyOne(wasm, item);
+      if (item.kind === 'cell') {
+        applyOneCell(wasm, item.edit, item.cell);
+      } else {
+        applyOne(wasm, item);
+      }
       applied += 1;
     } catch (error) {
       skipped.push({ targetId: item.edit.target_id, reason: String(error) });
@@ -88,7 +162,10 @@ export function applyActionScript(wasm: WasmEditing, script: ActionScript): Appl
   return { applied, skipped };
 }
 
-function applyOne(wasm: WasmEditing, { edit, sec, para }: LocatedEdit): void {
+function applyOne(
+  wasm: WasmEditing,
+  { edit, sec, para }: { edit: Edit; sec: number; para: number },
+): void {
   const text = edit.payload.text ?? '';
   switch (edit.command) {
     case 'INSERT_AFTER': {
@@ -116,5 +193,28 @@ function applyOne(wasm: WasmEditing, { edit, sec, para }: LocatedEdit): void {
       wasm.mergeParagraph(sec, para > 0 ? para : 1);
       break;
     }
+  }
+}
+
+/**
+ * 표 셀 문단에 편집을 적용한다(REPLACE = 값 변경, DELETE = 값 비우기).
+ *
+ * 셀의 문단 구조는 건드리지 않고 텍스트만 교체한다 — 표 행/열 구조 변경(문단
+ * 삽입·삭제)은 호출 측에서 INSERT를 미리 건너뛰므로 여기 들어오지 않는다.
+ */
+function applyOneCell(wasm: WasmEditing, edit: Edit, c: CellTarget): void {
+  const text = edit.payload.text ?? '';
+  const length = wasm.getCellParagraphLength(
+    c.sec,
+    c.parentPara,
+    c.controlIdx,
+    c.cellIdx,
+    c.cellParaIdx,
+  );
+  if (length > 0) {
+    wasm.deleteTextInCell(c.sec, c.parentPara, c.controlIdx, c.cellIdx, c.cellParaIdx, 0, length);
+  }
+  if (edit.command === 'REPLACE') {
+    wasm.insertTextInCell(c.sec, c.parentPara, c.controlIdx, c.cellIdx, c.cellParaIdx, 0, text);
   }
 }
