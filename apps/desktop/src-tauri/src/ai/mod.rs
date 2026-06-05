@@ -106,15 +106,17 @@ struct AiEditFailed {
 pub fn ai_get_document_context(
     doc_id: String,
     current_selection_only: bool,
+    cursor_path: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<serialize::DocumentContext, String> {
-    let _ = current_selection_only;
+    let cursor = cursor_path.as_deref().and_then(serialize::parse_cursor_path);
     let mut sessions = state
         .sessions
         .lock()
         .map_err(|_| "문서 세션 잠금 실패".to_string())?;
     let core = sessions.session_mut(&doc_id)?.ensure_core_loaded()?;
-    let (context, _whitelist) = serialize::build_document_context(core)?;
+    let (context, _whitelist) =
+        serialize::build_windowed_context(core, cursor, current_selection_only)?;
     Ok(context)
 }
 
@@ -126,6 +128,7 @@ pub fn ai_request_edit(
     user_prompt: String,
     provider_id: String,
     model_id: String,
+    cursor_path: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
     // 민감 문서는 외부 provider 전송을 차단한다(스펙 6장 — 공문서 보호).
@@ -136,15 +139,18 @@ pub fn ai_request_edit(
     }
 
     let provider = select_provider(&provider_id, model_id)?;
+    let cursor = cursor_path.as_deref().and_then(serialize::parse_cursor_path);
 
     // 문서 컨텍스트와 화이트리스트는 세션 잠금이 필요하므로 spawn 전에 만든다.
+    // Sliding Window(스펙 4장)로 화이트리스트가 좁혀지면 LLM은 윈도우 밖 문단을
+    // 편집 대상으로 삼을 수 없다(7장 검증과 일관).
     let (context_json, whitelist) = {
         let mut sessions = state
             .sessions
             .lock()
             .map_err(|_| "문서 세션 잠금 실패".to_string())?;
         let core = sessions.session_mut(&doc_id)?.ensure_core_loaded()?;
-        let (context, whitelist) = serialize::build_document_context(core)?;
+        let (context, whitelist) = serialize::build_windowed_context(core, cursor, false)?;
         let json = serde_json::to_string(&context)
             .map_err(|e| format!("문서 컨텍스트 직렬화 실패: {}", e))?;
         (json, whitelist)

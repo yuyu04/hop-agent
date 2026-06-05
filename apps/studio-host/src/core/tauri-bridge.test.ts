@@ -682,6 +682,19 @@ describe('TauriBridge AI commands', () => {
     expect(invokeMock).toHaveBeenCalledWith('ai_get_document_context', {
       docId: 'doc-1',
       currentSelectionOnly: false,
+      cursorPath: null,
+    });
+  });
+
+  it('aiGetDocumentContext forwards the cursor path when provided', async () => {
+    const bridge = new TauriBridge();
+    invokeMock.mockResolvedValue({ document_metadata: { total_sections: 1 }, content: [] });
+
+    await bridge.aiGetDocumentContext('doc-1', true, 'sec[0].p[3]');
+    expect(invokeMock).toHaveBeenCalledWith('ai_get_document_context', {
+      docId: 'doc-1',
+      currentSelectionOnly: true,
+      cursorPath: 'sec[0].p[3]',
     });
   });
 
@@ -695,6 +708,7 @@ describe('TauriBridge AI commands', () => {
       userPrompt: '표 추가',
       providerId: 'mock',
       modelId: 'mock-1',
+      cursorPath: null,
     });
   });
 

@@ -30,6 +30,8 @@ type AgentBridge = AiBridgeApi &
     currentDocId(): string | null;
     getCursorRect(sec: number, para: number, charOffset: number): CursorRect;
     getPageInfo(pageIndex: number): PageInfo;
+    /** 현재 캐럿 위치 — Sliding Window 기준(스펙 4장). 없으면 문서 앞쪽 기준. */
+    getCaretPosition?(): { sectionIndex: number; paragraphIndex: number } | null;
     markDocumentDirty?(): void;
   };
 
@@ -170,13 +172,21 @@ export class AgentSidebar {
     this.setStatus('요청 중…');
     const model = this.modelInput.value.trim() || defaultModel(provider);
 
+    const cursorPath = this.currentCursorPath();
     try {
-      this.context = await this.deps.bridge.aiGetDocumentContext(docId, false);
-      this.requestId = await this.deps.bridge.aiRequestEdit(docId, prompt, provider, model);
+      this.context = await this.deps.bridge.aiGetDocumentContext(docId, false, cursorPath);
+      this.requestId = await this.deps.bridge.aiRequestEdit(docId, prompt, provider, model, cursorPath);
     } catch (error) {
       this.session.onFailed();
       this.setStatus(`요청 실패: ${String(error)}`, 'error');
     }
+  }
+
+  /** 캐럿 위치를 `sec[s].p[p]` 경로로 만든다(Sliding Window 기준, 스펙 4장). */
+  private currentCursorPath(): string | null {
+    const pos = this.deps.bridge.getCaretPosition?.();
+    if (!pos) return null;
+    return `sec[${pos.sectionIndex}].p[${pos.paragraphIndex}]`;
   }
 
   private async cancel(): Promise<void> {

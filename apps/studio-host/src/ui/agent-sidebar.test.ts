@@ -264,8 +264,14 @@ describe('AgentSidebar', () => {
     find('hop-ai-send').click();
     await flush();
 
-    expect(bridge.aiGetDocumentContext).toHaveBeenCalledWith('doc-1', false);
-    expect(bridge.aiRequestEdit).toHaveBeenCalledWith('doc-1', '첫 문단 바꿔줘', 'mock', 'mock-1');
+    expect(bridge.aiGetDocumentContext).toHaveBeenCalledWith('doc-1', false, null);
+    expect(bridge.aiRequestEdit).toHaveBeenCalledWith(
+      'doc-1',
+      '첫 문단 바꿔줘',
+      'mock',
+      'mock-1',
+      null,
+    );
 
     captured!.onDelta?.({ requestId: 'req-1', partialText: '부분 ' });
     captured!.onDelta?.({ requestId: 'req-1', partialText: '응답' });
@@ -425,7 +431,35 @@ describe('AgentSidebar', () => {
     find('hop-ai-send').click();
     await flush();
 
-    expect(bridge.aiRequestEdit).toHaveBeenCalledWith('doc-1', '요약해줘', 'ollama', 'llama3.1');
+    expect(bridge.aiRequestEdit).toHaveBeenCalledWith(
+      'doc-1',
+      '요약해줘',
+      'ollama',
+      'llama3.1',
+      null,
+    );
     expect(bridge.aiSetDocumentSensitivity).toHaveBeenCalledWith('doc-1', true);
+  });
+
+  it('forwards the caret position as the sliding-window anchor', async () => {
+    (bridge as Record<string, unknown>).getCaretPosition = vi.fn(() => ({
+      sectionIndex: 0,
+      paragraphIndex: 7,
+    }));
+    build();
+    await flush();
+    find('hop-ai-prompt').value = '바꿔줘';
+    find('hop-ai-provider').value = 'mock';
+    find('hop-ai-send').click();
+    await flush();
+
+    expect(bridge.aiGetDocumentContext).toHaveBeenCalledWith('doc-1', false, 'sec[0].p[7]');
+    expect(bridge.aiRequestEdit).toHaveBeenCalledWith(
+      'doc-1',
+      '바꿔줘',
+      'mock',
+      'mock-1',
+      'sec[0].p[7]',
+    );
   });
 });
