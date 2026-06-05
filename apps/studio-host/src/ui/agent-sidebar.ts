@@ -406,9 +406,15 @@ export class AgentSidebar {
   private accept(): void {
     if (!this.pendingScript || !this.session.accept()) return;
     const result = applyActionScript(this.deps.bridge, this.pendingScript);
+    this.clearPreview();
+    // 적용된 편집이 없으면 문서를 건드리지 않고(불필요한 dirty 방지) 이유를 알린다.
+    if (result.applied === 0) {
+      const reason = result.skipped[0]?.reason ?? '적용할 수 있는 편집이 없습니다.';
+      this.setStatus(`적용된 편집이 없습니다 — ${reason}`, 'warn');
+      return;
+    }
     this.deps.eventBus.emit('document-changed', 'ai-edit');
     this.deps.bridge.markDocumentDirty?.();
-    this.clearPreview();
     const skippedNote = result.skipped.length ? `, 건너뜀 ${result.skipped.length}건` : '';
     this.setStatus(`적용 완료: ${result.applied}건${skippedNote}.`, 'ok');
   }

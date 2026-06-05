@@ -61,6 +61,15 @@ export function applyActionScript(wasm: WasmEditing, script: ActionScript): Appl
       });
       continue;
     }
+    // INSERT/REPLACE는 새 텍스트가 반드시 있어야 한다. text가 비면 적용 시 원문이
+    // 빈 문단으로 지워지므로(조용한 내용 손실), 적용하지 않고 건너뛴다.
+    if (edit.command !== 'DELETE' && (edit.payload.text ?? '') === '') {
+      skipped.push({
+        targetId: edit.target_id,
+        reason: '새 텍스트(payload.text)가 비어 있어 건너뜀 — 모델이 본문을 채우지 못했습니다.',
+      });
+      continue;
+    }
     located.push({ edit, sec: target.sec, para: target.para });
   }
 

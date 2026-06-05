@@ -299,6 +299,30 @@ describe('AgentSidebar', () => {
     expect(find('hop-ai-diff').children.length).toBe(0);
   });
 
+  it('does not touch the document when every edit is skipped (model left text empty)', async () => {
+    build();
+    await flush();
+    find('hop-ai-prompt').value = '바꿔줘';
+    find('hop-ai-provider').value = 'mock';
+    find('hop-ai-send').click();
+    await flush();
+
+    // 모델이 payload.text를 채우지 않은 REPLACE → 적용 시 원문이 지워지면 안 된다.
+    captured!.onEditReady?.({
+      requestId: 'req-1',
+      actionScriptJson: JSON.stringify({
+        edits: [{ command: 'REPLACE', target_id: 'sec[0].p[0]', payload: { type: 'paragraph' } }],
+      }),
+    });
+    find('hop-ai-accept').click();
+
+    expect(bridge.deleteText).not.toHaveBeenCalled();
+    expect(bridge.insertText).not.toHaveBeenCalled();
+    expect(emit).not.toHaveBeenCalled();
+    expect(bridge.markDocumentDirty).not.toHaveBeenCalled();
+    expect(find('hop-ai-status').textContent).toContain('적용된 편집이 없습니다');
+  });
+
   it('ignores ready events for a different request id', async () => {
     build();
     await flush();

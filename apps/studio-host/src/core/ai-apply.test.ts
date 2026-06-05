@@ -104,6 +104,24 @@ describe('applyActionScript', () => {
     ]);
   });
 
+  it('skips REPLACE/INSERT with empty or missing text instead of wiping the paragraph', () => {
+    const wasm = new FakeWasm();
+    wasm.lengths['0.0'] = 8;
+    const result = applyActionScript(
+      wasm,
+      script([
+        // 모델이 text를 채우지 않은 경우(REPLACE) — 원문이 지워지면 안 된다.
+        { command: 'REPLACE', target_id: 'sec[0].p[0]', payload: { type: 'paragraph' } },
+        { command: 'INSERT_AFTER', target_id: 'sec[0].p[1]', payload: { text: '' } },
+      ]),
+    );
+    expect(result.applied).toBe(0);
+    expect(result.skipped).toHaveLength(2);
+    expect(result.skipped[0].reason).toContain('payload.text');
+    // 어떤 편집 프리미티브도 호출되지 않아야 한다(내용 손실 없음).
+    expect(wasm.calls).toEqual([]);
+  });
+
   it('skips non-paragraph target ids', () => {
     const wasm = new FakeWasm();
     const result = applyActionScript(
