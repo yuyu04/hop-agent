@@ -190,9 +190,9 @@ function createBridge() {
     deleteText: vi.fn(() => ''),
     splitParagraph: vi.fn(() => ''),
     mergeParagraph: vi.fn(() => ''),
-    getCellParagraphLength: vi.fn(() => 0),
-    insertTextInCell: vi.fn(() => ''),
-    deleteTextInCell: vi.fn(() => ''),
+    getCellParagraphLengthByPath: vi.fn(() => 0),
+    insertTextInCellByPath: vi.fn(() => ''),
+    deleteTextInCellByPath: vi.fn(() => ''),
     markDocumentDirty: vi.fn(),
   };
 }

@@ -9,14 +9,12 @@
 
 use rhwp::DocumentCore;
 use serde::Serialize;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 /// 스펙 4장 Sliding Window 임계치 — 전체 글자 수가 이를 넘으면 커서 주변만 직렬화한다.
 const WINDOW_CHAR_THRESHOLD: usize = 30_000;
 /// 커서 기준 앞/뒤로 포함할 문단 수(앞 5 + 뒤 5).
 const WINDOW_RADIUS: usize = 5;
-/// 표 셀 탐색 상한(무한 루프 방지). 일반 문서의 표 셀 수를 충분히 덮는다.
-const MAX_TABLE_CELLS: usize = 4096;
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct DocumentMetadata {
@@ -79,9 +77,9 @@ pub fn build_windowed_context(
         paragraphs[start..end].iter().map(body_node).collect()
     };
 
-    // 표 셀(스펙 2장)은 본문 윈도우와 무관하게 항상 포함한다 — 편집의 핵심 타깃이다.
+    // 표 셀(중첩 포함, 스펙 2장)은 본문 윈도우와 무관하게 항상 포함한다 — 편집 핵심 타깃.
     let mut nodes = body;
-    nodes.extend(collect_table_cells(core));
+    nodes.extend(collect_cells(core));
 
     Ok(assemble(nodes, total_sections, cursor_path))
 }
@@ -154,68 +152,92 @@ fn assemble(
     (context, whitelist)
 }
 
-/// `get_page_control_layout_native`의 JSON에서 표 컨트롤 좌표 `(sec, para, ctrl)`만 뽑는다.
-fn parse_table_controls(layout_json: &str) -> Vec<(usize, usize, usize)> {
-    let value: serde_json::Value = match serde_json::from_str(layout_json) {
+/// 텍스트 레이아웃 JSON(`get_page_text_layout_native`)에서 표 셀(중첩 포함) 문단을
+/// `(id, text)`로 추출·병합한다. 셀 ID: `sec[S].p[PP]` + 경로 단계마다
+/// `.tbl[C].cell[K].p[CP]`(중첩 표는 단계가 반복된다). 한 문단의 여러 run은 이어붙인다.
+///
+/// 본문(셀 밖) 텍스트는 `collect_paragraphs`(모델 경로)가 담당하므로 여기선 제외한다.
+fn parse_cell_runs(text_layout_json: &str) -> Vec<(String, String)> {
+    let value: serde_json::Value = match serde_json::from_str(text_layout_json) {
         Ok(value) => value,
         Err(_) => return Vec::new(),
     };
-    let mut out = Vec::new();
-    if let Some(controls) = value.get("controls").and_then(|c| c.as_array()) {
-        for ctrl in controls {
-            if ctrl.get("type").and_then(|t| t.as_str()) != Some("table") {
-                continue;
-            }
-            if let (Some(s), Some(p), Some(c)) = (
-                ctrl.get("secIdx").and_then(|v| v.as_u64()),
-                ctrl.get("paraIdx").and_then(|v| v.as_u64()),
-                ctrl.get("controlIdx").and_then(|v| v.as_u64()),
-            ) {
-                out.push((s as usize, p as usize, c as usize));
-            }
-        }
-    }
-    out
-}
+    let runs = match value.get("runs").and_then(|r| r.as_array()) {
+        Some(runs) => runs,
+        None => return Vec::new(),
+    };
 
-/// 모든 페이지의 표 셀을 직렬화한다(스펙 2장). 셀 ID는 `sec[S].p[P].tbl[C].cell[K].p[I]`.
-///
-/// 표 위치는 페이지 레이아웃에서 열거하고(다중 페이지 표는 중복 제거), 각 표의 셀은
-/// `get_cell_paragraph_count_native`가 범위 초과로 실패할 때까지 0부터 훑는다.
-fn collect_table_cells(core: &DocumentCore) -> Vec<(String, String)> {
-    let mut tables: Vec<(usize, usize, usize)> = Vec::new();
-    let mut seen: HashSet<(usize, usize, usize)> = HashSet::new();
-    for page in 0..core.page_count() {
-        if let Ok(layout) = core.get_page_control_layout_native(page) {
-            for coords in parse_table_controls(&layout) {
-                if seen.insert(coords) {
-                    tables.push(coords);
+    let mut order: Vec<String> = Vec::new();
+    let mut by_id: HashMap<String, String> = HashMap::new();
+    for run in runs {
+        let path = match run.get("cellPath").and_then(|p| p.as_array()) {
+            Some(path) if !path.is_empty() => path,
+            _ => continue,
+        };
+        let sec = run.get("secIdx").and_then(|v| v.as_u64()).unwrap_or(0);
+        let parent_para = match run.get("parentParaIdx").and_then(|v| v.as_u64()) {
+            Some(value) => value,
+            None => continue,
+        };
+
+        let mut id = format!("sec[{}].p[{}]", sec, parent_para);
+        let mut path_ok = true;
+        for entry in path {
+            match (
+                entry.get("controlIndex").and_then(|v| v.as_u64()),
+                entry.get("cellIndex").and_then(|v| v.as_u64()),
+                entry.get("cellParaIndex").and_then(|v| v.as_u64()),
+            ) {
+                (Some(c), Some(k), Some(cp)) => {
+                    id.push_str(&format!(".tbl[{}].cell[{}].p[{}]", c, k, cp));
+                }
+                _ => {
+                    path_ok = false;
+                    break;
                 }
             }
         }
+        if !path_ok {
+            continue;
+        }
+
+        let text = run.get("text").and_then(|t| t.as_str()).unwrap_or("");
+        match by_id.get_mut(&id) {
+            Some(existing) => existing.push_str(text),
+            None => {
+                by_id.insert(id.clone(), text.to_string());
+                order.push(id);
+            }
+        }
     }
 
-    let mut out = Vec::new();
-    for (sec, para, ctrl) in tables {
-        let mut cell = 0usize;
-        while cell < MAX_TABLE_CELLS {
-            let cell_para_count = match core.get_cell_paragraph_count_native(sec, para, ctrl, cell) {
-                Ok(count) => count,
-                Err(_) => break, // 셀 인덱스 범위 초과 — 표 끝.
-            };
-            for cp in 0..cell_para_count {
-                let length = core
-                    .get_cell_paragraph_length_native(sec, para, ctrl, cell, cp)
-                    .unwrap_or(0);
-                let text = core
-                    .get_text_in_cell_native(sec, para, ctrl, cell, cp, 0, length)
-                    .unwrap_or_default();
-                out.push((
-                    format!("sec[{}].p[{}].tbl[{}].cell[{}].p[{}]", sec, para, ctrl, cell, cp),
-                    text,
-                ));
+    order
+        .into_iter()
+        .map(|id| {
+            let text = by_id.remove(&id).unwrap_or_default();
+            (id, text)
+        })
+        .collect()
+}
+
+/// 모든 페이지의 표 셀(중첩 포함)을 직렬화한다(스펙 2장). 다중 페이지에 걸친 셀
+/// 문단은 이어붙인다.
+fn collect_cells(core: &DocumentCore) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    let mut index: HashMap<String, usize> = HashMap::new();
+    for page in 0..core.page_count() {
+        let layout = match core.get_page_text_layout_native(page) {
+            Ok(layout) => layout,
+            Err(_) => continue,
+        };
+        for (id, text) in parse_cell_runs(&layout) {
+            match index.get(&id) {
+                Some(&pos) => out[pos].1.push_str(&text),
+                None => {
+                    index.insert(id.clone(), out.len());
+                    out.push((id, text));
+                }
             }
-            cell += 1;
         }
     }
     out
@@ -300,20 +322,38 @@ mod tests {
     }
 
     #[test]
-    fn parses_table_controls_from_layout_json() {
-        let json = r#"{"controls":[
-            {"type":"table","secIdx":0,"paraIdx":2,"controlIdx":0,"cells":[]},
-            {"type":"image","secIdx":0,"paraIdx":3,"controlIdx":0},
-            {"type":"table","secIdx":1,"paraIdx":0,"controlIdx":1}
+    fn parses_top_level_and_nested_cell_runs_with_paths() {
+        // 본문 run(cellPath 없음)은 제외, 셀 run만 경로 ID로 병합한다.
+        let json = r#"{"runs":[
+            {"text":"제목","secIdx":0,"paraIdx":0},
+            {"text":"525,","secIdx":0,"parentParaIdx":0,"cellPath":[
+                {"controlIndex":2,"cellIndex":0,"cellParaIndex":4},
+                {"controlIndex":0,"cellIndex":11,"cellParaIndex":0}]},
+            {"text":"000,000","secIdx":0,"parentParaIdx":0,"cellPath":[
+                {"controlIndex":2,"cellIndex":0,"cellParaIndex":4},
+                {"controlIndex":0,"cellIndex":11,"cellParaIndex":0}]},
+            {"text":"머리","secIdx":0,"parentParaIdx":0,"cellPath":[
+                {"controlIndex":2,"cellIndex":0,"cellParaIndex":0}]}
         ]}"#;
-        assert_eq!(parse_table_controls(json), vec![(0, 2, 0), (1, 0, 1)]);
+        let cells = parse_cell_runs(json);
+        assert_eq!(
+            cells,
+            vec![
+                (
+                    "sec[0].p[0].tbl[2].cell[0].p[4].tbl[0].cell[11].p[0]".to_string(),
+                    "525,000,000".to_string(),
+                ),
+                ("sec[0].p[0].tbl[2].cell[0].p[0]".to_string(), "머리".to_string()),
+            ]
+        );
     }
 
     #[test]
-    fn parse_table_controls_tolerates_non_table_and_garbage() {
-        assert!(parse_table_controls("not json").is_empty());
-        assert!(parse_table_controls("{}").is_empty());
-        assert!(parse_table_controls(r#"{"controls":[{"type":"image"}]}"#).is_empty());
+    fn parse_cell_runs_tolerates_garbage_and_bodyonly() {
+        assert!(parse_cell_runs("not json").is_empty());
+        assert!(parse_cell_runs("{}").is_empty());
+        // 본문 run만 있으면(cellPath 없음) 빈 결과.
+        assert!(parse_cell_runs(r#"{"runs":[{"text":"x","secIdx":0,"paraIdx":1}]}"#).is_empty());
     }
 
     #[test]

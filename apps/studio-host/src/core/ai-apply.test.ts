@@ -26,16 +26,16 @@ class FakeWasm implements WasmEditing {
     this.calls.push(`mergeParagraph(${sec},${para})`);
     return '';
   }
-  getCellParagraphLength(s: number, pp: number, ci: number, ce: number, cp: number): number {
-    this.calls.push(`getCellParagraphLength(${s},${pp},${ci},${ce},${cp})`);
-    return this.lengths[`${s}.${pp}.${ci}.${ce}.${cp}`] ?? 0;
+  getCellParagraphLengthByPath(s: number, pp: number, pathJson: string): number {
+    this.calls.push(`getCellParagraphLengthByPath(${s},${pp},${pathJson})`);
+    return this.lengths[`${s}.${pp}.${pathJson}`] ?? 0;
   }
-  insertTextInCell(s: number, pp: number, ci: number, ce: number, cp: number, off: number, text: string): string {
-    this.calls.push(`insertTextInCell(${s},${pp},${ci},${ce},${cp},${off},"${text}")`);
+  insertTextInCellByPath(s: number, pp: number, pathJson: string, off: number, text: string): string {
+    this.calls.push(`insertTextInCellByPath(${s},${pp},${pathJson},${off},"${text}")`);
     return '';
   }
-  deleteTextInCell(s: number, pp: number, ci: number, ce: number, cp: number, off: number, count: number): string {
-    this.calls.push(`deleteTextInCell(${s},${pp},${ci},${ce},${cp},${off},${count})`);
+  deleteTextInCellByPath(s: number, pp: number, pathJson: string, off: number, count: number): string {
+    this.calls.push(`deleteTextInCellByPath(${s},${pp},${pathJson},${off},${count})`);
     return '';
   }
 }
@@ -134,9 +134,10 @@ describe('applyActionScript', () => {
     expect(wasm.calls).toEqual([]);
   });
 
-  it('REPLACE on a table cell clears then inserts in the cell', () => {
+  it('REPLACE on a top-level table cell clears then inserts via by-path', () => {
     const wasm = new FakeWasm();
-    wasm.lengths['0.2.0.5.0'] = 11; // sec0,p2,tbl0,cell5,p0 길이
+    const path = '[{"controlIndex":0,"cellIndex":5,"cellParaIndex":0}]';
+    wasm.lengths[`0.2.${path}`] = 11;
     const result = applyActionScript(
       wasm,
       script([
@@ -149,22 +150,46 @@ describe('applyActionScript', () => {
     );
     expect(result.applied).toBe(1);
     expect(wasm.calls).toEqual([
-      'getCellParagraphLength(0,2,0,5,0)',
-      'deleteTextInCell(0,2,0,5,0,0,11)',
-      'insertTextInCell(0,2,0,5,0,0,"총 사업비 10억")',
+      `getCellParagraphLengthByPath(0,2,${path})`,
+      `deleteTextInCellByPath(0,2,${path},0,11)`,
+      `insertTextInCellByPath(0,2,${path},0,"총 사업비 10억")`,
+    ]);
+  });
+
+  it('REPLACE on a NESTED table cell uses the full path', () => {
+    const wasm = new FakeWasm();
+    const path =
+      '[{"controlIndex":2,"cellIndex":0,"cellParaIndex":4},{"controlIndex":0,"cellIndex":11,"cellParaIndex":0}]';
+    wasm.lengths[`0.0.${path}`] = 11;
+    const result = applyActionScript(
+      wasm,
+      script([
+        {
+          command: 'REPLACE',
+          target_id: 'sec[0].p[0].tbl[2].cell[0].p[4].tbl[0].cell[11].p[0]',
+          payload: { text: '1,000,000,000' },
+        },
+      ]),
+    );
+    expect(result.applied).toBe(1);
+    expect(wasm.calls).toEqual([
+      `getCellParagraphLengthByPath(0,0,${path})`,
+      `deleteTextInCellByPath(0,0,${path},0,11)`,
+      `insertTextInCellByPath(0,0,${path},0,"1,000,000,000")`,
     ]);
   });
 
   it('DELETE on a table cell empties the cell text (no paragraph removal)', () => {
     const wasm = new FakeWasm();
-    wasm.lengths['0.2.0.5.0'] = 4;
+    const path = '[{"controlIndex":0,"cellIndex":5,"cellParaIndex":0}]';
+    wasm.lengths[`0.2.${path}`] = 4;
     applyActionScript(
       wasm,
       script([{ command: 'DELETE', target_id: 'sec[0].p[2].tbl[0].cell[5].p[0]', payload: {} }]),
     );
     expect(wasm.calls).toEqual([
-      'getCellParagraphLength(0,2,0,5,0)',
-      'deleteTextInCell(0,2,0,5,0,0,4)',
+      `getCellParagraphLengthByPath(0,2,${path})`,
+      `deleteTextInCellByPath(0,2,${path},0,4)`,
     ]);
   });
 

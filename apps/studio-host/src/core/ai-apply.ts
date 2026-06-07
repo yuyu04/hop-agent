@@ -15,29 +15,19 @@ export interface WasmEditing {
   deleteText(sec: number, para: number, charOffset: number, count: number): string;
   splitParagraph(sec: number, para: number, charOffset: number): string;
   mergeParagraph(sec: number, para: number): string;
-  // 표 셀 편집(스펙 2장 — 표 지원).
-  getCellParagraphLength(
+  // 표 셀 편집(중첩 포함, 스펙 2장). pathJson은 `[{controlIndex,cellIndex,cellParaIndex}, …]`.
+  getCellParagraphLengthByPath(sec: number, parentPara: number, pathJson: string): number;
+  insertTextInCellByPath(
     sec: number,
     parentPara: number,
-    controlIdx: number,
-    cellIdx: number,
-    cellParaIdx: number,
-  ): number;
-  insertTextInCell(
-    sec: number,
-    parentPara: number,
-    controlIdx: number,
-    cellIdx: number,
-    cellParaIdx: number,
+    pathJson: string,
     charOffset: number,
     text: string,
   ): string;
-  deleteTextInCell(
+  deleteTextInCellByPath(
     sec: number,
     parentPara: number,
-    controlIdx: number,
-    cellIdx: number,
-    cellParaIdx: number,
+    pathJson: string,
     charOffset: number,
     count: number,
   ): string;
@@ -54,7 +44,8 @@ export interface ApplyResult {
 }
 
 const TARGET_PATTERN = /^sec\[(\d+)\]\.p\[(\d+)\]$/;
-const CELL_PATTERN = /^sec\[(\d+)\]\.p\[(\d+)\]\.tbl\[(\d+)\]\.cell\[(\d+)\]\.p\[(\d+)\]$/;
+const CELL_BASE_PATTERN = /^sec\[(\d+)\]\.p\[(\d+)\]((?:\.tbl\[\d+\]\.cell\[\d+\]\.p\[\d+\])+)$/;
+const CELL_SEGMENT_PATTERN = /\.tbl\[(\d+)\]\.cell\[(\d+)\]\.p\[(\d+)\]/g;
 
 /** `sec[s].p[p]` 형식의 문단 타깃을 파싱한다. 다른 형식이면 `null`. */
 export function parseParagraphTarget(targetId: string): { sec: number; para: number } | null {
@@ -63,25 +54,38 @@ export function parseParagraphTarget(targetId: string): { sec: number; para: num
   return { sec: Number(match[1]), para: Number(match[2]) };
 }
 
+/** 표 셀 경로 한 단계(by-path API의 JSON 항목). */
+export interface CellPathEntry {
+  controlIndex: number;
+  cellIndex: number;
+  cellParaIndex: number;
+}
+
 export interface CellTarget {
   sec: number;
   parentPara: number;
-  controlIdx: number;
-  cellIdx: number;
-  cellParaIdx: number;
+  /** 본문 → (중첩) 셀 문단까지의 경로. 길이 1=최상위 표, 2+=중첩 표. */
+  path: CellPathEntry[];
 }
 
-/** `sec[s].p[p].tbl[c].cell[k].p[i]` 형식의 표 셀 타깃을 파싱한다. 다른 형식이면 `null`. */
+/**
+ * `sec[s].p[p].tbl[c].cell[k].p[i]`(+ 중첩 시 `.tbl[..].cell[..].p[..]` 반복) 형식의
+ * 표 셀 타깃을 파싱한다. 다른 형식이면 `null`.
+ */
 export function parseCellTarget(targetId: string): CellTarget | null {
-  const match = CELL_PATTERN.exec(targetId);
-  if (!match) return null;
-  return {
-    sec: Number(match[1]),
-    parentPara: Number(match[2]),
-    controlIdx: Number(match[3]),
-    cellIdx: Number(match[4]),
-    cellParaIdx: Number(match[5]),
-  };
+  const base = CELL_BASE_PATTERN.exec(targetId);
+  if (!base) return null;
+  const path: CellPathEntry[] = [];
+  CELL_SEGMENT_PATTERN.lastIndex = 0;
+  let seg: RegExpExecArray | null;
+  while ((seg = CELL_SEGMENT_PATTERN.exec(base[3])) !== null) {
+    path.push({
+      controlIndex: Number(seg[1]),
+      cellIndex: Number(seg[2]),
+      cellParaIndex: Number(seg[3]),
+    });
+  }
+  return { sec: Number(base[1]), parentPara: Number(base[2]), path };
 }
 
 type LocatedEdit =
@@ -204,17 +208,12 @@ function applyOne(
  */
 function applyOneCell(wasm: WasmEditing, edit: Edit, c: CellTarget): void {
   const text = edit.payload.text ?? '';
-  const length = wasm.getCellParagraphLength(
-    c.sec,
-    c.parentPara,
-    c.controlIdx,
-    c.cellIdx,
-    c.cellParaIdx,
-  );
+  const pathJson = JSON.stringify(c.path);
+  const length = wasm.getCellParagraphLengthByPath(c.sec, c.parentPara, pathJson);
   if (length > 0) {
-    wasm.deleteTextInCell(c.sec, c.parentPara, c.controlIdx, c.cellIdx, c.cellParaIdx, 0, length);
+    wasm.deleteTextInCellByPath(c.sec, c.parentPara, pathJson, 0, length);
   }
   if (edit.command === 'REPLACE') {
-    wasm.insertTextInCell(c.sec, c.parentPara, c.controlIdx, c.cellIdx, c.cellParaIdx, 0, text);
+    wasm.insertTextInCellByPath(c.sec, c.parentPara, pathJson, 0, text);
   }
 }
