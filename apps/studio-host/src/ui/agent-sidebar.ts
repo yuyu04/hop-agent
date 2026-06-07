@@ -1,9 +1,10 @@
 /**
- * 최소 AI Agent Sidebar(스펙 1·4·7장).
+ * AI Agent Sidebar — Cursor IDE식 대화형 편집 패널(스펙 1·4·7장).
  *
- * 지시 입력 → `aiRequestEdit` → `hop-ai-*` 이벤트 수신 → 가상 Diff 미리보기
- * (사이드바 목록 + 페이지 하이라이트) → 승인 시에만 라이브 WASM 문서에 적용.
- * 데스크톱(Tauri) 런타임에서만 동작한다.
+ * 대화 스레드(유저/AI 버블) + 하단 입력 컴포저(모델 선택 · 이미지/문서 첨부)로
+ * 구성된다. 지시 → `aiRequestEdit` → `hop-ai-*` 이벤트 → 어시스턴트 버블에서
+ * 스트리밍/가상 Diff 미리보기 → 승인 시에만 라이브 WASM 문서에 적용한다.
+ * 데스크톱(Tauri) 런타임 전용.
  */
 
 import '@/styles/agent-sidebar.css';
@@ -18,7 +19,7 @@ import {
   type AiStreamDelta,
   type DocumentContext,
 } from '@/core/ai-bridge';
-import type { AiBridgeApi } from '@/core/tauri-bridge';
+import type { AiBridgeApi, AiImageInput } from '@/core/tauri-bridge';
 import { applyActionScript, parseParagraphTarget, type WasmEditing } from '@/core/ai-apply';
 import { buildDiffModel, type DiffItem } from '@/core/ai-diff';
 import { AiSessionMachine } from '@/core/ai-session';
@@ -63,7 +64,7 @@ const KEY_PROVIDERS = new Set<string>(['openai', 'anthropic', 'gemini']);
 /** 본문이 외부로 나가지 않는 로컬 provider. 민감 문서에서도 허용된다(스펙 6장). */
 const LOCAL_PROVIDERS = new Set<string>(['mock', 'ollama']);
 
-/** openai-compat 프리셋 — Base URL + 추천 모델 자동 채움. base는 `/v1/chat/completions`를 덧붙인다. */
+/** openai-compat 프리셋 — Base URL + 추천 모델 자동 채움. */
 const CUSTOM_PRESETS: Record<string, { baseUrl: string; model: string }> = {
   groq: { baseUrl: 'https://api.groq.com/openai', model: 'llama-3.1-8b-instant' },
   openrouter: { baseUrl: 'https://openrouter.ai/api', model: 'meta-llama/llama-3.1-8b-instruct:free' },
@@ -83,18 +84,39 @@ const MODELS: Record<string, string[]> = {
   [CUSTOM_PROVIDER]: ['llama-3.1-8b-instant', 'llama-3.3-70b-versatile'],
 };
 
+/** 첨부 파일 — 이미지(vision 전달) 또는 텍스트 문서(프롬프트에 인라인). */
+interface Attachment {
+  id: string;
+  kind: 'image' | 'doc';
+  name: string;
+  mime?: string;
+  dataBase64?: string;
+  text?: string;
+}
+
+/** 진행 중인 어시스턴트 턴의 DOM 참조. */
+interface ActiveTurn {
+  streamEl: HTMLElement;
+  bodyEl: HTMLElement;
+  acceptBtn: HTMLButtonElement;
+  rejectBtn: HTMLButtonElement;
+  statusEl: HTMLElement;
+}
+
 export class AgentSidebar {
   private readonly panel: HTMLElement;
+  private readonly thread: HTMLElement;
   private readonly promptInput: HTMLTextAreaElement;
   private readonly providerSelect: HTMLSelectElement;
   private readonly modelSelect: HTMLSelectElement;
   private readonly modelInput: HTMLInputElement;
-  private readonly settingsPanel: HTMLElement;
-  private readonly streamArea: HTMLElement;
-  private readonly diffArea: HTMLElement;
+  private readonly sendBtn: HTMLButtonElement;
+  private readonly cancelBtn: HTMLButtonElement;
   private readonly statusArea: HTMLElement;
-  private readonly acceptBtn: HTMLButtonElement;
-  private readonly rejectBtn: HTMLButtonElement;
+  private readonly chipsArea: HTMLElement;
+  private readonly imageInput: HTMLInputElement;
+  private readonly docInput: HTMLInputElement;
+  private readonly settingsPanel: HTMLElement;
   private readonly keyRow: HTMLElement;
   private readonly keyInput: HTMLInputElement;
   private readonly keyStatus: HTMLElement;
@@ -105,10 +127,10 @@ export class AgentSidebar {
   private readonly presetSelect: HTMLSelectElement;
 
   private readonly session: AiSessionMachine;
-  /** provider_id → 키 저장 여부(보안 저장소 조회 캐시). */
   private readonly keyState = new Map<string, boolean>();
-  /** 민감 문서 표시 여부(스펙 6장). true면 외부 provider 전송을 막는다. */
   private sensitive = false;
+  private attachments: Attachment[] = [];
+  private active: ActiveTurn | null = null;
   private unsubscribe: AiEventUnsubscribe | null = null;
   private requestId: string | null = null;
   private context: DocumentContext | null = null;
@@ -118,16 +140,18 @@ export class AgentSidebar {
     this.session = new AiSessionMachine({ onRollback: () => this.clearPreview() });
     const built = buildPanel();
     this.panel = built.panel;
+    this.thread = built.thread;
     this.promptInput = built.promptInput;
     this.providerSelect = built.providerSelect;
     this.modelSelect = built.modelSelect;
     this.modelInput = built.modelInput;
-    this.settingsPanel = built.settingsPanel;
-    this.streamArea = built.streamArea;
-    this.diffArea = built.diffArea;
+    this.sendBtn = built.sendBtn;
+    this.cancelBtn = built.cancelBtn;
     this.statusArea = built.statusArea;
-    this.acceptBtn = built.acceptBtn;
-    this.rejectBtn = built.rejectBtn;
+    this.chipsArea = built.chipsArea;
+    this.imageInput = built.imageInput;
+    this.docInput = built.docInput;
+    this.settingsPanel = built.settingsPanel;
     this.keyRow = built.keyRow;
     this.keyInput = built.keyInput;
     this.keyStatus = built.keyStatus;
@@ -137,27 +161,33 @@ export class AgentSidebar {
     this.baseUrlInput = built.baseUrlInput;
     this.presetSelect = built.presetSelect;
 
-    built.sendBtn.addEventListener('click', () => void this.send());
-    built.cancelBtn.addEventListener('click', () => void this.cancel());
-    this.acceptBtn.addEventListener('click', () => this.accept());
-    this.rejectBtn.addEventListener('click', () => this.reject());
+    this.sendBtn.addEventListener('click', () => void this.send());
+    this.cancelBtn.addEventListener('click', () => void this.cancel());
     built.closeBtn.addEventListener('click', () => this.toggle(false));
     built.toggleBtn.addEventListener('click', () => this.toggle());
+    built.newChatBtn.addEventListener('click', () => this.newConversation());
     built.settingsBtn.addEventListener('click', () => this.toggleSettings());
+    built.attachImageBtn.addEventListener('click', () => this.imageInput.click());
+    built.attachDocBtn.addEventListener('click', () => this.docInput.click());
+    this.imageInput.addEventListener('change', () => void this.onImagePicked());
+    this.docInput.addEventListener('change', () => void this.onDocPicked());
     this.providerSelect.addEventListener('change', () => void this.onProviderChange());
     this.modelSelect.addEventListener('change', () => this.updateModelVisibility());
     built.keySaveBtn.addEventListener('click', () => void this.saveKey());
     this.keyClearBtn.addEventListener('click', () => void this.clearKey());
     this.sensitiveCheckbox.addEventListener('change', () => void this.onSensitivityToggle());
     this.presetSelect.addEventListener('change', () => this.applyPreset());
+    this.promptInput.addEventListener('keydown', (event) => this.onPromptKeydown(event as KeyboardEvent));
+    this.panel.addEventListener('paste', (event) => void this.onPaste(event as ClipboardEvent));
 
     document.body.appendChild(built.toggleBtn);
     document.body.appendChild(this.panel);
-    this.setPreviewEnabled(false);
+    this.settingsPanel.classList.add('hop-ai-hidden');
     this.keyRow.classList.add('hop-ai-hidden');
     this.customRow.classList.add('hop-ai-hidden');
-    this.settingsPanel.classList.add('hop-ai-hidden');
+    this.setRequesting(false);
     this.populateModels(this.providerSelect.value);
+    this.renderChips();
     void this.subscribe();
     void this.refreshKeyState();
   }
@@ -181,6 +211,18 @@ export class AgentSidebar {
     this.panel.remove();
   }
 
+  /** 새 대화 — 스레드 비우고 진행 중 미리보기를 정리한다. */
+  private newConversation(): void {
+    this.session.cancel();
+    this.clearPreview();
+    this.requestId = null;
+    this.active = null;
+    this.thread.replaceChildren();
+    this.attachments = [];
+    this.renderChips();
+    this.setStatus('');
+  }
+
   private async send(): Promise<void> {
     const prompt = this.promptInput.value.trim();
     if (!prompt) {
@@ -192,7 +234,6 @@ export class AgentSidebar {
       this.setStatus('먼저 문서를 여세요.', 'warn');
       return;
     }
-
     const provider = this.providerSelect.value;
     if (this.sensitive && !LOCAL_PROVIDERS.has(provider)) {
       this.setStatus('민감 문서로 표시됨 — 로컬 모델(ollama)이나 mock만 사용할 수 있습니다.', 'warn');
@@ -210,7 +251,23 @@ export class AgentSidebar {
       return;
     }
 
-    // 네이티브에 현재 문서의 민감 표시를 동기화한다(차단의 2중 방어, 스펙 6장).
+    // 미확정 Diff가 있으면 자동 롤백 후 진행(스펙 4장 동시성).
+    const attachments = this.attachments;
+    const docText = attachments
+      .filter((a) => a.kind === 'doc')
+      .map((a) => `[첨부 문서: ${a.name}]\n${a.text ?? ''}`)
+      .join('\n\n');
+    const images: AiImageInput[] = attachments
+      .filter((a) => a.kind === 'image' && a.dataBase64)
+      .map((a) => ({ mimeType: a.mime ?? 'image/png', dataBase64: a.dataBase64! }));
+    const effectivePrompt = docText ? `${docText}\n\n${prompt}` : prompt;
+
+    this.appendUserTurn(prompt, attachments);
+    this.active = this.appendAssistantTurn();
+    this.promptInput.value = '';
+    this.attachments = [];
+    this.renderChips();
+
     try {
       await this.deps.bridge.aiSetDocumentSensitivity(docId, this.sensitive);
     } catch {
@@ -218,65 +275,26 @@ export class AgentSidebar {
     }
 
     this.session.startRequest();
-    this.streamArea.textContent = '';
+    this.setRequesting(true);
     this.setStatus('요청 중…');
     const model = this.currentModel();
-
     const cursorPath = this.currentCursorPath();
     try {
       this.context = await this.deps.bridge.aiGetDocumentContext(docId, false, cursorPath);
       this.requestId = await this.deps.bridge.aiRequestEdit(
         docId,
-        prompt,
+        effectivePrompt,
         provider,
         model,
         cursorPath,
         baseUrl,
+        images.length ? images : null,
       );
     } catch (error) {
       this.session.onFailed();
-      this.setStatus(`요청 실패: ${String(error)}`, 'error');
+      this.setRequesting(false);
+      this.setActiveStatus(`요청 실패: ${String(error)}`, 'error');
     }
-  }
-
-  private toggleSettings(open?: boolean): void {
-    const show = open ?? this.settingsPanel.classList.contains('hop-ai-hidden');
-    this.settingsPanel.classList.toggle('hop-ai-hidden', !show);
-  }
-
-  /** provider 변경 시 모델 목록을 다시 채우고 키 상태를 갱신한다. */
-  private async onProviderChange(): Promise<void> {
-    this.populateModels(this.providerSelect.value);
-    await this.refreshKeyState();
-  }
-
-  /** 선택된 provider의 모델 드롭다운을 채운다. 마지막 항목은 항상 "직접 입력". */
-  private populateModels(provider: string): void {
-    const models = MODELS[provider] ?? [];
-    this.modelSelect.replaceChildren();
-    for (const model of models) this.modelSelect.appendChild(option(model, model));
-    this.modelSelect.appendChild(option(CUSTOM_MODEL, '직접 입력…'));
-    this.modelSelect.value = models[0] ?? CUSTOM_MODEL;
-    this.updateModelVisibility();
-  }
-
-  /** "직접 입력"을 고른 경우에만 자유 입력칸을 보인다. */
-  private updateModelVisibility(): void {
-    this.modelInput.classList.toggle('hop-ai-hidden', this.modelSelect.value !== CUSTOM_MODEL);
-  }
-
-  /** 실제 요청에 쓸 모델 ID(드롭다운 값 또는 직접 입력값). */
-  private currentModel(): string {
-    const selected = this.modelSelect.value;
-    const model = selected === CUSTOM_MODEL ? this.modelInput.value.trim() : selected;
-    return model || defaultModel(this.providerSelect.value);
-  }
-
-  /** 캐럿 위치를 `sec[s].p[p]` 경로로 만든다(Sliding Window 기준, 스펙 4장). */
-  private currentCursorPath(): string | null {
-    const pos = this.deps.bridge.getCaretPosition?.();
-    if (!pos) return null;
-    return `sec[${pos.sectionIndex}].p[${pos.paragraphIndex}]`;
   }
 
   private async cancel(): Promise<void> {
@@ -289,15 +307,223 @@ export class AgentSidebar {
     }
     this.session.cancel();
     this.requestId = null;
-    this.setStatus('취소했습니다.');
+    this.setRequesting(false);
+    this.setActiveStatus('취소했습니다.');
   }
 
-  /** 선택된 provider의 키 필요 여부/저장 상태로 키 입력 영역을 갱신한다(스펙 6장). */
+  private onDelta(delta: AiStreamDelta): void {
+    if (delta.requestId !== this.requestId || !this.active) return;
+    this.active.streamEl.textContent += delta.partialText;
+  }
+
+  private onReady(ready: AiEditReady): void {
+    if (ready.requestId !== this.requestId || !this.active) return;
+    this.setRequesting(false);
+    const script = parseActionScript(ready.actionScriptJson);
+    if (!script) {
+      this.session.onFailed();
+      this.setActiveStatus(interpretAiFailure('PARSE_ERROR'), 'error');
+      return;
+    }
+    if (!this.session.onReady()) return;
+    this.pendingScript = script;
+    this.renderDiff(script);
+    this.renderHighlights(script);
+    this.setPreviewEnabled(true);
+    this.setActiveStatus(`제안 ${script.edits.length}건 — 승인 또는 거부하세요.`);
+  }
+
+  private onFailed(failed: AiEditFailed): void {
+    if (failed.requestId !== this.requestId || !this.active) return;
+    this.session.onFailed();
+    this.setRequesting(false);
+    this.setActiveStatus(`${interpretAiFailure(failed.code)} (${failed.reason})`, 'error');
+  }
+
+  private accept(): void {
+    if (!this.pendingScript || !this.session.accept()) return;
+    const result = applyActionScript(this.deps.bridge, this.pendingScript);
+    const active = this.active;
+    this.clearPreview();
+    if (result.applied === 0) {
+      const reason = result.skipped[0]?.reason ?? '적용할 수 있는 편집이 없습니다.';
+      this.setActiveStatus(`적용된 편집이 없습니다 — ${reason}`, 'warn', active);
+      return;
+    }
+    this.deps.eventBus.emit('document-changed', 'ai-edit');
+    this.deps.bridge.markDocumentDirty?.();
+    const skippedNote = result.skipped.length ? `, 건너뜀 ${result.skipped.length}건` : '';
+    this.setActiveStatus(`적용 완료: ${result.applied}건${skippedNote}.`, 'ok', active);
+  }
+
+  private reject(): void {
+    const active = this.active;
+    if (this.session.reject()) this.setActiveStatus('제안을 거부했습니다.', 'info', active);
+  }
+
+  // ── 대화 버블 ────────────────────────────────────────────────
+
+  private appendUserTurn(text: string, attachments: Attachment[]): void {
+    const bubble = el('div', 'hop-ai-msg hop-ai-msg-user');
+    const body = el('div', 'hop-ai-msg-text');
+    body.textContent = text;
+    bubble.appendChild(body);
+    if (attachments.length) {
+      const chips = el('div', 'hop-ai-msg-chips');
+      for (const a of attachments) {
+        const chip = el('span', 'hop-ai-chip');
+        chip.textContent = `${a.kind === 'image' ? '🖼' : '📎'} ${a.name}`;
+        chips.appendChild(chip);
+      }
+      bubble.appendChild(chips);
+    }
+    this.thread.appendChild(bubble);
+    this.scrollThreadToEnd();
+  }
+
+  private appendAssistantTurn(): ActiveTurn {
+    const bubble = el('div', 'hop-ai-msg hop-ai-msg-assistant');
+    const streamEl = el('pre', 'hop-ai-stream');
+    const bodyEl = el('div', 'hop-ai-diff');
+    const statusEl = el('div', 'hop-ai-status hop-ai-bubble-status');
+    const acceptBtn = el('button', 'hop-ai-accept') as HTMLButtonElement;
+    acceptBtn.textContent = '승인';
+    const rejectBtn = el('button', 'hop-ai-reject') as HTMLButtonElement;
+    rejectBtn.textContent = '거부';
+    const decision = el('div', 'hop-ai-decision');
+    decision.append(acceptBtn, rejectBtn);
+    acceptBtn.addEventListener('click', () => this.accept());
+    rejectBtn.addEventListener('click', () => this.reject());
+    bubble.append(streamEl, bodyEl, decision, statusEl);
+    this.thread.appendChild(bubble);
+    this.scrollThreadToEnd();
+    const turn: ActiveTurn = { streamEl, bodyEl, acceptBtn, rejectBtn, statusEl };
+    this.setPreviewEnabledFor(turn, false);
+    return turn;
+  }
+
+  private scrollThreadToEnd(): void {
+    this.thread.scrollTop = this.thread.scrollHeight;
+  }
+
+  // ── 첨부 ─────────────────────────────────────────────────────
+
+  private async onImagePicked(): Promise<void> {
+    const files = Array.from(this.imageInput.files ?? []);
+    for (const file of files) await this.addImageFile(file);
+    this.imageInput.value = '';
+  }
+
+  private async onDocPicked(): Promise<void> {
+    const files = Array.from(this.docInput.files ?? []);
+    for (const file of files) await this.addDocFile(file);
+    this.docInput.value = '';
+  }
+
+  private async onPaste(event: ClipboardEvent): Promise<void> {
+    const items = Array.from(event.clipboardData?.items ?? []);
+    const images = items.filter((it) => it.kind === 'file' && it.type.startsWith('image/'));
+    if (!images.length) return;
+    event.preventDefault();
+    for (const item of images) {
+      const file = item.getAsFile();
+      if (file) await this.addImageFile(file);
+    }
+  }
+
+  private async addImageFile(file: File): Promise<void> {
+    try {
+      const dataUrl = await readAsDataUrl(file);
+      const dataBase64 = dataUrl.split(',')[1] ?? '';
+      this.attachments.push({
+        id: uid(),
+        kind: 'image',
+        name: file.name || 'image',
+        mime: file.type || 'image/png',
+        dataBase64,
+      });
+      this.renderChips();
+    } catch {
+      this.setStatus('이미지를 읽지 못했습니다.', 'error');
+    }
+  }
+
+  private async addDocFile(file: File): Promise<void> {
+    try {
+      const text = await readAsText(file);
+      this.attachments.push({ id: uid(), kind: 'doc', name: file.name || 'doc', text });
+      this.renderChips();
+    } catch {
+      this.setStatus('문서를 읽지 못했습니다.', 'error');
+    }
+  }
+
+  private renderChips(): void {
+    this.chipsArea.replaceChildren();
+    this.chipsArea.classList.toggle('hop-ai-hidden', this.attachments.length === 0);
+    for (const a of this.attachments) {
+      const chip = el('span', 'hop-ai-chip');
+      const label = el('span', 'hop-ai-chip-label');
+      label.textContent = `${a.kind === 'image' ? '🖼' : '📎'} ${a.name}`;
+      const remove = el('button', 'hop-ai-chip-remove') as HTMLButtonElement;
+      remove.textContent = '×';
+      remove.addEventListener('click', () => {
+        this.attachments = this.attachments.filter((x) => x.id !== a.id);
+        this.renderChips();
+      });
+      chip.append(label, remove);
+      this.chipsArea.appendChild(chip);
+    }
+  }
+
+  // ── 모델 / provider / 옵션 ───────────────────────────────────
+
+  private onPromptKeydown(event: KeyboardEvent): void {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      void this.send();
+    }
+  }
+
+  private toggleSettings(open?: boolean): void {
+    const show = open ?? this.settingsPanel.classList.contains('hop-ai-hidden');
+    this.settingsPanel.classList.toggle('hop-ai-hidden', !show);
+  }
+
+  private async onProviderChange(): Promise<void> {
+    this.populateModels(this.providerSelect.value);
+    await this.refreshKeyState();
+  }
+
+  private populateModels(provider: string): void {
+    const models = MODELS[provider] ?? [];
+    this.modelSelect.replaceChildren();
+    for (const model of models) this.modelSelect.appendChild(option(model, model));
+    this.modelSelect.appendChild(option(CUSTOM_MODEL, '직접 입력…'));
+    this.modelSelect.value = models[0] ?? CUSTOM_MODEL;
+    this.updateModelVisibility();
+  }
+
+  private updateModelVisibility(): void {
+    this.modelInput.classList.toggle('hop-ai-hidden', this.modelSelect.value !== CUSTOM_MODEL);
+  }
+
+  private currentModel(): string {
+    const selected = this.modelSelect.value;
+    const model = selected === CUSTOM_MODEL ? this.modelInput.value.trim() : selected;
+    return model || defaultModel(this.providerSelect.value);
+  }
+
+  private currentCursorPath(): string | null {
+    const pos = this.deps.bridge.getCaretPosition?.();
+    if (!pos) return null;
+    return `sec[${pos.sectionIndex}].p[${pos.paragraphIndex}]`;
+  }
+
   private async refreshKeyState(): Promise<void> {
     const provider = this.providerSelect.value;
     const requiresKey = KEY_PROVIDERS.has(provider);
     const isCustom = provider === CUSTOM_PROVIDER;
-    // openai-compat은 키가 선택사항이라 입력칸은 보여주되 send를 막지는 않는다.
     const showsKey = requiresKey || isCustom;
     this.keyRow.classList.toggle('hop-ai-hidden', !showsKey);
     this.customRow.classList.toggle('hop-ai-hidden', !isCustom);
@@ -309,7 +535,6 @@ export class AgentSidebar {
     } catch {
       present = false;
     }
-    // 조회 중 다른 provider로 바뀌었으면 늦게 도착한 응답은 버린다.
     if (this.providerSelect.value !== provider) return;
     this.keyState.set(provider, present);
     this.keyStatus.textContent = present ? '키 저장됨' : isCustom ? '키 없음(선택)' : '키 없음';
@@ -317,12 +542,10 @@ export class AgentSidebar {
     this.keyClearBtn.disabled = !present;
   }
 
-  /** openai-compat 프리셋(Groq/OpenRouter/Together)을 Base URL·모델 입력에 채운다. */
   private applyPreset(): void {
     const preset = CUSTOM_PRESETS[this.presetSelect.value];
     if (!preset) return;
     this.baseUrlInput.value = preset.baseUrl;
-    // 프리셋 모델은 직접 입력값으로 채운다(OpenRouter/Together 등은 목록에 없을 수 있음).
     this.modelSelect.value = CUSTOM_MODEL;
     this.modelInput.value = preset.model;
     this.updateModelVisibility();
@@ -330,7 +553,7 @@ export class AgentSidebar {
 
   private async saveKey(): Promise<void> {
     const provider = this.providerSelect.value;
-    if (!KEY_PROVIDERS.has(provider)) return;
+    if (!KEY_PROVIDERS.has(provider) && provider !== CUSTOM_PROVIDER) return;
     const key = this.keyInput.value.trim();
     if (!key) {
       this.setStatus('API 키를 입력하세요.', 'warn');
@@ -348,7 +571,6 @@ export class AgentSidebar {
 
   private async clearKey(): Promise<void> {
     const provider = this.providerSelect.value;
-    if (!KEY_PROVIDERS.has(provider)) return;
     try {
       await this.deps.bridge.aiDeleteApiKey(provider);
       await this.refreshKeyState();
@@ -358,7 +580,6 @@ export class AgentSidebar {
     }
   }
 
-  /** 민감 문서 토글. 열린 문서가 있으면 네이티브에도 표시를 반영한다(스펙 6장). */
   private async onSensitivityToggle(): Promise<void> {
     this.sensitive = this.sensitiveCheckbox.checked;
     const docId = this.deps.bridge.currentDocId();
@@ -376,57 +597,16 @@ export class AgentSidebar {
     );
   }
 
-  private onDelta(delta: AiStreamDelta): void {
-    if (delta.requestId !== this.requestId) return;
-    this.streamArea.textContent += delta.partialText;
-  }
-
-  private onReady(ready: AiEditReady): void {
-    if (ready.requestId !== this.requestId) return;
-    const script = parseActionScript(ready.actionScriptJson);
-    if (!script) {
-      this.session.onFailed();
-      this.setStatus(interpretAiFailure('PARSE_ERROR'), 'error');
-      return;
-    }
-    if (!this.session.onReady()) return;
-    this.pendingScript = script;
-    this.renderDiff(script);
-    this.renderHighlights(script);
-    this.setPreviewEnabled(true);
-    this.setStatus(`제안 ${script.edits.length}건 — 승인 또는 거부하세요.`);
-  }
-
-  private onFailed(failed: AiEditFailed): void {
-    if (failed.requestId !== this.requestId) return;
-    this.session.onFailed();
-    this.setStatus(`${interpretAiFailure(failed.code)} (${failed.reason})`, 'error');
-  }
-
-  private accept(): void {
-    if (!this.pendingScript || !this.session.accept()) return;
-    const result = applyActionScript(this.deps.bridge, this.pendingScript);
-    this.clearPreview();
-    // 적용된 편집이 없으면 문서를 건드리지 않고(불필요한 dirty 방지) 이유를 알린다.
-    if (result.applied === 0) {
-      const reason = result.skipped[0]?.reason ?? '적용할 수 있는 편집이 없습니다.';
-      this.setStatus(`적용된 편집이 없습니다 — ${reason}`, 'warn');
-      return;
-    }
-    this.deps.eventBus.emit('document-changed', 'ai-edit');
-    this.deps.bridge.markDocumentDirty?.();
-    const skippedNote = result.skipped.length ? `, 건너뜀 ${result.skipped.length}건` : '';
-    this.setStatus(`적용 완료: ${result.applied}건${skippedNote}.`, 'ok');
-  }
-
-  private reject(): void {
-    if (this.session.reject()) this.setStatus('제안을 거부했습니다.');
-  }
+  // ── 미리보기(Diff/하이라이트) ────────────────────────────────
 
   private renderDiff(script: ActionScript): void {
-    this.diffArea.replaceChildren();
-    const items = buildDiffModel(script, this.context ?? { document_metadata: { total_sections: 0 }, content: [] });
-    for (const item of items) this.diffArea.appendChild(renderDiffItem(item));
+    if (!this.active) return;
+    this.active.bodyEl.replaceChildren();
+    const items = buildDiffModel(
+      script,
+      this.context ?? { document_metadata: { total_sections: 0 }, content: [] },
+    );
+    for (const item of items) this.active.bodyEl.appendChild(renderDiffItem(item));
   }
 
   private renderHighlights(script: ActionScript): void {
@@ -456,19 +636,45 @@ export class AgentSidebar {
 
   private clearPreview(): void {
     this.pendingScript = null;
-    this.diffArea.replaceChildren();
     clearHighlights(this.deps.scrollContent);
-    this.setPreviewEnabled(false);
+    if (this.active) {
+      this.active.bodyEl.replaceChildren();
+      this.setPreviewEnabledFor(this.active, false);
+    }
   }
 
   private setPreviewEnabled(enabled: boolean): void {
-    this.acceptBtn.disabled = !enabled;
-    this.rejectBtn.disabled = !enabled;
+    if (this.active) this.setPreviewEnabledFor(this.active, enabled);
   }
 
+  private setPreviewEnabledFor(turn: ActiveTurn, enabled: boolean): void {
+    turn.acceptBtn.disabled = !enabled;
+    turn.rejectBtn.disabled = !enabled;
+  }
+
+  private setRequesting(active: boolean): void {
+    this.sendBtn.disabled = active;
+    this.cancelBtn.classList.toggle('hop-ai-hidden', !active);
+  }
+
+  /** 전역(컴포저) 상태줄 — 가드/안내용. */
   private setStatus(message: string, tone: 'info' | 'ok' | 'warn' | 'error' = 'info'): void {
     this.statusArea.textContent = message;
     this.statusArea.dataset.tone = tone;
+  }
+
+  /** 현재(또는 지정) 어시스턴트 버블의 상태줄. */
+  private setActiveStatus(
+    message: string,
+    tone: 'info' | 'ok' | 'warn' | 'error' = 'info',
+    turn: ActiveTurn | null = this.active,
+  ): void {
+    if (!turn) {
+      this.setStatus(message, tone);
+      return;
+    }
+    turn.statusEl.textContent = message;
+    turn.statusEl.dataset.tone = tone;
   }
 }
 
@@ -490,23 +696,17 @@ function defaultModel(provider: string): string {
 }
 
 function renderDiffItem(item: DiffItem): HTMLElement {
-  const row = document.createElement('div');
-  row.className = 'hop-ai-diff-item';
-
-  const head = document.createElement('div');
-  head.className = 'hop-ai-diff-head';
+  const row = el('div', 'hop-ai-diff-item');
+  const head = el('div', 'hop-ai-diff-head');
   head.textContent = `${item.command} · ${item.targetId}`;
   row.appendChild(head);
-
   if (item.beforeText !== undefined) {
-    const before = document.createElement('div');
-    before.className = 'hop-ai-diff-before';
+    const before = el('div', 'hop-ai-diff-before');
     before.textContent = item.beforeText;
     row.appendChild(before);
   }
   if (item.afterText !== undefined) {
-    const after = document.createElement('div');
-    after.className = 'hop-ai-diff-after';
+    const after = el('div', 'hop-ai-diff-after');
     after.textContent = item.afterText;
     row.appendChild(after);
   }
@@ -517,19 +717,22 @@ interface PanelParts {
   panel: HTMLElement;
   toggleBtn: HTMLButtonElement;
   closeBtn: HTMLButtonElement;
+  newChatBtn: HTMLButtonElement;
+  settingsBtn: HTMLButtonElement;
+  thread: HTMLElement;
   promptInput: HTMLTextAreaElement;
   providerSelect: HTMLSelectElement;
   modelSelect: HTMLSelectElement;
   modelInput: HTMLInputElement;
-  settingsBtn: HTMLButtonElement;
-  settingsPanel: HTMLElement;
   sendBtn: HTMLButtonElement;
   cancelBtn: HTMLButtonElement;
-  streamArea: HTMLElement;
-  diffArea: HTMLElement;
   statusArea: HTMLElement;
-  acceptBtn: HTMLButtonElement;
-  rejectBtn: HTMLButtonElement;
+  chipsArea: HTMLElement;
+  imageInput: HTMLInputElement;
+  docInput: HTMLInputElement;
+  attachImageBtn: HTMLButtonElement;
+  attachDocBtn: HTMLButtonElement;
+  settingsPanel: HTMLElement;
   keyRow: HTMLElement;
   keyInput: HTMLInputElement;
   keySaveBtn: HTMLButtonElement;
@@ -542,53 +745,38 @@ interface PanelParts {
 }
 
 function buildPanel(): PanelParts {
-  const toggleBtn = el('button', 'hop-ai-toggle');
+  const toggleBtn = el('button', 'hop-ai-toggle') as HTMLButtonElement;
   toggleBtn.textContent = 'AI';
   toggleBtn.title = 'AI 편집 도우미';
 
   const panel = el('aside', 'hop-ai-panel');
 
+  // 헤더
   const header = el('div', 'hop-ai-header');
   const title = el('span', 'hop-ai-title');
   title.textContent = 'AI 편집';
+  const newChatBtn = el('button', 'hop-ai-newchat') as HTMLButtonElement;
+  newChatBtn.textContent = '＋';
+  newChatBtn.title = '새 대화';
   const settingsBtn = el('button', 'hop-ai-settings-btn') as HTMLButtonElement;
   settingsBtn.textContent = '⚙';
   settingsBtn.title = '옵션 (API 키·엔드포인트·민감 문서)';
   const closeBtn = el('button', 'hop-ai-close') as HTMLButtonElement;
   closeBtn.textContent = '×';
-  header.append(title, settingsBtn, closeBtn);
+  header.append(title, newChatBtn, settingsBtn, closeBtn);
 
-  const providerSelect = document.createElement('select');
-  providerSelect.className = 'hop-ai-provider';
-  for (const id of PROVIDERS) {
-    providerSelect.appendChild(option(id, PROVIDER_LABELS[id] ?? id));
-  }
-  // 모델 선택 드롭다운(provider 변경 시 채워짐) + "직접 입력" 시에만 보이는 자유 입력칸.
-  const modelSelect = document.createElement('select');
-  modelSelect.className = 'hop-ai-model-select';
-  const modelInput = document.createElement('input');
-  modelInput.className = 'hop-ai-model';
-  modelInput.type = 'text';
-  modelInput.placeholder = '모델 ID 직접 입력';
+  // 대화 스레드
+  const thread = el('div', 'hop-ai-thread');
 
-  const row = el('div', 'hop-ai-row');
-  row.append(providerSelect, modelSelect, modelInput);
-
-  // API 키 입력 영역(키가 필요한 provider에서만 노출). 평문 노출을 줄이려 password 입력.
-  const keyInput = document.createElement('input');
-  keyInput.className = 'hop-ai-key';
-  keyInput.type = 'password';
-  keyInput.placeholder = 'API 키';
+  // 옵션 패널(⚙)
+  const keyInput = inputEl('hop-ai-key', 'password', 'API 키');
   keyInput.autocomplete = 'off';
-  const keySaveBtn = el('button', 'hop-ai-key-save') as HTMLButtonElement;
-  keySaveBtn.textContent = '키 저장';
-  const keyClearBtn = el('button', 'hop-ai-key-clear') as HTMLButtonElement;
-  keyClearBtn.textContent = '삭제';
+  const keySaveBtn = btn('hop-ai-key-save', '키 저장');
+  const keyClearBtn = btn('hop-ai-key-clear', '삭제');
   const keyStatus = el('span', 'hop-ai-key-status');
   const keyRow = el('div', 'hop-ai-key-row');
   keyRow.append(keyInput, keySaveBtn, keyClearBtn, keyStatus);
 
-  // 커스텀 OpenAI 호환 엔드포인트(Groq 등) — 프리셋 + Base URL 입력(스펙 5.3장).
   const presetSelect = document.createElement('select');
   presetSelect.className = 'hop-ai-preset';
   for (const [value, label] of [
@@ -597,19 +785,12 @@ function buildPanel(): PanelParts {
     ['openrouter', 'OpenRouter'],
     ['together', 'Together'],
   ] as const) {
-    const opt = document.createElement('option');
-    opt.value = value;
-    opt.textContent = label;
-    presetSelect.appendChild(opt);
+    presetSelect.appendChild(option(value, label));
   }
-  const baseUrlInput = document.createElement('input');
-  baseUrlInput.className = 'hop-ai-base-url';
-  baseUrlInput.type = 'text';
-  baseUrlInput.placeholder = 'Base URL (예: https://api.groq.com/openai)';
+  const baseUrlInput = inputEl('hop-ai-base-url', 'text', 'Base URL (예: https://api.groq.com/openai)');
   const customRow = el('div', 'hop-ai-custom-row');
   customRow.append(presetSelect, baseUrlInput);
 
-  // 민감 문서 토글 — 체크 시 외부 provider 전송을 차단한다(스펙 6장, 공문서 보호).
   const sensitiveCheckbox = document.createElement('input');
   sensitiveCheckbox.className = 'hop-ai-sensitive';
   sensitiveCheckbox.type = 'checkbox';
@@ -618,63 +799,71 @@ function buildPanel(): PanelParts {
   const sensitiveRow = el('label', 'hop-ai-sensitive-row');
   sensitiveRow.append(sensitiveCheckbox, sensitiveText);
 
-  // ⚙ 옵션 패널 — 기본 숨김. API 키·커스텀 엔드포인트·민감 문서 설정을 모은다.
   const settingsPanel = el('div', 'hop-ai-settings');
   settingsPanel.append(customRow, keyRow, sensitiveRow);
 
+  // 컴포저(하단 입력)
+  const chipsArea = el('div', 'hop-ai-chips');
   const promptInput = document.createElement('textarea');
   promptInput.className = 'hop-ai-prompt';
   promptInput.rows = 3;
-  promptInput.placeholder = '예: 첫 문단 뒤에 요약 문단을 추가해줘';
+  promptInput.placeholder = '무엇을 바꿀까요?  (예: 표의 총 사업비를 10억으로)';
 
-  const sendBtn = el('button', 'hop-ai-send') as HTMLButtonElement;
-  sendBtn.textContent = '요청';
-  const cancelBtn = el('button', 'hop-ai-cancel') as HTMLButtonElement;
-  cancelBtn.textContent = '취소';
-  const actions = el('div', 'hop-ai-actions');
-  actions.append(sendBtn, cancelBtn);
+  const imageInput = inputEl('hop-ai-image-input hop-ai-hidden', 'file', '');
+  imageInput.accept = 'image/*';
+  imageInput.multiple = true;
+  const docInput = inputEl('hop-ai-doc-input hop-ai-hidden', 'file', '');
+  docInput.accept = '.txt,.md,.markdown,.csv,.json,.html,.xml';
+  docInput.multiple = true;
 
-  const streamArea = el('pre', 'hop-ai-stream');
-  const diffArea = el('div', 'hop-ai-diff');
+  const attachImageBtn = btn('hop-ai-attach-image', '🖼');
+  attachImageBtn.title = '이미지 첨부';
+  const attachDocBtn = btn('hop-ai-attach-doc', '📎');
+  attachDocBtn.title = '문서 첨부 (텍스트)';
+  const composerLeft = el('div', 'hop-ai-composer-left');
+  composerLeft.append(attachDocBtn, attachImageBtn);
 
-  const acceptBtn = el('button', 'hop-ai-accept') as HTMLButtonElement;
-  acceptBtn.textContent = '승인';
-  const rejectBtn = el('button', 'hop-ai-reject') as HTMLButtonElement;
-  rejectBtn.textContent = '거부';
-  const decision = el('div', 'hop-ai-decision');
-  decision.append(acceptBtn, rejectBtn);
+  const providerSelect = document.createElement('select');
+  providerSelect.className = 'hop-ai-provider';
+  for (const id of PROVIDERS) providerSelect.appendChild(option(id, PROVIDER_LABELS[id] ?? id));
+  const modelSelect = document.createElement('select');
+  modelSelect.className = 'hop-ai-model-select';
+  const modelInput = inputEl('hop-ai-model', 'text', '모델 ID 직접 입력');
+  const sendBtn = btn('hop-ai-send', '↑');
+  sendBtn.title = '전송 (Enter)';
+  const cancelBtn = btn('hop-ai-cancel', '취소');
+  const composerRight = el('div', 'hop-ai-composer-right');
+  composerRight.append(providerSelect, modelSelect, modelInput, cancelBtn, sendBtn);
+
+  const composerBar = el('div', 'hop-ai-composer-bar');
+  composerBar.append(composerLeft, composerRight);
 
   const statusArea = el('div', 'hop-ai-status');
+  const composer = el('div', 'hop-ai-composer');
+  composer.append(chipsArea, promptInput, composerBar, statusArea, imageInput, docInput);
 
-  panel.append(
-    header,
-    row,
-    settingsPanel,
-    promptInput,
-    actions,
-    statusArea,
-    streamArea,
-    diffArea,
-    decision,
-  );
+  panel.append(header, thread, settingsPanel, composer);
 
   return {
     panel,
-    toggleBtn: toggleBtn as HTMLButtonElement,
+    toggleBtn,
     closeBtn,
+    newChatBtn,
+    settingsBtn,
+    thread,
     promptInput,
     providerSelect,
     modelSelect,
     modelInput,
-    settingsBtn,
-    settingsPanel,
     sendBtn,
     cancelBtn,
-    streamArea,
-    diffArea,
     statusArea,
-    acceptBtn,
-    rejectBtn,
+    chipsArea,
+    imageInput,
+    docInput,
+    attachImageBtn,
+    attachDocBtn,
+    settingsPanel,
     keyRow,
     keyInput,
     keySaveBtn,
@@ -693,9 +882,45 @@ function el(tag: string, className: string): HTMLElement {
   return node;
 }
 
+function btn(className: string, text: string): HTMLButtonElement {
+  const node = el('button', className) as HTMLButtonElement;
+  node.textContent = text;
+  return node;
+}
+
+function inputEl(className: string, type: string, placeholder: string): HTMLInputElement {
+  const node = document.createElement('input');
+  node.className = className;
+  node.type = type;
+  if (placeholder) node.placeholder = placeholder;
+  return node;
+}
+
 function option(value: string, label: string): HTMLOptionElement {
   const node = document.createElement('option') as HTMLOptionElement;
   node.value = value;
   node.textContent = label;
   return node;
+}
+
+function uid(): string {
+  return Math.random().toString(36).slice(2);
+}
+
+function readAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
+
+function readAsText(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsText(file);
+  });
 }

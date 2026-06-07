@@ -15,6 +15,16 @@ pub type CancelToken = Arc<AtomicBool>;
 /// 스트리밍 부분 응답 싱크. provider가 토큰을 받을 때마다 호출한다.
 pub type DeltaSink = Box<dyn Fn(String) + Send + Sync>;
 
+/// 사용자가 첨부한 이미지(멀티모달 입력). 프론트가 base64로 보낸다.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageInput {
+    /// 예: `image/png`, `image/jpeg`.
+    pub mime_type: String,
+    /// base64 인코딩된 이미지 바이트(data URL 접두사 없이).
+    pub data_base64: String,
+}
+
 /// provider에 전달하는 단일 편집 요청. 모델 식별자는 provider 자신이 보유한다.
 pub struct LlmRequest {
     pub system_prompt: String,
@@ -23,6 +33,8 @@ pub struct LlmRequest {
     pub document_context_json: String,
     /// 3장 출력 스키마. 네이티브 구조화 출력에 주입한다.
     pub output_schema: Value,
+    /// 사용자가 첨부한 이미지(없으면 빈 벡터). vision 지원 provider만 사용.
+    pub images: Vec<ImageInput>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -139,6 +151,7 @@ mod tests {
             user_prompt: "표를 추가해줘".to_string(),
             document_context_json: context_json.to_string(),
             output_schema: json!({}),
+            images: Vec::new(),
         }
     }
 

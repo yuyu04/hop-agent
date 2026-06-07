@@ -710,6 +710,7 @@ describe('TauriBridge AI commands', () => {
       modelId: 'mock-1',
       cursorPath: null,
       baseUrl: null,
+      images: null,
     });
   });
 
@@ -732,6 +733,7 @@ describe('TauriBridge AI commands', () => {
       modelId: 'llama-3.1-8b-instant',
       cursorPath: null,
       baseUrl: 'https://api.groq.com/openai',
+      images: null,
     });
   });
 

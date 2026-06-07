@@ -20,13 +20,29 @@ pub struct AnthropicProvider {
 
 impl AnthropicProvider {
     pub fn build_body(&self, req: &LlmRequest) -> Value {
+        let user_message = if req.images.is_empty() {
+            json!(user_content(req))
+        } else {
+            let mut blocks = vec![json!({ "type": "text", "text": user_content(req) })];
+            for image in &req.images {
+                blocks.push(json!({
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": image.mime_type,
+                        "data": image.data_base64,
+                    }
+                }));
+            }
+            json!(blocks)
+        };
         json!({
             "model": self.model,
             "max_tokens": 4096,
             "stream": true,
             "system": req.system_prompt,
             "messages": [
-                { "role": "user", "content": user_content(req) }
+                { "role": "user", "content": user_message }
             ],
             "tools": [{
                 "name": TOOL_NAME,
@@ -82,6 +98,7 @@ mod tests {
             user_prompt: "표 추가".to_string(),
             document_context_json: "{\"content\":[]}".to_string(),
             output_schema: json!({ "type": "object", "marker": 7 }),
+            images: Vec::new(),
         }
     }
 

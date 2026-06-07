@@ -16,12 +16,15 @@ pub struct GeminiProvider {
 
 impl GeminiProvider {
     pub fn build_body(&self, req: &LlmRequest) -> Value {
+        let mut parts = vec![json!({ "text": user_content(req) })];
+        for image in &req.images {
+            parts.push(json!({
+                "inline_data": { "mime_type": image.mime_type, "data": image.data_base64 }
+            }));
+        }
         json!({
             "systemInstruction": { "parts": [{ "text": req.system_prompt }] },
-            "contents": [{
-                "role": "user",
-                "parts": [{ "text": user_content(req) }]
-            }],
+            "contents": [{ "role": "user", "parts": parts }],
             "generationConfig": {
                 "responseMimeType": "application/json",
                 "responseSchema": gemini_action_script_schema(),
@@ -113,6 +116,7 @@ mod tests {
             user_prompt: "문단 추가".to_string(),
             document_context_json: "{\"content\":[]}".to_string(),
             output_schema: json!({ "$schema": "draft-07", "type": "object" }),
+            images: Vec::new(),
         }
     }
 

@@ -90,6 +90,11 @@ pub(crate) fn user_content(req: &LlmRequest) -> String {
     )
 }
 
+/// `data:<mime>;base64,<data>` 형식의 data URL을 만든다(OpenAI image_url 등).
+pub(crate) fn image_data_url(image: &crate::ai::provider::ImageInput) -> String {
+    format!("data:{};base64,{}", image.mime_type, image.data_base64)
+}
+
 /// 타임아웃이 설정된 공용 reqwest 클라이언트(스펙 7장).
 pub(crate) fn http_client() -> Result<reqwest::Client, ProviderError> {
     reqwest::Client::builder()
@@ -150,6 +155,7 @@ mod tests {
             user_prompt: "지시".to_string(),
             document_context_json: "{\"x\":1}".to_string(),
             output_schema: serde_json::json!({}),
+            images: Vec::new(),
         };
         let content = user_content(&req);
         assert!(content.contains("지시"));

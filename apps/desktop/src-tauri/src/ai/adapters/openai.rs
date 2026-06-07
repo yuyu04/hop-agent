@@ -5,7 +5,7 @@
 //! `json_schema`(strict), Ollama는 `json_object`로 강제한다.
 
 use super::sse::{map_reqwest_err, stream_sse};
-use super::{http_client, user_content};
+use super::{http_client, image_data_url, user_content};
 use crate::ai::provider::{CancelToken, DeltaSink, LlmProvider, LlmRequest, ProviderError};
 use serde_json::{json, Value};
 
@@ -37,12 +37,25 @@ impl OpenAiProvider {
             }),
             StructuredMode::JsonObject => json!({ "type": "json_object" }),
         };
+        // 이미지가 없으면 평문 content, 있으면 OpenAI 멀티모달 content 배열.
+        let user_message = if req.images.is_empty() {
+            json!(user_content(req))
+        } else {
+            let mut parts = vec![json!({ "type": "text", "text": user_content(req) })];
+            for image in &req.images {
+                parts.push(json!({
+                    "type": "image_url",
+                    "image_url": { "url": image_data_url(image) }
+                }));
+            }
+            json!(parts)
+        };
         json!({
             "model": self.model,
             "stream": true,
             "messages": [
                 { "role": "system", "content": req.system_prompt },
-                { "role": "user", "content": user_content(req) }
+                { "role": "user", "content": user_message }
             ],
             "response_format": response_format,
         })
@@ -93,6 +106,7 @@ mod tests {
             user_prompt: "문단 추가".to_string(),
             document_context_json: "{\"content\":[]}".to_string(),
             output_schema: json!({ "type": "object" }),
+            images: Vec::new(),
         }
     }
 

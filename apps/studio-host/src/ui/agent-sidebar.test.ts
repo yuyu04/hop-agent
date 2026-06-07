@@ -239,6 +239,24 @@ describe('AgentSidebar', () => {
     expect(captured).not.toBeNull();
   });
 
+  it('accumulates a conversation thread and clears it on new chat', async () => {
+    build();
+    await flush();
+    find('hop-ai-prompt').value = '첫 지시';
+    find('hop-ai-provider').value = 'mock';
+    find('hop-ai-send').click();
+    await flush();
+
+    // 유저 버블 + 어시스턴트 버블이 스레드에 쌓인다.
+    expect(doc.body.querySelectorAll('.hop-ai-msg').length).toBe(2);
+    expect(doc.body.querySelector('.hop-ai-msg-text')?.textContent).toBe('첫 지시');
+    // 전송 후 입력칸은 비워진다.
+    expect(find('hop-ai-prompt').value).toBe('');
+
+    find('hop-ai-newchat').click();
+    expect(doc.body.querySelectorAll('.hop-ai-msg').length).toBe(0);
+  });
+
   it('refuses to send when the prompt is empty', async () => {
     build();
     await flush();
@@ -273,6 +291,7 @@ describe('AgentSidebar', () => {
       '첫 문단 바꿔줘',
       'mock',
       'mock-1',
+      null,
       null,
       null,
     );
@@ -451,6 +470,7 @@ describe('AgentSidebar', () => {
       'gemini-2.5-flash',
       null,
       null,
+      null,
     );
   });
 
@@ -475,6 +495,7 @@ describe('AgentSidebar', () => {
       '요약',
       'gemini',
       'gemini-3-flash-preview',
+      null,
       null,
       null,
     );
@@ -525,6 +546,7 @@ describe('AgentSidebar', () => {
       'llama3.1',
       null,
       null,
+      null,
     );
     expect(bridge.aiSetDocumentSensitivity).toHaveBeenCalledWith('doc-1', true);
   });
@@ -548,6 +570,7 @@ describe('AgentSidebar', () => {
       'mock',
       'mock-1',
       'sec[0].p[7]',
+      null,
       null,
     );
   });
@@ -588,6 +611,7 @@ describe('AgentSidebar', () => {
       'llama-3.1-8b-instant',
       null,
       'https://api.groq.com/openai',
+      null,
     );
   });
 });

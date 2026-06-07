@@ -95,6 +95,12 @@ export interface DesktopBridgeApi {
 }
 
 /** AI Agent 인라인 편집 브리지(스펙 1장). */
+/** vision provider에 전달하는 첨부 이미지(base64, data URL 접두사 없이). */
+export interface AiImageInput {
+  mimeType: string;
+  dataBase64: string;
+}
+
 export interface AiBridgeApi {
   /** 현재 문서를 직렬화한 LLM 컨텍스트를 반환한다(스펙 2장). `cursorPath`는 Sliding Window 기준(4장). */
   aiGetDocumentContext(
@@ -103,7 +109,8 @@ export interface AiBridgeApi {
     cursorPath?: string | null,
   ): Promise<DocumentContext>;
   /** 편집 요청을 시작하고 request_id를 반환한다. 결과는 `hop-ai-*` 이벤트로 전달된다.
-   *  `baseUrl`은 `openai-compat`(커스텀 OpenAI 호환 엔드포인트)에서만 쓰인다. */
+   *  `baseUrl`은 `openai-compat`(커스텀 OpenAI 호환 엔드포인트)에서만 쓰인다.
+   *  `images`는 vision 지원 provider에 전달되는 첨부 이미지(base64). */
   aiRequestEdit(
     docId: string,
     userPrompt: string,
@@ -111,6 +118,7 @@ export interface AiBridgeApi {
     modelId: string,
     cursorPath?: string | null,
     baseUrl?: string | null,
+    images?: AiImageInput[] | null,
   ): Promise<string>;
   /** 진행 중인 요청을 취소한다(스펙 7장). */
   aiCancelRequest(requestId: string): Promise<void>;
@@ -321,6 +329,7 @@ export class TauriBridge extends WasmBridge implements DesktopBridgeApi, AiBridg
     modelId: string,
     cursorPath?: string | null,
     baseUrl?: string | null,
+    images?: AiImageInput[] | null,
   ): Promise<string> {
     return this.invoke<string>('ai_request_edit', {
       docId,
@@ -329,6 +338,7 @@ export class TauriBridge extends WasmBridge implements DesktopBridgeApi, AiBridg
       modelId,
       cursorPath: cursorPath ?? null,
       baseUrl: baseUrl ?? null,
+      images: images ?? null,
     });
   }
 

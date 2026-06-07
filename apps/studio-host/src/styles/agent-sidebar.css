@@ -1,4 +1,4 @@
-/* AI Agent Sidebar (PR3) — 우측 고정 패널 + 토글 버튼 + 페이지 하이라이트 */
+/* AI Agent Sidebar — Cursor식 대화형 패널 (스레드 + 하단 컴포저) */
 
 .hop-ai-toggle {
   position: fixed;
@@ -20,20 +20,17 @@
   position: fixed;
   top: 0;
   right: 0;
-  width: 340px;
+  width: 380px;
   height: 100vh;
   z-index: 1001;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 12px;
   box-sizing: border-box;
   background: #f7f8fa;
   border-left: 1px solid #d0d4da;
   box-shadow: -2px 0 10px rgba(0, 0, 0, 0.08);
   transform: translateX(100%);
   transition: transform 0.18s ease;
-  overflow-y: auto;
 }
 .hop-ai-panel.open {
   transform: translateX(0);
@@ -42,65 +39,99 @@
 .hop-ai-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 4px;
+  padding: 10px 12px;
+  border-bottom: 1px solid #e0e3e8;
 }
 .hop-ai-title {
+  flex: 1;
   font-weight: 700;
   font-size: 14px;
 }
+.hop-ai-newchat,
+.hop-ai-settings-btn,
 .hop-ai-close {
-  border: none;
-  background: transparent;
-  font-size: 20px;
-  line-height: 1;
-  cursor: pointer;
-  color: #555;
-}
-
-.hop-ai-row {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-.hop-ai-provider {
-  flex: 0 0 110px;
-}
-.hop-ai-model-select {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-.hop-ai-model {
-  flex: 1 1 100%;
-  min-width: 0;
-}
-
-.hop-ai-settings-btn {
   border: none;
   background: transparent;
   font-size: 16px;
   line-height: 1;
   cursor: pointer;
   color: #555;
+  padding: 4px 6px;
+  border-radius: 4px;
 }
+.hop-ai-newchat:hover,
+.hop-ai-settings-btn:hover,
+.hop-ai-close:hover {
+  background: #e6e9ee;
+}
+.hop-ai-close {
+  font-size: 20px;
+}
+
+/* 대화 스레드 */
+.hop-ai-thread {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.hop-ai-msg {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 100%;
+}
+.hop-ai-msg-user {
+  align-self: flex-end;
+  align-items: flex-end;
+}
+.hop-ai-msg-user .hop-ai-msg-text {
+  background: #2563eb;
+  color: #fff;
+  border-radius: 12px 12px 2px 12px;
+  padding: 8px 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-width: 300px;
+}
+.hop-ai-msg-assistant {
+  align-self: flex-start;
+  width: 100%;
+}
+.hop-ai-msg-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+/* 옵션 패널 */
 .hop-ai-settings {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  margin: 0 12px;
   padding: 8px;
   border: 1px solid #e0e3e8;
   border-radius: 6px;
   background: #eef0f3;
 }
-
-.hop-ai-key-row {
+.hop-ai-key-row,
+.hop-ai-custom-row {
   display: flex;
-  align-items: center;
   gap: 6px;
+  align-items: center;
 }
-.hop-ai-key {
+.hop-ai-key,
+.hop-ai-base-url {
   flex: 1 1 auto;
   min-width: 0;
   font: inherit;
+}
+.hop-ai-preset {
+  flex: 0 0 96px;
 }
 .hop-ai-key-row button {
   padding: 4px 8px;
@@ -117,28 +148,9 @@
 .hop-ai-key-status[data-tone='ok'] {
   color: #1a7f37;
 }
-
-.hop-ai-custom-row {
-  display: flex;
-  gap: 6px;
-}
-.hop-ai-preset {
-  flex: 0 0 96px;
-}
-.hop-ai-base-url {
-  flex: 1 1 auto;
-  min-width: 0;
-  font: inherit;
-}
-
 .hop-ai-key-status[data-tone='info'] {
   color: #666;
 }
-
-.hop-ai-hidden {
-  display: none;
-}
-
 .hop-ai-sensitive-row {
   display: flex;
   align-items: center;
@@ -147,23 +159,111 @@
   color: #444;
   cursor: pointer;
 }
-.hop-ai-sensitive {
-  margin: 0;
-}
 
+/* 컴포저(하단 입력) */
+.hop-ai-composer {
+  border-top: 1px solid #e0e3e8;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: #fff;
+}
+.hop-ai-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.hop-ai-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  background: #eef0f3;
+  border: 1px solid #d9dde3;
+  border-radius: 10px;
+  padding: 2px 6px;
+}
+.hop-ai-chip-remove {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: #888;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0;
+}
 .hop-ai-prompt {
   width: 100%;
   box-sizing: border-box;
   resize: vertical;
   font: inherit;
+  border: 1px solid #d0d4da;
+  border-radius: 8px;
+  padding: 8px;
+}
+.hop-ai-composer-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+.hop-ai-composer-left,
+.hop-ai-composer-right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.hop-ai-composer-right {
+  min-width: 0;
+}
+.hop-ai-provider,
+.hop-ai-model-select {
+  font-size: 12px;
+  max-width: 110px;
+}
+.hop-ai-model {
+  font: inherit;
+  width: 120px;
+}
+.hop-ai-attach-image,
+.hop-ai-attach-doc {
+  border: none;
+  background: transparent;
+  font-size: 16px;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+}
+.hop-ai-attach-image:hover,
+.hop-ai-attach-doc:hover {
+  background: #eef0f3;
+}
+.hop-ai-send {
+  border: none;
+  background: #2563eb;
+  color: #fff;
+  font-weight: 700;
+  border-radius: 8px;
+  width: 32px;
+  height: 28px;
+  cursor: pointer;
+}
+.hop-ai-send:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.hop-ai-cancel {
+  font-size: 12px;
+  padding: 4px 8px;
+  cursor: pointer;
 }
 
-.hop-ai-actions,
+/* 어시스턴트 버블 내부 */
 .hop-ai-decision {
   display: flex;
   gap: 8px;
 }
-.hop-ai-actions button,
 .hop-ai-decision button {
   flex: 1;
   padding: 6px 10px;
@@ -176,13 +276,13 @@
   background: #ffdddd;
 }
 .hop-ai-decision button:disabled {
-  opacity: 0.5;
+  opacity: 0.4;
   cursor: not-allowed;
 }
 
 .hop-ai-status {
   font-size: 12px;
-  min-height: 16px;
+  min-height: 14px;
   color: #444;
 }
 .hop-ai-status[data-tone='error'] {
@@ -197,14 +297,14 @@
 
 .hop-ai-stream {
   margin: 0;
-  max-height: 120px;
+  max-height: 160px;
   overflow: auto;
   white-space: pre-wrap;
   word-break: break-word;
   font-size: 11px;
   color: #666;
   background: #eef0f3;
-  border-radius: 4px;
+  border-radius: 6px;
   padding: 6px;
 }
 .hop-ai-stream:empty {
@@ -215,6 +315,9 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+.hop-ai-diff:empty {
+  display: none;
 }
 .hop-ai-diff-item {
   border: 1px solid #e0e3e8;
@@ -254,4 +357,8 @@
 .hop-ai-highlight-remove {
   background: rgba(239, 68, 68, 0.22);
   outline: 1px solid rgba(239, 68, 68, 0.6);
+}
+
+.hop-ai-hidden {
+  display: none;
 }

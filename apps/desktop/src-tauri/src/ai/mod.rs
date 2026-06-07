@@ -14,7 +14,7 @@ pub mod serialize;
 pub use secrets::{ai_delete_api_key, ai_has_api_key, ai_set_api_key};
 
 use crate::state::AppState;
-use provider::{CancelToken, DeltaSink, LlmProvider, LlmRequest, MockProvider};
+use provider::{CancelToken, DeltaSink, ImageInput, LlmProvider, LlmRequest, MockProvider};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -131,6 +131,7 @@ pub fn ai_request_edit(
     model_id: String,
     cursor_path: Option<String>,
     base_url: Option<String>,
+    images: Option<Vec<ImageInput>>,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
     // 민감 문서는 외부 provider 전송을 차단한다(스펙 6장 — 공문서 보호).
@@ -166,6 +167,7 @@ pub fn ai_request_edit(
         user_prompt,
         document_context_json: context_json,
         output_schema: schema::action_script_schema(),
+        images: images.unwrap_or_default(),
     };
 
     tauri::async_runtime::spawn(run_edit_request(
