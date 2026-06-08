@@ -43,7 +43,10 @@ impl CliProvider {
     pub fn gemini(model: String) -> Self {
         CliProvider {
             program: "gemini",
-            base_args: &["-p"],
+            // gemini의 `-p`는 프롬프트 "값"을 요구한다(claude의 플래그형 `-p`와 다름).
+            // 빈 값으로 비대화형(headless)에 진입하고, 실제 프롬프트는 stdin으로 넘긴다
+            // ("-p ... Appended to input on stdin"). `-o text`로 평문 출력.
+            base_args: &["-p", "", "-o", "text"],
             model_flag: Some("-m"),
             model,
         }
