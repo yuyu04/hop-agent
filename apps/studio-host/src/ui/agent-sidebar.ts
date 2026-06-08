@@ -977,24 +977,44 @@ export class AgentSidebar {
     }
   }
 
-  /** 낙관적 적용 직후, 변경 위치에 떠 있는 승인/거절 바만 띄운다(카드 없음). */
+  /**
+   * 낙관적 적용 직후: 새로 추가/바뀐 영역에 초록 하이라이트, 사라진 기존 내용은
+   * 빨간 카드로 보여주고, 변경 위치에 승인/거절 바를 띄운다(Cursor식 녹/빨).
+   */
   private renderDecisionBar(script: ActionScript): number {
     const canvasView = this.deps.getCanvasView();
     if (!canvasView) return 0;
     const zoom = canvasView.getViewportManager().getZoom();
-    const edit = script.edits[0];
-    if (!edit) return 0;
-    const rect = this.targetRect(edit.target_id);
-    if (!rect) return 0;
-    const page = this.deps.bridge.getPageInfo(rect.pageIndex);
-    const pageTop = canvasView.getVirtualScroll().getPageOffset(rect.pageIndex);
-    const pageWidth = page.width * zoom;
-    const pageLeft = Math.max(0, (this.deps.scrollContent.clientWidth - pageWidth) / 2);
-    const top = pageTop + rect.y * zoom;
+    const before = new Map<string, string>();
+    for (const node of this.context?.content ?? []) before.set(node.id, node.text);
+
+    const entries: InlineDiffEntry[] = [];
+    for (const edit of script.edits) {
+      const rect = this.targetRect(edit.target_id);
+      if (!rect) continue;
+      const page = this.deps.bridge.getPageInfo(rect.pageIndex);
+      const pageTop = canvasView.getVirtualScroll().getPageOffset(rect.pageIndex);
+      const pageWidth = page.width * zoom;
+      const pageLeft = Math.max(0, (this.deps.scrollContent.clientWidth - pageWidth) / 2);
+      const left = pageLeft + rect.x * zoom;
+      const top = pageTop + rect.y * zoom;
+      const lineBottom = pageTop + (rect.y + rect.height) * zoom;
+      // REPLACE/DELETE는 사라진 기존 내용을 빨간 카드로(이미 문서에선 제거됨).
+      const removed = edit.command === 'REPLACE' || edit.command === 'DELETE';
+      entries.push({
+        top,
+        lineBottom,
+        left,
+        maxWidth: Math.max(120, pageLeft + pageWidth - left - 4),
+        before: removed ? before.get(edit.target_id) : undefined,
+        // DELETE는 새 내용이 없으므로 초록 하이라이트 생략.
+        highlight: edit.command !== 'DELETE',
+      });
+    }
+    if (!entries.length) return 0;
     return showInlineDiff(
       { scrollContent: this.deps.scrollContent, scrollContainer: this.deps.scrollContainer },
-      // before/after 없음 → 카드는 안 그리고 바만 띄운다.
-      [{ top, lineBottom: top, left: pageLeft + rect.x * zoom, maxWidth: pageWidth }],
+      entries,
       { onAccept: () => this.accept(), onReject: () => this.reject() },
     );
   }

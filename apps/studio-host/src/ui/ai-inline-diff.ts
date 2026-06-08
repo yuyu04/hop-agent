@@ -15,10 +15,12 @@ export interface InlineDiffEntry {
   left: number;
   /** 카드 최대 폭(대상 위치 기준). 페이지를 가로로 다 가리지 않도록 제한한다. */
   maxWidth: number;
-  /** REPLACE/DELETE에서 사라지는 원문(빨강). */
+  /** REPLACE/DELETE에서 사라지는 원문(빨강 카드). */
   before?: string;
-  /** INSERT/REPLACE로 들어오는 텍스트(초록). */
+  /** INSERT/REPLACE로 들어오는 텍스트(초록 카드 — 가상 미리보기 모드). */
   after?: string;
+  /** 낙관적 적용 모드: 새로 추가/바뀐 영역에 초록 반투명 박스를 덮는다. */
+  highlight?: boolean;
 }
 
 export interface InlineDiffCallbacks {
@@ -51,13 +53,27 @@ export function showInlineDiff(
   let minTop = Number.POSITIVE_INFINITY;
   let barLeft = 0;
   for (const entry of entries) {
-    // 위치만 있고 before/after가 없으면(이미 라이브 적용됨) 카드는 그리지 않고
-    // 떠 있는 바 위치 계산에만 쓴다.
+    if (entry.top < minTop) {
+      minTop = entry.top;
+      barLeft = entry.left;
+    }
+
+    // 낙관적 적용 모드: 새로 추가/바뀐 영역에 초록 반투명 박스를 덮는다.
+    if (entry.highlight) {
+      const box = document.createElement('div');
+      box.setAttribute(ATTR, 'highlight');
+      box.className = 'hop-ai-inline-highlight';
+      box.style.position = 'absolute';
+      box.style.left = `${entry.left}px`;
+      box.style.top = `${entry.top}px`;
+      box.style.width = `${Math.max(40, entry.maxWidth)}px`;
+      box.style.height = `${Math.max(8, entry.lineBottom - entry.top)}px`;
+      box.style.pointerEvents = 'none';
+      deps.scrollContent.appendChild(box);
+    }
+
+    // 위치/하이라이트만 있고 before/after 카드가 없으면 카드는 생략.
     if (entry.before === undefined && entry.after === undefined) {
-      if (entry.top < minTop) {
-        minTop = entry.top;
-        barLeft = entry.left;
-      }
       continue;
     }
     // 카드는 대상 줄 "아래"에 두어 원문을 가리지 않는다. 폭은 maxWidth로 제한.
@@ -83,11 +99,6 @@ export function showInlineDiff(
       card.appendChild(after);
     }
     deps.scrollContent.appendChild(card);
-
-    if (entry.top < minTop) {
-      minTop = entry.top;
-      barLeft = entry.left;
-    }
   }
 
   // 변경 영역 상단에 떠 있는 승인/거절 바(대상 위치 기준, 좁게).
