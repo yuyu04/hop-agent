@@ -133,6 +133,8 @@ interface Attachment {
   text?: string;
   /** 원본 로컬 경로(드래그&드롭 시). claude-cli는 base64 대신 이 경로를 넘긴다. */
   path?: string;
+  /** 백그라운드 추출 진행 중(칩에 ⏳ 표시, 전송 시 완료 대기). */
+  loading?: boolean;
 }
 
 /** PDF 등 바이너리 문서 입력을 받는 provider(스펙 5장). */
@@ -192,6 +194,8 @@ export class AgentSidebar {
   private readonly keyState = new Map<string, boolean>();
   private sensitive = false;
   private attachments: Attachment[] = [];
+  /** 진행 중인 백그라운드 문서 추출(전송 시 완료를 기다린다). */
+  private extractTasks: Promise<void>[] = [];
   private active: ActiveTurn | null = null;
   private unsubscribe: AiEventUnsubscribe | null = null;
   private copyHandler: ((event: KeyboardEvent) => void) | null = null;
@@ -346,10 +350,22 @@ export class AgentSidebar {
           });
         } else if (/\.(pdf|hwp|hwpx|docx)$/i.test(name)) {
           // PDF·한글·워드는 네이티브로 평문 추출 → 모든 provider에 인라인(경로/샌드박스 무관).
-          // 큰 PDF는 수 초 걸릴 수 있어 진행 상태를 표시한다.
-          this.setStatus(`📄 "${name}" 분석 중… (잠시 걸릴 수 있어요)`);
-          const text = await this.deps.bridge.aiExtractText(path);
-          this.attachments.push({ id: uid(), kind: 'doc', name, text });
+          // 칩은 즉시 띄우고(로딩), 추출은 백그라운드로 — 기다리지 않게 한다.
+          const att: Attachment = { id: uid(), kind: 'doc', name, text: '', loading: true };
+          this.attachments.push(att);
+          this.extractTasks.push(
+            (async () => {
+              try {
+                att.text = await this.deps.bridge.aiExtractText(path);
+              } catch (e) {
+                att.text = '';
+                this.setStatus(`첨부 분석 실패(${name}): ${String(e)}`, 'error');
+              } finally {
+                att.loading = false;
+                this.renderChips();
+              }
+            })(),
+          );
         } else if (/\.(txt|md|markdown|csv|json|html?|xml)$/i.test(name)) {
           const { readTextFile } = await import('@tauri-apps/plugin-fs');
           const text = await readTextFile(path);
@@ -412,6 +428,7 @@ export class AgentSidebar {
     this.requestId = null;
     this.active = null;
     this.attachments = [];
+    this.extractTasks = [];
     this.renderChips();
     this.setStatus('');
 
@@ -483,6 +500,13 @@ export class AgentSidebar {
       this.toggleSettings(true);
       this.setStatus('Base URL을 입력하세요 (⚙ 옵션, 예: https://api.groq.com/openai).', 'warn');
       return;
+    }
+
+    // 첨부 문서가 아직 백그라운드 추출 중이면, 끝난 뒤에 AI에 전송한다.
+    if (this.extractTasks.length) {
+      this.setStatus('첨부 문서 분석이 끝나면 전송합니다…');
+      await Promise.all(this.extractTasks);
+      this.extractTasks = [];
     }
 
     // 미확정 Diff가 있으면 자동 롤백 후 진행(스펙 4장 동시성).
@@ -827,7 +851,9 @@ export class AgentSidebar {
     for (const a of this.attachments) {
       const chip = el('span', 'hop-ai-chip');
       const label = el('span', 'hop-ai-chip-label');
-      label.textContent = `${attachmentIcon(a.kind)} ${a.name}`;
+      label.textContent = a.loading
+        ? `⏳ ${a.name} (분석 중)`
+        : `${attachmentIcon(a.kind)} ${a.name}`;
       const remove = el('button', 'hop-ai-chip-remove') as HTMLButtonElement;
       remove.textContent = '×';
       remove.addEventListener('click', () => {
