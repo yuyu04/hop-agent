@@ -58,9 +58,13 @@ export interface AgentSidebarDeps {
 /** 커스텀 OpenAI 호환 엔드포인트(Groq/OpenRouter/Together/LM Studio/게이트웨이). 스펙 5.3장. */
 const CUSTOM_PROVIDER = 'openai-compat';
 
-const PROVIDERS = ['gemini', 'openai', 'anthropic', 'ollama', CUSTOM_PROVIDER] as const;
+/** 로컬 CLI 위임 — 터미널에 로그인된 Claude Code를 호출(키·과금 없음). 스펙 5.3장. */
+const CLAUDE_CLI_PROVIDER = 'claude-cli';
+
+const PROVIDERS = ['gemini', 'openai', 'anthropic', 'ollama', CLAUDE_CLI_PROVIDER, CUSTOM_PROVIDER] as const;
 
 const PROVIDER_LABELS: Record<string, string> = {
+  [CLAUDE_CLI_PROVIDER]: 'Claude Code (로컬 CLI)',
   [CUSTOM_PROVIDER]: 'OpenAI 호환 (Groq 등)',
 };
 
@@ -86,6 +90,7 @@ const MODELS: Record<string, string[]> = {
   anthropic: ['claude-3-5-haiku-latest', 'claude-3-5-sonnet-latest'],
   gemini: ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash-lite', 'gemini-flash-latest'],
   ollama: ['llama3.1', 'llama3.2', 'qwen2.5', 'mistral'],
+  [CLAUDE_CLI_PROVIDER]: ['default', 'sonnet', 'opus', 'haiku'],
   [CUSTOM_PROVIDER]: ['llama-3.1-8b-instant', 'llama-3.3-70b-versatile'],
 };
 
@@ -954,6 +959,8 @@ function defaultModel(provider: string): string {
       return 'gemini-2.5-flash';
     case 'ollama':
       return 'llama3.1';
+    case CLAUDE_CLI_PROVIDER:
+      return 'default';
     case CUSTOM_PROVIDER:
       return 'llama-3.1-8b-instant';
     default:

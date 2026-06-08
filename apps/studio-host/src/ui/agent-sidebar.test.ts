@@ -715,6 +715,29 @@ describe('AgentSidebar', () => {
     );
   });
 
+  it('sends via the local Claude CLI provider without an API key', async () => {
+    build();
+    await flush();
+    await selectProvider('claude-cli');
+    // CLI는 키가 필요 없어 키 입력줄이 숨겨진다.
+    expect(find('hop-ai-key-row').classList.contains('hop-ai-hidden')).toBe(true);
+
+    find('hop-ai-prompt').value = '첫 문단 바꿔줘';
+    find('hop-ai-send').click();
+    await flush();
+
+    expect(bridge.aiRequestEdit).toHaveBeenCalledWith(
+      'doc-1',
+      '첫 문단 바꿔줘',
+      'claude-cli',
+      'default',
+      null,
+      null,
+      null,
+      null,
+    );
+  });
+
   it('requires a base URL for the openai-compat provider', async () => {
     build();
     await flush();

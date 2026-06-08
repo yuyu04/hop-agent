@@ -5,12 +5,14 @@
 //! 화이트리스트·스키마 검증은 코어에서 수행한다.
 
 pub mod anthropic;
+pub mod claude_cli;
 pub mod gemini;
 pub mod openai;
 pub mod sse;
 
 use crate::ai::provider::{LlmProvider, LlmRequest, ProviderError};
 use anthropic::AnthropicProvider;
+use claude_cli::ClaudeCliProvider;
 use gemini::GeminiProvider;
 use openai::{OpenAiProvider, StructuredMode};
 use std::time::Duration;
@@ -58,6 +60,8 @@ pub fn build_provider(
             api_key: require_key(provider_id, api_key)?,
             model: model_id,
         })),
+        // 로컬 CLI 위임 — API 키 불필요(CLI가 구독/OAuth 처리).
+        "claude-cli" => Ok(Box::new(ClaudeCliProvider { model: model_id })),
         other => Err(format!("알 수 없는 provider입니다: {}", other)),
     }
 }
