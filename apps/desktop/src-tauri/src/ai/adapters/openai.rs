@@ -107,6 +107,7 @@ mod tests {
             document_context_json: "{\"content\":[]}".to_string(),
             output_schema: json!({ "type": "object" }),
             images: Vec::new(),
+            documents: Vec::new(),
         }
     }
 

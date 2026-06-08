@@ -132,6 +132,7 @@ pub fn ai_request_edit(
     cursor_path: Option<String>,
     base_url: Option<String>,
     images: Option<Vec<ImageInput>>,
+    documents: Option<Vec<ImageInput>>,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
     // 민감 문서는 외부 provider 전송을 차단한다(스펙 6장 — 공문서 보호).
@@ -168,6 +169,7 @@ pub fn ai_request_edit(
         document_context_json: context_json,
         output_schema: schema::action_script_schema(),
         images: images.unwrap_or_default(),
+        documents: documents.unwrap_or_default(),
     };
 
     tauri::async_runtime::spawn(run_edit_request(
@@ -199,6 +201,24 @@ pub fn ai_set_document_sensitivity(
 ) -> Result<(), String> {
     state.ai.set_sensitive(doc_id, sensitive);
     Ok(())
+}
+
+/// 첨부용 — HWP/HWPX 파일에서 평문 텍스트를 추출한다(rhwp). 열린 문서와 무관하게
+/// 임의 경로의 파일을 파싱하므로, 사용자가 끌어다 놓은 한글 문서를 프롬프트
+/// 컨텍스트로 인라인할 수 있다. PDF·DOCX 등은 여기서 처리하지 않는다.
+#[tauri::command]
+pub fn ai_extract_text(path: String) -> Result<String, String> {
+    let lower = path.to_lowercase();
+    if !(lower.ends_with(".hwp") || lower.ends_with(".hwpx")) {
+        return Err("HWP/HWPX 파일만 텍스트 추출을 지원합니다.".to_string());
+    }
+    let bytes = std::fs::read(&path).map_err(|e| format!("파일을 읽을 수 없습니다: {}", e))?;
+    let core = crate::state::editable_core_from_bytes(
+        &bytes,
+        "문서 파싱 실패",
+        "편집 가능 문서 변환 실패",
+    )?;
+    serialize::extract_all_text(&core)
 }
 
 async fn run_edit_request(

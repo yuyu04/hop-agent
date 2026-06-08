@@ -17,9 +17,10 @@ pub struct GeminiProvider {
 impl GeminiProvider {
     pub fn build_body(&self, req: &LlmRequest) -> Value {
         let mut parts = vec![json!({ "text": user_content(req) })];
-        for image in &req.images {
+        // 이미지·문서(PDF 등) 모두 inline_data로 보낸다(Gemini는 application/pdf 지원).
+        for media in req.images.iter().chain(req.documents.iter()) {
             parts.push(json!({
-                "inline_data": { "mime_type": image.mime_type, "data": image.data_base64 }
+                "inline_data": { "mime_type": media.mime_type, "data": media.data_base64 }
             }));
         }
         json!({
@@ -117,6 +118,7 @@ mod tests {
             document_context_json: "{\"content\":[]}".to_string(),
             output_schema: json!({ "$schema": "draft-07", "type": "object" }),
             images: Vec::new(),
+            documents: Vec::new(),
         }
     }
 
@@ -142,6 +144,23 @@ mod tests {
     fn endpoint_uses_streaming_sse() {
         assert!(provider().endpoint().contains(":streamGenerateContent?alt=sse"));
         assert!(provider().endpoint().contains("/models/gemini-x:"));
+    }
+
+    #[test]
+    fn documents_are_sent_as_inline_data() {
+        use crate::ai::provider::ImageInput;
+        let mut req = request();
+        req.documents = vec![ImageInput {
+            mime_type: "application/pdf".to_string(),
+            data_base64: "JVBERi0=".to_string(),
+        }];
+        let body = provider().build_body(&req);
+        let parts = body["contents"][0]["parts"].as_array().unwrap();
+        let has_pdf = parts.iter().any(|p| {
+            p["inline_data"]["mime_type"] == json!("application/pdf")
+                && p["inline_data"]["data"] == json!("JVBERi0=")
+        });
+        assert!(has_pdf, "PDF가 inline_data 파트로 포함되어야 한다");
     }
 
     #[test]

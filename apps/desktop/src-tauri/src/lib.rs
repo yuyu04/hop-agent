@@ -35,7 +35,7 @@ use commands::{
 };
 use ai::{
     ai_cancel_request, ai_delete_api_key, ai_get_document_context, ai_has_api_key, ai_request_edit,
-    ai_set_api_key, ai_set_document_sensitivity,
+    ai_extract_text, ai_set_api_key, ai_set_document_sensitivity,
 };
 use state::AppState;
 use updates::{get_update_state, restart_to_apply_update, start_update_install};
@@ -122,6 +122,7 @@ pub fn run() {
             ai_delete_api_key,
             ai_has_api_key,
             ai_set_document_sensitivity,
+            ai_extract_text,
         ])
         .build(tauri::generate_context!())
         .expect("failed to build HOP desktop app");

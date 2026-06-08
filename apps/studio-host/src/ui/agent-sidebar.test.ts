@@ -190,6 +190,7 @@ function createBridge() {
     aiHasApiKey: vi.fn(async () => false),
     aiDeleteApiKey: vi.fn(async () => undefined),
     aiSetDocumentSensitivity: vi.fn(async () => undefined),
+    aiExtractText: vi.fn(async () => '추출된 본문'),
     currentDocId: vi.fn(() => 'doc-1' as string | null),
     getCursorRect: vi.fn(() => ({ pageIndex: 0, x: 0, y: 0, height: 10 })),
     getCursorRectByPath: vi.fn(() => ({ pageIndex: 0, x: 20, y: 40, height: 10 })),
@@ -310,6 +311,7 @@ describe('AgentSidebar', () => {
       null,
       null,
       null,
+      null,
     );
 
     // 부분 응답(Raw JSON)은 덤프하지 않고 진행 표시만 한다.
@@ -418,7 +420,7 @@ describe('AgentSidebar', () => {
     await flush();
     expect(drop.preventDefault).toHaveBeenCalled();
     expect(panel.classList.contains('hop-ai-dragover')).toBe(false);
-    expect(find('hop-ai-status').textContent).toContain('이미지/텍스트 파일만');
+    expect(find('hop-ai-status').textContent).toContain('지원하지 않는 형식');
   });
 
   it('ignores ready events for a different request id', async () => {
@@ -548,6 +550,7 @@ describe('AgentSidebar', () => {
       null,
       null,
       null,
+      null,
     );
   });
 
@@ -572,6 +575,7 @@ describe('AgentSidebar', () => {
       '요약',
       'gemini',
       'gemini-3-flash-preview',
+      null,
       null,
       null,
       null,
@@ -624,6 +628,7 @@ describe('AgentSidebar', () => {
       null,
       null,
       null,
+      null,
     );
     expect(bridge.aiSetDocumentSensitivity).toHaveBeenCalledWith('doc-1', true);
   });
@@ -647,6 +652,7 @@ describe('AgentSidebar', () => {
       'ollama',
       'llama3.1',
       'sec[0].p[7]',
+      null,
       null,
       null,
     );
@@ -688,6 +694,7 @@ describe('AgentSidebar', () => {
       'llama-3.1-8b-instant',
       null,
       'https://api.groq.com/openai',
+      null,
       null,
     );
   });

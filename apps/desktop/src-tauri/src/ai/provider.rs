@@ -35,6 +35,8 @@ pub struct LlmRequest {
     pub output_schema: Value,
     /// 사용자가 첨부한 이미지(없으면 빈 벡터). vision 지원 provider만 사용.
     pub images: Vec<ImageInput>,
+    /// 사용자가 첨부한 문서(PDF 등, base64). 문서 입력 지원 provider만 사용.
+    pub documents: Vec<ImageInput>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -152,6 +154,7 @@ mod tests {
             document_context_json: context_json.to_string(),
             output_schema: json!({}),
             images: Vec::new(),
+            documents: Vec::new(),
         }
     }
 

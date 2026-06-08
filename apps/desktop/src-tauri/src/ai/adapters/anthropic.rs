@@ -20,7 +20,7 @@ pub struct AnthropicProvider {
 
 impl AnthropicProvider {
     pub fn build_body(&self, req: &LlmRequest) -> Value {
-        let user_message = if req.images.is_empty() {
+        let user_message = if req.images.is_empty() && req.documents.is_empty() {
             json!(user_content(req))
         } else {
             let mut blocks = vec![json!({ "type": "text", "text": user_content(req) })];
@@ -31,6 +31,17 @@ impl AnthropicProvider {
                         "type": "base64",
                         "media_type": image.mime_type,
                         "data": image.data_base64,
+                    }
+                }));
+            }
+            // PDF 등 문서는 document 블록으로(Anthropic은 application/pdf 지원).
+            for doc in &req.documents {
+                blocks.push(json!({
+                    "type": "document",
+                    "source": {
+                        "type": "base64",
+                        "media_type": doc.mime_type,
+                        "data": doc.data_base64,
                     }
                 }));
             }
@@ -99,6 +110,7 @@ mod tests {
             document_context_json: "{\"content\":[]}".to_string(),
             output_schema: json!({ "type": "object", "marker": 7 }),
             images: Vec::new(),
+            documents: Vec::new(),
         }
     }
 
@@ -120,6 +132,24 @@ mod tests {
             body["tools"][0]["input_schema"],
             json!({ "type": "object", "marker": 7 })
         );
+    }
+
+    #[test]
+    fn documents_are_sent_as_document_blocks() {
+        use crate::ai::provider::ImageInput;
+        let mut req = request();
+        req.documents = vec![ImageInput {
+            mime_type: "application/pdf".to_string(),
+            data_base64: "JVBERi0=".to_string(),
+        }];
+        let body = provider().build_body(&req);
+        let blocks = body["messages"][0]["content"].as_array().unwrap();
+        let has_doc = blocks.iter().any(|b| {
+            b["type"] == json!("document")
+                && b["source"]["media_type"] == json!("application/pdf")
+                && b["source"]["data"] == json!("JVBERi0=")
+        });
+        assert!(has_doc, "PDF가 document 블록으로 포함되어야 한다");
     }
 
     #[test]

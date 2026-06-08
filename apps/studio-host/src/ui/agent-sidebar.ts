@@ -89,15 +89,23 @@ const MODELS: Record<string, string[]> = {
   [CUSTOM_PROVIDER]: ['llama-3.1-8b-instant', 'llama-3.3-70b-versatile'],
 };
 
-/** 첨부 파일 — 이미지(vision 전달) 또는 텍스트 문서(프롬프트에 인라인). */
+/**
+ * 첨부 파일.
+ *  - image: vision provider에 이미지로 전달
+ *  - doc:   텍스트로 추출/읽어 프롬프트에 인라인(모든 provider; HWP/HWPX·텍스트)
+ *  - file:  base64 바이너리 문서로 전달(PDF 등; 문서 지원 provider만)
+ */
 interface Attachment {
   id: string;
-  kind: 'image' | 'doc';
+  kind: 'image' | 'doc' | 'file';
   name: string;
   mime?: string;
   dataBase64?: string;
   text?: string;
 }
+
+/** PDF 등 바이너리 문서 입력을 받는 provider(스펙 5장). */
+const DOC_PROVIDERS = new Set<string>(['gemini', 'anthropic']);
 
 /** 진행 중인 어시스턴트 턴의 DOM 참조. */
 interface ActiveTurn {
@@ -273,6 +281,20 @@ export class AgentSidebar {
             mime: mimeForImage(name),
             dataBase64: base64FromBytes(bytes),
           });
+        } else if (/\.pdf$/i.test(name)) {
+          const { readFile } = await import('@tauri-apps/plugin-fs');
+          const bytes = await readFile(path);
+          this.attachments.push({
+            id: uid(),
+            kind: 'file',
+            name,
+            mime: 'application/pdf',
+            dataBase64: base64FromBytes(bytes),
+          });
+        } else if (/\.(hwp|hwpx)$/i.test(name)) {
+          // 한글 문서는 네이티브 rhwp로 평문 추출 → 모든 provider에서 인라인 가능.
+          const text = await this.deps.bridge.aiExtractText(path);
+          this.attachments.push({ id: uid(), kind: 'doc', name, text });
         } else if (/\.(txt|md|markdown|csv|json|html?|xml)$/i.test(name)) {
           const { readTextFile } = await import('@tauri-apps/plugin-fs');
           const text = await readTextFile(path);
@@ -282,12 +304,18 @@ export class AgentSidebar {
           continue;
         }
         this.renderChips();
-      } catch {
-        this.setStatus(`첨부 실패: ${name}`, 'error');
+      } catch (error) {
+        this.setStatus(`첨부 실패(${name}): ${String(error)}`, 'error');
       }
     }
-    if (ignored) this.setStatus(`이미지/텍스트 파일만 첨부할 수 있습니다(${ignored}개 무시).`, 'warn');
-    else this.setStatus('첨부했습니다. 이어서 지시를 입력하세요.', 'ok');
+    if (ignored) {
+      this.setStatus(
+        `지원하지 않는 형식이 있습니다(${ignored}개 무시). 이미지·PDF·HWP/HWPX·텍스트만 가능합니다.`,
+        'warn',
+      );
+    } else {
+      this.setStatus('첨부했습니다. 이어서 지시를 입력하세요.', 'ok');
+    }
   }
 
   toggle(open?: boolean): void {
@@ -350,6 +378,14 @@ export class AgentSidebar {
     const images: AiImageInput[] = attachments
       .filter((a) => a.kind === 'image' && a.dataBase64)
       .map((a) => ({ mimeType: a.mime ?? 'image/png', dataBase64: a.dataBase64! }));
+    const documents: AiImageInput[] = attachments
+      .filter((a) => a.kind === 'file' && a.dataBase64)
+      .map((a) => ({ mimeType: a.mime ?? 'application/pdf', dataBase64: a.dataBase64! }));
+    // PDF 등 바이너리 문서는 Gemini/Anthropic만 받는다.
+    if (documents.length && !DOC_PROVIDERS.has(provider)) {
+      this.setStatus('PDF 등 문서 첨부는 Gemini 또는 Anthropic에서만 지원됩니다.', 'warn');
+      return;
+    }
     const effectivePrompt = docText ? `${docText}\n\n${prompt}` : prompt;
 
     this.appendUserTurn(prompt, attachments);
@@ -379,6 +415,7 @@ export class AgentSidebar {
         cursorPath,
         baseUrl,
         images.length ? images : null,
+        documents.length ? documents : null,
       );
     } catch (error) {
       this.session.onFailed();
@@ -468,7 +505,7 @@ export class AgentSidebar {
       const chips = el('div', 'hop-ai-msg-chips');
       for (const a of attachments) {
         const chip = el('span', 'hop-ai-chip');
-        chip.textContent = `${a.kind === 'image' ? '🖼' : '📎'} ${a.name}`;
+        chip.textContent = `${attachmentIcon(a.kind)} ${a.name}`;
         chips.appendChild(chip);
       }
       bubble.appendChild(chips);
@@ -510,9 +547,17 @@ export class AgentSidebar {
     this.imageInput.value = '';
   }
 
+  private async addPickedDoc(file: File): Promise<void> {
+    if (file.type === 'application/pdf' || /\.pdf$/i.test(file.name)) {
+      await this.addBinaryFile(file, 'application/pdf');
+    } else {
+      await this.addDocFile(file);
+    }
+  }
+
   private async onDocPicked(): Promise<void> {
     const files = Array.from(this.docInput.files ?? []);
-    for (const file of files) await this.addDocFile(file);
+    for (const file of files) await this.addPickedDoc(file);
     this.docInput.value = '';
   }
 
@@ -552,13 +597,20 @@ export class AgentSidebar {
     for (const file of files) {
       if (file.type.startsWith('image/')) {
         await this.addImageFile(file);
+      } else if (file.type === 'application/pdf' || /\.pdf$/i.test(file.name)) {
+        await this.addBinaryFile(file, 'application/pdf');
       } else if (isTextLike(file)) {
         await this.addDocFile(file);
       } else {
         ignored += 1;
       }
     }
-    if (ignored) this.setStatus(`이미지/텍스트 파일만 첨부할 수 있습니다(${ignored}개 무시).`, 'warn');
+    if (ignored) {
+      this.setStatus(
+        `지원하지 않는 형식이 있습니다(${ignored}개 무시). HWP/HWPX는 드래그&드롭으로 첨부하세요.`,
+        'warn',
+      );
+    }
   }
 
   private async addImageFile(file: File): Promise<void> {
@@ -578,6 +630,24 @@ export class AgentSidebar {
     }
   }
 
+  /** PDF 등 바이너리 문서를 base64로 첨부(file 종류). */
+  private async addBinaryFile(file: File, mime: string): Promise<void> {
+    try {
+      const dataUrl = await readAsDataUrl(file);
+      const dataBase64 = dataUrl.split(',')[1] ?? '';
+      this.attachments.push({
+        id: uid(),
+        kind: 'file',
+        name: file.name || 'document',
+        mime: file.type || mime,
+        dataBase64,
+      });
+      this.renderChips();
+    } catch {
+      this.setStatus('파일을 읽지 못했습니다.', 'error');
+    }
+  }
+
   private async addDocFile(file: File): Promise<void> {
     try {
       const text = await readAsText(file);
@@ -594,7 +664,7 @@ export class AgentSidebar {
     for (const a of this.attachments) {
       const chip = el('span', 'hop-ai-chip');
       const label = el('span', 'hop-ai-chip-label');
-      label.textContent = `${a.kind === 'image' ? '🖼' : '📎'} ${a.name}`;
+      label.textContent = `${attachmentIcon(a.kind)} ${a.name}`;
       const remove = el('button', 'hop-ai-chip-remove') as HTMLButtonElement;
       remove.textContent = '×';
       remove.addEventListener('click', () => {
@@ -982,7 +1052,7 @@ function buildPanel(): PanelParts {
   imageInput.accept = 'image/*';
   imageInput.multiple = true;
   const docInput = inputEl('hop-ai-doc-input hop-ai-hidden', 'file', '');
-  docInput.accept = '.txt,.md,.markdown,.csv,.json,.html,.xml';
+  docInput.accept = '.pdf,.txt,.md,.markdown,.csv,.json,.html,.xml';
   docInput.multiple = true;
 
   const attachImageBtn = btn('hop-ai-attach-image', '🖼');
@@ -1080,6 +1150,12 @@ function uid(): string {
 function isTextLike(file: File): boolean {
   if (file.type.startsWith('text/')) return true;
   return /\.(txt|md|markdown|csv|json|html?|xml)$/i.test(file.name);
+}
+
+function attachmentIcon(kind: Attachment['kind']): string {
+  if (kind === 'image') return '🖼';
+  if (kind === 'file') return '📄';
+  return '📎';
 }
 
 function mimeForImage(name: string): string {

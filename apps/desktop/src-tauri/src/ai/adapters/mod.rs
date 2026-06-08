@@ -156,6 +156,7 @@ mod tests {
             document_context_json: "{\"x\":1}".to_string(),
             output_schema: serde_json::json!({}),
             images: Vec::new(),
+            documents: Vec::new(),
         };
         let content = user_content(&req);
         assert!(content.contains("지시"));

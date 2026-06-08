@@ -97,6 +97,23 @@ pub fn parse_cursor_path(path: &str) -> Option<(usize, usize)> {
     Some((sec.parse().ok()?, para.parse().ok()?))
 }
 
+/// 첨부용: 문서의 모든 텍스트(본문 + 표/중첩 셀)를 읽기 순서로 이어붙인다.
+/// LLM 컨텍스트(편집 대상)와 달리 ID 없이 평문만 필요할 때 쓴다.
+pub fn extract_all_text(core: &DocumentCore) -> Result<String, String> {
+    let (paragraphs, _) = collect_paragraphs(core)?;
+    let mut lines: Vec<String> = paragraphs
+        .into_iter()
+        .map(|(_, _, text)| text)
+        .filter(|t| !t.trim().is_empty())
+        .collect();
+    for (_, text) in collect_cells(core) {
+        if !text.trim().is_empty() {
+            lines.push(text);
+        }
+    }
+    Ok(lines.join("\n"))
+}
+
 /// 직렬화 중간 표현: `(section, paragraph, text)`.
 type Paragraph = (usize, usize, String);
 
@@ -319,6 +336,15 @@ mod tests {
             );
         }
         assert_eq!(whitelist.len(), context.content.len());
+    }
+
+    #[test]
+    fn extract_all_text_joins_body_paragraphs() {
+        let core = doc_with_paragraphs(3, 4);
+        let text = extract_all_text(&core).unwrap();
+        // 3문단 × "가가가가" → 줄바꿈으로 이어진다.
+        assert_eq!(text.lines().count(), 3);
+        assert!(text.contains("가가가가"));
     }
 
     #[test]

@@ -119,7 +119,10 @@ export interface AiBridgeApi {
     cursorPath?: string | null,
     baseUrl?: string | null,
     images?: AiImageInput[] | null,
+    documents?: AiImageInput[] | null,
   ): Promise<string>;
+  /** HWP/HWPX 파일의 평문 텍스트를 추출한다(첨부용). */
+  aiExtractText(path: string): Promise<string>;
   /** 진행 중인 요청을 취소한다(스펙 7장). */
   aiCancelRequest(requestId: string): Promise<void>;
   /** provider API 키를 OS 보안 저장소에 저장한다(스펙 6장). */
@@ -330,6 +333,7 @@ export class TauriBridge extends WasmBridge implements DesktopBridgeApi, AiBridg
     cursorPath?: string | null,
     baseUrl?: string | null,
     images?: AiImageInput[] | null,
+    documents?: AiImageInput[] | null,
   ): Promise<string> {
     return this.invoke<string>('ai_request_edit', {
       docId,
@@ -339,7 +343,12 @@ export class TauriBridge extends WasmBridge implements DesktopBridgeApi, AiBridg
       cursorPath: cursorPath ?? null,
       baseUrl: baseUrl ?? null,
       images: images ?? null,
+      documents: documents ?? null,
     });
+  }
+
+  async aiExtractText(path: string): Promise<string> {
+    return this.invoke<string>('ai_extract_text', { path });
   }
 
   async aiCancelRequest(requestId: string): Promise<void> {
