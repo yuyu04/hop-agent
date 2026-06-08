@@ -175,6 +175,55 @@
   gap: 4px;
 }
 
+/* "⋯" 드롭다운 메뉴 (최근 대화 + Agent 설정) */
+.hop-ai-menu {
+  position: absolute;
+  top: 40px;
+  right: 8px;
+  z-index: 1150;
+  min-width: 200px;
+  max-width: 280px;
+  max-height: 60vh;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid #d0d4da;
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.22);
+  padding: 4px;
+}
+.hop-ai-menu-head {
+  font-size: 11px;
+  color: #888;
+  padding: 6px 8px 2px;
+}
+.hop-ai-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  padding: 7px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hop-ai-menu-item:hover {
+  background: #eef0f3;
+}
+.hop-ai-menu-item-active {
+  font-weight: 600;
+  color: #2563eb;
+}
+.hop-ai-menu-divider {
+  height: 1px;
+  background: #e0e3e8;
+  margin: 4px 0;
+}
+
 /* 설정 모달(Agent 설정) */
 .hop-ai-modal {
   position: absolute;
@@ -310,6 +359,9 @@
   justify-content: space-between;
   gap: 6px;
 }
+.hop-ai-composer-bar {
+  flex-wrap: wrap;
+}
 .hop-ai-composer-left,
 .hop-ai-composer-right {
   display: flex;
@@ -318,15 +370,23 @@
 }
 .hop-ai-composer-right {
   min-width: 0;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 .hop-ai-provider,
 .hop-ai-model-select {
   font-size: 12px;
   max-width: 110px;
+  min-width: 0;
 }
+/* 모델 직접 입력칸은 한 줄을 통째로 차지해(줄바꿈) 다른 버튼을 밀지 않는다. */
 .hop-ai-model {
   font: inherit;
-  width: 120px;
+  flex: 1 1 100%;
+  width: auto;
+  min-width: 0;
+  box-sizing: border-box;
 }
 .hop-ai-attach-image,
 .hop-ai-attach-doc {

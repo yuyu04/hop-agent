@@ -619,15 +619,22 @@ describe('AgentSidebar', () => {
     expect(find('hop-ai-status').textContent).toContain('API 키를 먼저 저장하세요');
   });
 
-  it('opens the Agent settings modal only when the ⚙ button is pressed', async () => {
+  it('opens the ⋯ menu, then Agent settings modal from it', async () => {
     build();
     await flush();
+    expect(find('hop-ai-menu').classList.contains('hop-ai-hidden')).toBe(true);
     expect(find('hop-ai-modal').classList.contains('hop-ai-hidden')).toBe(true);
 
+    // ⋯ → 메뉴 열림(최근 대화 + Agent 설정).
     find('hop-ai-settings-btn').click();
-    expect(find('hop-ai-modal').classList.contains('hop-ai-hidden')).toBe(false);
+    expect(find('hop-ai-menu').classList.contains('hop-ai-hidden')).toBe(false);
 
-    // 모달 닫기 버튼으로 닫힌다.
+    // 마지막 메뉴 항목('Agent 설정') 클릭 → 모달 열림, 메뉴 닫힘.
+    const items = doc.body.querySelectorAll('.hop-ai-menu-item');
+    items[items.length - 1].click();
+    expect(find('hop-ai-modal').classList.contains('hop-ai-hidden')).toBe(false);
+    expect(find('hop-ai-menu').classList.contains('hop-ai-hidden')).toBe(true);
+
     find('hop-ai-modal-close').click();
     expect(find('hop-ai-modal').classList.contains('hop-ai-hidden')).toBe(true);
   });

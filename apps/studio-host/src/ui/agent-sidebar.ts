@@ -178,6 +178,7 @@ export class AgentSidebar {
   private readonly docInput: HTMLInputElement;
   private readonly settingsPanel: HTMLElement;
   private readonly settingsModal: HTMLElement;
+  private readonly menu: HTMLElement;
   private readonly keyRow: HTMLElement;
   private readonly keyInput: HTMLInputElement;
   private readonly keyStatus: HTMLElement;
@@ -220,6 +221,7 @@ export class AgentSidebar {
     this.docInput = built.docInput;
     this.settingsPanel = built.settingsPanel;
     this.settingsModal = built.settingsModal;
+    this.menu = built.menu;
     this.keyRow = built.keyRow;
     this.keyInput = built.keyInput;
     this.keyStatus = built.keyStatus;
@@ -234,7 +236,7 @@ export class AgentSidebar {
     built.closeBtn.addEventListener('click', () => this.toggle(false));
     built.toggleBtn.addEventListener('click', () => this.toggle());
     built.newChatBtn.addEventListener('click', () => this.newConversation());
-    built.settingsBtn.addEventListener('click', () => this.toggleSettings());
+    built.settingsBtn.addEventListener('click', () => this.toggleMenu());
     built.settingsClose.addEventListener('click', () => this.toggleSettings(false));
     built.attachImageBtn.addEventListener('click', () => this.imageInput.click());
     built.attachDocBtn.addEventListener('click', () => this.docInput.click());
@@ -862,6 +864,40 @@ export class AgentSidebar {
     this.settingsModal.classList.toggle('hop-ai-hidden', !show);
   }
 
+  /** "⋯" 메뉴 — 최근 대화 리스트 + Agent 설정. */
+  private toggleMenu(open?: boolean): void {
+    const show = open ?? this.menu.classList.contains('hop-ai-hidden');
+    if (show) this.renderMenu();
+    this.menu.classList.toggle('hop-ai-hidden', !show);
+  }
+
+  private renderMenu(): void {
+    this.menu.replaceChildren();
+    const head = el('div', 'hop-ai-menu-head');
+    head.textContent = '최근 대화';
+    this.menu.appendChild(head);
+    // 최신 대화가 위로 오도록 역순.
+    for (const conv of [...this.conversations].reverse()) {
+      const item = el('button', 'hop-ai-menu-item') as HTMLButtonElement;
+      item.textContent = conv.tab.textContent || '새 대화';
+      if (conv === this.activeConv) item.classList.add('hop-ai-menu-item-active');
+      item.addEventListener('click', () => {
+        this.switchConversation(conv.id);
+        this.toggleMenu(false);
+      });
+      this.menu.appendChild(item);
+    }
+    const divider = el('div', 'hop-ai-menu-divider');
+    this.menu.appendChild(divider);
+    const settings = el('button', 'hop-ai-menu-item') as HTMLButtonElement;
+    settings.textContent = '⚙ Agent 설정';
+    settings.addEventListener('click', () => {
+      this.toggleMenu(false);
+      this.toggleSettings(true);
+    });
+    this.menu.appendChild(settings);
+  }
+
   private async onProviderChange(): Promise<void> {
     this.populateModels(this.providerSelect.value);
     await this.refreshKeyState();
@@ -1225,6 +1261,7 @@ interface PanelParts {
   closeBtn: HTMLButtonElement;
   newChatBtn: HTMLButtonElement;
   settingsBtn: HTMLButtonElement;
+  menu: HTMLElement;
   settingsModal: HTMLElement;
   settingsClose: HTMLButtonElement;
   tabBar: HTMLElement;
@@ -1268,11 +1305,15 @@ function buildPanel(): PanelParts {
   newChatBtn.textContent = '＋';
   newChatBtn.title = '새 대화';
   const settingsBtn = el('button', 'hop-ai-settings-btn') as HTMLButtonElement;
-  settingsBtn.textContent = '⚙';
-  settingsBtn.title = 'Agent 설정 (API 키·엔드포인트·민감 문서)';
+  settingsBtn.textContent = '⋯';
+  settingsBtn.title = '메뉴 (최근 대화 · Agent 설정)';
   const closeBtn = el('button', 'hop-ai-close') as HTMLButtonElement;
   closeBtn.textContent = '×';
   header.append(title, newChatBtn, settingsBtn, closeBtn);
+
+  // "⋯" 드롭다운 메뉴(최근 대화 리스트 + Agent 설정). 기본 숨김.
+  const menu = el('div', 'hop-ai-menu');
+  menu.classList.add('hop-ai-hidden');
 
   // 대화 탭 바(여러 대화를 보존하고 전환).
   const tabBar = el('div', 'hop-ai-tabbar');
@@ -1370,7 +1411,7 @@ function buildPanel(): PanelParts {
   // 컴포저는 본문 영역에 두고, 빈 대화면 상단/대화 시작 시 하단으로 CSS order로 이동.
   const body = el('div', 'hop-ai-body');
   body.append(threadsWrap, composer);
-  panel.append(header, tabBar, body, settingsModal);
+  panel.append(header, menu, tabBar, body, settingsModal);
 
   return {
     panel,
@@ -1378,6 +1419,7 @@ function buildPanel(): PanelParts {
     closeBtn,
     newChatBtn,
     settingsBtn,
+    menu,
     settingsModal,
     settingsClose,
     tabBar,
