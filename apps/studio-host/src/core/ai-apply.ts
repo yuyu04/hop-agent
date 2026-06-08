@@ -139,6 +139,14 @@ export function applyActionScript(wasm: WasmEditing, script: ActionScript): Appl
 
     const cell = parseCellTarget(edit.target_id);
     if (cell) {
+      // 표 셀 안에는 표를 만들 수 없다(셀은 페이지로 늘어나지 않음). 본문에 만들어야 한다.
+      if (isTableEdit(edit)) {
+        skipped.push({
+          targetId: edit.target_id,
+          reason: '표 셀 안에는 표를 만들 수 없습니다. 표 바깥 본문 문단에 INSERT 하세요.',
+        });
+        continue;
+      }
       located.push({ kind: 'cell', edit, cell });
       continue;
     }

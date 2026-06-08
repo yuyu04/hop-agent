@@ -123,6 +123,23 @@ describe('applyActionScript', () => {
     ]);
   });
 
+  it('skips creating a table inside a table cell (cells cannot paginate)', () => {
+    const wasm = new FakeWasm();
+    const result = applyActionScript(
+      wasm,
+      script([
+        {
+          command: 'INSERT_AFTER',
+          target_id: 'sec[0].p[0].tbl[2].cell[0].p[20]',
+          payload: { type: 'table', table_data: { rows: 2, cols: 2, matrix: [] } },
+        },
+      ]),
+    );
+    expect(result.applied).toBe(0);
+    expect(result.skipped[0].reason).toContain('표 셀 안에는 표를');
+    expect(wasm.calls).toEqual([]);
+  });
+
   it('INSERT_BEFORE splits at offset 0 and fills the new paragraph', () => {
     const wasm = new FakeWasm();
     applyActionScript(

@@ -329,10 +329,14 @@ fn system_prompt() -> String {
      표 셀은 `sec[s].p[p].tbl[c].cell[k].p[i]` 형식의 ID로 제공됩니다. 표 안의 값을 \
      바꿀 때는 그 셀 ID로 REPLACE, 셀 안에 내용을 새로 추가할 때는 그 셀 ID로 \
      INSERT_BEFORE/INSERT_AFTER를 쓰세요. \
-     긴 새 내용(예: 사업계획서 본문, 새 절)을 추가할 때는 기존 표를 줄이지 말고, \
-     문서의 마지막 본문 문단 ID에 INSERT_AFTER로 문단을 여러 개 추가하세요. \
-     각 문단은 별도의 edit으로 INSERT_AFTER 하고, 새 페이지에서 시작해야 하면 \
-     payload.page_break를 true로 설정하세요. \
+     긴 새 내용(예: 사업계획서 본문, 새 절)이나 새 표를 추가할 때는 반드시 \
+     '표 바깥 본문 문단' ID에 INSERT_AFTER 하세요. 본문 문단 ID는 `.tbl`이 없는 \
+     `sec[s].p[p]` 형식입니다(예: sec[0].p[0]). \
+     `.tbl[...].cell[...]`가 들어간 표 셀 ID에는 새 본문/절/표를 절대 넣지 마세요 — \
+     표 셀은 늘어나지 않아 새 페이지를 만들지 못하고 내용이 화면에서 잘립니다. \
+     문서가 표로만 차 있으면 가장 큰(마지막) `.tbl` 없는 `sec[s].p[p]`를 골라 그 뒤에 \
+     INSERT_AFTER 하세요. 각 문단은 별도 edit으로 INSERT_AFTER 하고, 새 페이지에서 \
+     시작해야 하면 payload.page_break를 true로 설정하세요. \
      표를 새로 만들려면 본문 문단 ID에 INSERT_AFTER 하고 payload.type=\"table\", \
      payload.table_data에 rows, cols, matrix(행×열 문자열 2차원 배열)를 채우세요. \
      예: 예산 표는 첫 행을 머리글로 두고 matrix에 값을 넣습니다. \
