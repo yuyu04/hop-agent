@@ -9,10 +9,12 @@
 const ATTR = 'data-hop-ai-inline';
 
 export interface InlineDiffEntry {
-  /** scroll-content 기준 좌표(px). */
+  /** scroll-content 기준 좌표(px). `top`은 대상 줄의 위, `lineBottom`은 줄 아래. */
   top: number;
+  lineBottom: number;
   left: number;
-  width: number;
+  /** 카드 최대 폭(대상 위치 기준). 페이지를 가로로 다 가리지 않도록 제한한다. */
+  maxWidth: number;
   /** REPLACE/DELETE에서 사라지는 원문(빨강). */
   before?: string;
   /** INSERT/REPLACE로 들어오는 텍스트(초록). */
@@ -37,25 +39,26 @@ export function clearInlineDiff(scrollContent: HTMLElement): void {
  * 인라인 Diff 카드들과 떠 있는 승인/거절 바를 그린다. 변경 영역 최상단으로
  * 부드럽게 스크롤한다.
  */
+/** 그린 변경 카드 수를 반환한다(0이면 호출 측이 폴백 UI를 띄울 수 있다). */
 export function showInlineDiff(
   deps: InlineDiffDeps,
   entries: InlineDiffEntry[],
   callbacks: InlineDiffCallbacks,
-): void {
+): number {
   clearInlineDiff(deps.scrollContent);
-  if (!entries.length) return;
+  if (!entries.length) return 0;
 
   let minTop = Number.POSITIVE_INFINITY;
   let barLeft = 0;
-  let barWidth = 0;
   for (const entry of entries) {
+    // 카드는 대상 줄 "아래"에 두어 원문을 가리지 않는다. 폭은 maxWidth로 제한.
     const card = document.createElement('div');
     card.setAttribute(ATTR, 'card');
     card.className = 'hop-ai-inline-card';
     card.style.position = 'absolute';
     card.style.left = `${entry.left}px`;
-    card.style.top = `${entry.top}px`;
-    card.style.width = `${entry.width}px`;
+    card.style.top = `${entry.lineBottom + 2}px`;
+    card.style.maxWidth = `${Math.max(120, entry.maxWidth)}px`;
     card.style.pointerEvents = 'none';
 
     if (entry.before !== undefined) {
@@ -75,18 +78,16 @@ export function showInlineDiff(
     if (entry.top < minTop) {
       minTop = entry.top;
       barLeft = entry.left;
-      barWidth = entry.width;
     }
   }
 
-  // 변경 영역 상단에 떠 있는 승인/거절 바.
+  // 변경 영역 상단에 떠 있는 승인/거절 바(대상 위치 기준, 좁게).
   const bar = document.createElement('div');
   bar.setAttribute(ATTR, 'bar');
   bar.className = 'hop-ai-inline-bar';
   bar.style.position = 'absolute';
   bar.style.left = `${barLeft}px`;
-  bar.style.width = `${barWidth}px`;
-  bar.style.top = `${Math.max(0, minTop - 34)}px`;
+  bar.style.top = `${Math.max(0, minTop - 30)}px`;
 
   const label = document.createElement('span');
   label.className = 'hop-ai-inline-label';
@@ -107,4 +108,5 @@ export function showInlineDiff(
   deps.scrollContent.appendChild(bar);
 
   deps.scrollContainer.scrollTo({ top: Math.max(0, minTop - 60), behavior: 'smooth' });
+  return entries.length;
 }

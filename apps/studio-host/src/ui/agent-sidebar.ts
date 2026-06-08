@@ -104,6 +104,7 @@ interface Attachment {
 interface ActiveTurn {
   streamEl: HTMLElement;
   bodyEl: HTMLElement;
+  decisionEl: HTMLElement;
   acceptBtn: HTMLButtonElement;
   rejectBtn: HTMLButtonElement;
   statusEl: HTMLElement;
@@ -185,6 +186,9 @@ export class AgentSidebar {
     this.presetSelect.addEventListener('change', () => this.applyPreset());
     this.promptInput.addEventListener('keydown', (event) => this.onPromptKeydown(event as KeyboardEvent));
     this.panel.addEventListener('paste', (event) => void this.onPaste(event as ClipboardEvent));
+    // 패널 내부 키 입력(복사/붙여넣기/전체선택 등)이 문서 전역 단축키 핸들러로
+    // 전파돼 가로채이지 않도록 막는다. 버블 단계라 textarea의 Enter 처리는 유지된다.
+    this.panel.addEventListener('keydown', (event) => (event as KeyboardEvent).stopPropagation());
 
     document.body.appendChild(built.toggleBtn);
     document.body.appendChild(this.panel);
@@ -334,8 +338,10 @@ export class AgentSidebar {
     if (!this.session.onReady()) return;
     this.pendingScript = script;
     this.renderDiff(script);
-    this.renderInlineDiff(script);
-    this.setPreviewEnabled(true);
+    // 페이지 위 인라인 바가 승인/거절을 담당한다. 좌표를 못 잡아 0건이면
+    // 버블 내 버튼으로 폴백한다(사용자가 승인할 방법이 항상 있도록).
+    const placed = this.renderInlineDiff(script);
+    this.setPreviewEnabled(placed === 0);
     this.setActiveStatus(`제안 ${script.edits.length}건 — 승인 또는 거부하세요.`);
   }
 
@@ -403,7 +409,7 @@ export class AgentSidebar {
     bubble.append(streamEl, bodyEl, decision, statusEl);
     this.thread.appendChild(bubble);
     this.scrollThreadToEnd();
-    const turn: ActiveTurn = { streamEl, bodyEl, acceptBtn, rejectBtn, statusEl };
+    const turn: ActiveTurn = { streamEl, bodyEl, decisionEl: decision, acceptBtn, rejectBtn, statusEl };
     this.setPreviewEnabledFor(turn, false);
     return turn;
   }
@@ -615,10 +621,14 @@ export class AgentSidebar {
     for (const item of items) this.active.bodyEl.appendChild(renderDiffItem(item));
   }
 
-  /** 변경 위치마다 페이지 위에 before/after + 떠 있는 승인/거절 바를 그린다(Cursor식). */
-  private renderInlineDiff(script: ActionScript): void {
+  /**
+   * 변경 위치마다 페이지 위에 before/after + 떠 있는 승인/거절 바를 그린다(Cursor식).
+   * 카드는 대상(문단/셀) 위치에 좁게, 줄 아래에 둬 원문을 가리지 않는다.
+   * 반환: 페이지에 배치한 카드 수(0이면 호출 측이 버블 버튼으로 폴백).
+   */
+  private renderInlineDiff(script: ActionScript): number {
     const canvasView = this.deps.getCanvasView();
-    if (!canvasView) return;
+    if (!canvasView) return 0;
     const zoom = canvasView.getViewportManager().getZoom();
     const before = new Map<string, string>();
     for (const node of this.context?.content ?? []) before.set(node.id, node.text);
@@ -630,18 +640,22 @@ export class AgentSidebar {
       const page = this.deps.bridge.getPageInfo(rect.pageIndex);
       const pageTop = canvasView.getVirtualScroll().getPageOffset(rect.pageIndex);
       const pageWidth = page.width * zoom;
-      const left = Math.max(0, (this.deps.scrollContent.clientWidth - pageWidth) / 2);
+      const pageLeft = Math.max(0, (this.deps.scrollContent.clientWidth - pageWidth) / 2);
+      // 대상 셀/문단의 x에 맞춰 좁은 카드를 둔다(표 전체를 가리지 않음).
+      const left = pageLeft + rect.x * zoom;
+      const maxWidth = Math.max(120, pageLeft + pageWidth - left - 4);
       const isInsert = edit.command === 'INSERT_BEFORE' || edit.command === 'INSERT_AFTER';
       entries.push({
         top: pageTop + rect.y * zoom,
+        lineBottom: pageTop + (rect.y + rect.height) * zoom,
         left,
-        width: pageWidth,
+        maxWidth,
         before: isInsert ? undefined : before.get(edit.target_id),
         after: edit.command === 'DELETE' ? undefined : edit.payload.text,
       });
     }
-    if (!entries.length) return;
-    showInlineDiff(
+    if (!entries.length) return 0;
+    return showInlineDiff(
       { scrollContent: this.deps.scrollContent, scrollContainer: this.deps.scrollContainer },
       entries,
       { onAccept: () => this.accept(), onReject: () => this.reject() },
@@ -682,6 +696,9 @@ export class AgentSidebar {
   }
 
   private setPreviewEnabledFor(turn: ActiveTurn, enabled: boolean): void {
+    // 평소 버블 내 승인/거절은 숨긴다 — 페이지 위 인라인 바가 담당한다.
+    // 좌표를 못 잡은 폴백(enabled=true)일 때만 버블 버튼을 노출한다.
+    turn.decisionEl.classList.toggle('hop-ai-hidden', !enabled);
     turn.acceptBtn.disabled = !enabled;
     turn.rejectBtn.disabled = !enabled;
   }

@@ -120,6 +120,14 @@ class FakeElement {
     this.listeners.get(type)?.forEach((fn) => fn({}));
   }
 
+  // 인라인 오버레이가 호출하는 스크롤/레이아웃 API(테스트용 no-op).
+  get clientWidth(): number {
+    return 600;
+  }
+  scrollTo(): void {}
+  scrollTop = 0;
+  scrollHeight = 0;
+
   querySelector(selector: string): FakeElement | null {
     return this.queryAll(selector)[0] ?? null;
   }
@@ -184,6 +192,7 @@ function createBridge() {
     aiSetDocumentSensitivity: vi.fn(async () => undefined),
     currentDocId: vi.fn(() => 'doc-1' as string | null),
     getCursorRect: vi.fn(() => ({ pageIndex: 0, x: 0, y: 0, height: 10 })),
+    getCursorRectByPath: vi.fn(() => ({ pageIndex: 0, x: 20, y: 40, height: 10 })),
     getPageInfo: vi.fn(() => ({ width: 100, height: 100 })),
     getParagraphLength: vi.fn(() => 2),
     insertText: vi.fn(() => ''),
@@ -202,12 +211,19 @@ describe('AgentSidebar', () => {
   let bridge: ReturnType<typeof createBridge>;
   let emit: ReturnType<typeof vi.fn>;
 
-  function build(): AgentSidebar {
+  let scrollContent: FakeElement;
+
+  function build(withCanvas = false): AgentSidebar {
+    scrollContent = new FakeElement('div');
+    const canvasView = {
+      getVirtualScroll: () => ({ getPageOffset: () => 0 }),
+      getViewportManager: () => ({ getZoom: () => 1 }),
+    };
     const deps = {
       bridge,
       eventBus: { emit },
-      getCanvasView: () => null,
-      scrollContent: new FakeElement('div'),
+      getCanvasView: () => (withCanvas ? canvasView : null),
+      scrollContent,
       scrollContainer: new FakeElement('div'),
     };
     return new AgentSidebar(deps as unknown as AgentSidebarDeps);
@@ -343,6 +359,37 @@ describe('AgentSidebar', () => {
     expect(emit).not.toHaveBeenCalled();
     expect(bridge.markDocumentDirty).not.toHaveBeenCalled();
     expect(find('hop-ai-status').textContent).toContain('적용된 편집이 없습니다');
+  });
+
+  it('shows the on-page accept/reject bar and hides the in-bubble buttons', async () => {
+    build(true); // 캔버스 있음 → 인라인 오버레이 배치 가능
+    await flush();
+    find('hop-ai-prompt').value = '표 값 바꿔줘';
+    find('hop-ai-provider').value = 'mock';
+    find('hop-ai-send').click();
+    await flush();
+
+    captured!.onEditReady?.({
+      requestId: 'req-1',
+      actionScriptJson: JSON.stringify({
+        edits: [
+          {
+            command: 'REPLACE',
+            target_id: 'sec[0].p[0].tbl[2].cell[0].p[4].tbl[0].cell[11].p[0]',
+            payload: { text: '1,000,000,000' },
+          },
+        ],
+      }),
+    });
+
+    // 페이지 위 인라인 바가 떴고, 버블 내 승인/거절은 숨겨진다.
+    expect(scrollContent.querySelector('.hop-ai-inline-bar')).not.toBeNull();
+    expect(scrollContent.querySelector('.hop-ai-inline-after')?.textContent).toBe('1,000,000,000');
+    expect(find('hop-ai-decision').classList.contains('hop-ai-hidden')).toBe(true);
+
+    // 인라인 바의 승인이 실제 적용(by-path)로 이어진다.
+    scrollContent.querySelector('.hop-ai-inline-accept')!.click();
+    expect(bridge.insertTextInCellByPath).toHaveBeenCalled();
   });
 
   it('ignores ready events for a different request id', async () => {

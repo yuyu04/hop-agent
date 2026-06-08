@@ -87,14 +87,15 @@ describe('ai-inline-diff', () => {
   }
 
   const entries: InlineDiffEntry[] = [
-    { top: 200, left: 40, width: 300, before: '525,000,000', after: '1,000,000,000' },
-    { top: 80, left: 40, width: 300, after: '새 문단' },
+    { top: 200, lineBottom: 216, left: 40, maxWidth: 300, before: '525,000,000', after: '1,000,000,000' },
+    { top: 80, lineBottom: 96, left: 40, maxWidth: 300, after: '새 문단' },
   ];
 
   it('renders before/after cards and a floating accept/reject bar', () => {
     const onAccept = vi.fn();
     const onReject = vi.fn();
-    showInlineDiff(deps(), entries, { onAccept, onReject });
+    const count = showInlineDiff(deps(), entries, { onAccept, onReject });
+    expect(count).toBe(2);
 
     // 카드 2개 + 바 1개.
     expect(scrollContent.querySelectorAll('[data-hop-ai-inline]').length).toBe(3);
@@ -103,7 +104,7 @@ describe('ai-inline-diff', () => {
 
     const bar = scrollContent.find('hop-ai-inline-bar')!;
     // 바는 가장 위(top=80) 변경 위로 배치된다.
-    expect(bar.style.top).toBe(`${80 - 34}px`);
+    expect(bar.style.top).toBe(`${80 - 30}px`);
     expect(scrollContent.find('hop-ai-inline-label')?.textContent).toBe('AI 제안 2건');
 
     scrollContent.find('hop-ai-inline-accept')!.click();
