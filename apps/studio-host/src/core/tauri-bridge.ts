@@ -120,6 +120,7 @@ export interface AiBridgeApi {
     baseUrl?: string | null,
     images?: AiImageInput[] | null,
     documents?: AiImageInput[] | null,
+    filePaths?: string[] | null,
   ): Promise<string>;
   /** HWP/HWPX 파일의 평문 텍스트를 추출한다(첨부용). */
   aiExtractText(path: string): Promise<string>;
@@ -334,6 +335,7 @@ export class TauriBridge extends WasmBridge implements DesktopBridgeApi, AiBridg
     baseUrl?: string | null,
     images?: AiImageInput[] | null,
     documents?: AiImageInput[] | null,
+    filePaths?: string[] | null,
   ): Promise<string> {
     return this.invoke<string>('ai_request_edit', {
       docId,
@@ -344,6 +346,7 @@ export class TauriBridge extends WasmBridge implements DesktopBridgeApi, AiBridg
       baseUrl: baseUrl ?? null,
       images: images ?? null,
       documents: documents ?? null,
+      filePaths: filePaths ?? null,
     });
   }
 

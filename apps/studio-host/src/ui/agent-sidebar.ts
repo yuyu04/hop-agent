@@ -107,6 +107,8 @@ interface Attachment {
   mime?: string;
   dataBase64?: string;
   text?: string;
+  /** 원본 로컬 경로(드래그&드롭 시). claude-cli는 base64 대신 이 경로를 넘긴다. */
+  path?: string;
 }
 
 /** PDF 등 바이너리 문서 입력을 받는 provider(스펙 5장). */
@@ -291,6 +293,7 @@ export class AgentSidebar {
             name,
             mime: mimeForImage(name),
             dataBase64: base64FromBytes(bytes),
+            path,
           });
         } else if (/\.pdf$/i.test(name)) {
           const { readFile } = await import('@tauri-apps/plugin-fs');
@@ -301,6 +304,7 @@ export class AgentSidebar {
             name,
             mime: 'application/pdf',
             dataBase64: base64FromBytes(bytes),
+            path,
           });
         } else if (/\.(hwp|hwpx|docx)$/i.test(name)) {
           // 한글(HWP/HWPX)·워드(DOCX)는 네이티브로 평문 추출 → 모든 provider 인라인.
@@ -400,20 +404,36 @@ export class AgentSidebar {
 
     // 미확정 Diff가 있으면 자동 롤백 후 진행(스펙 4장 동시성).
     const attachments = this.attachments;
+    const isCli = provider === CLAUDE_CLI_PROVIDER;
     const docText = attachments
       .filter((a) => a.kind === 'doc')
       .map((a) => `[첨부 문서: ${a.name}]\n${a.text ?? ''}`)
       .join('\n\n');
-    const images: AiImageInput[] = attachments
-      .filter((a) => a.kind === 'image' && a.dataBase64)
-      .map((a) => ({ mimeType: a.mime ?? 'image/png', dataBase64: a.dataBase64! }));
-    const documents: AiImageInput[] = attachments
-      .filter((a) => a.kind === 'file' && a.dataBase64)
-      .map((a) => ({ mimeType: a.mime ?? 'application/pdf', dataBase64: a.dataBase64! }));
-    // PDF 등 바이너리 문서는 Gemini/Anthropic만 받는다.
-    if (documents.length && !DOC_PROVIDERS.has(provider)) {
-      this.setStatus('PDF 등 문서 첨부는 Gemini 또는 Anthropic에서만 지원됩니다.', 'warn');
-      return;
+
+    // claude-cli는 로컬 파일을 직접 읽으므로 이미지·PDF는 base64 대신 경로로 넘긴다.
+    let images: AiImageInput[] = [];
+    let documents: AiImageInput[] = [];
+    let filePaths: string[] | null = null;
+    if (isCli) {
+      const paths = attachments
+        .filter((a) => (a.kind === 'image' || a.kind === 'file') && a.path)
+        .map((a) => a.path!);
+      filePaths = paths.length ? paths : null;
+    } else {
+      images = attachments
+        .filter((a) => a.kind === 'image' && a.dataBase64)
+        .map((a) => ({ mimeType: a.mime ?? 'image/png', dataBase64: a.dataBase64! }));
+      documents = attachments
+        .filter((a) => a.kind === 'file' && a.dataBase64)
+        .map((a) => ({ mimeType: a.mime ?? 'application/pdf', dataBase64: a.dataBase64! }));
+      // PDF 등 바이너리 문서는 Gemini/Anthropic만 inline으로 받는다(claude-cli는 위 경로 처리).
+      if (documents.length && !DOC_PROVIDERS.has(provider)) {
+        this.setStatus(
+          'PDF 등 문서 첨부는 Gemini·Anthropic 또는 Claude Code(로컬 CLI)에서만 지원됩니다.',
+          'warn',
+        );
+        return;
+      }
     }
     const effectivePrompt = docText ? `${docText}\n\n${prompt}` : prompt;
 
@@ -445,6 +465,7 @@ export class AgentSidebar {
         baseUrl,
         images.length ? images : null,
         documents.length ? documents : null,
+        filePaths,
       );
     } catch (error) {
       this.session.onFailed();

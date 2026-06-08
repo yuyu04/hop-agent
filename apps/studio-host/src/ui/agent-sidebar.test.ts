@@ -336,6 +336,7 @@ describe('AgentSidebar', () => {
       null,
       null,
       null,
+      null,
     );
 
     // 부분 응답(Raw JSON)은 덤프하지 않고 진행 표시만 한다.
@@ -608,6 +609,7 @@ describe('AgentSidebar', () => {
       null,
       null,
       null,
+      null,
     );
   });
 
@@ -632,6 +634,7 @@ describe('AgentSidebar', () => {
       '요약',
       'gemini',
       'gemini-3-flash-preview',
+      null,
       null,
       null,
       null,
@@ -686,6 +689,7 @@ describe('AgentSidebar', () => {
       null,
       null,
       null,
+      null,
     );
     expect(bridge.aiSetDocumentSensitivity).toHaveBeenCalledWith('doc-1', true);
   });
@@ -712,6 +716,7 @@ describe('AgentSidebar', () => {
       null,
       null,
       null,
+      null,
     );
   });
 
@@ -731,6 +736,7 @@ describe('AgentSidebar', () => {
       '첫 문단 바꿔줘',
       'claude-cli',
       'default',
+      null,
       null,
       null,
       null,
@@ -774,6 +780,7 @@ describe('AgentSidebar', () => {
       'llama-3.1-8b-instant',
       null,
       'https://api.groq.com/openai',
+      null,
       null,
       null,
     );

@@ -161,6 +161,7 @@ mod tests {
             output_schema: serde_json::json!({}),
             images: Vec::new(),
             documents: Vec::new(),
+            file_paths: Vec::new(),
         };
         let content = user_content(&req);
         assert!(content.contains("지시"));

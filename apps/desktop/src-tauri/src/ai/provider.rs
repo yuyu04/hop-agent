@@ -37,6 +37,8 @@ pub struct LlmRequest {
     pub images: Vec<ImageInput>,
     /// 사용자가 첨부한 문서(PDF 등, base64). 문서 입력 지원 provider만 사용.
     pub documents: Vec<ImageInput>,
+    /// 첨부 파일의 로컬 경로(없으면 빈 벡터). CLI 위임 provider가 직접 열어 읽는다.
+    pub file_paths: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -155,6 +157,7 @@ mod tests {
             output_schema: json!({}),
             images: Vec::new(),
             documents: Vec::new(),
+            file_paths: Vec::new(),
         }
     }
 

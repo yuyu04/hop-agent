@@ -24,14 +24,27 @@ pub struct ClaudeCliProvider {
 }
 
 impl ClaudeCliProvider {
-    /// CLI에 stdin으로 넘길 전체 프롬프트(시스템 + 컨텍스트 + 스키마 + JSON-only).
+    /// CLI에 stdin으로 넘길 전체 프롬프트(시스템 + 컨텍스트 + 첨부 경로 + 스키마 + JSON-only).
     fn build_prompt(req: &LlmRequest) -> String {
         let schema = serde_json::to_string_pretty(&req.output_schema).unwrap_or_default();
+        // CLI는 로컬 파일을 직접 열 수 있으므로 base64 대신 경로를 넘긴다(PDF 등).
+        let files = if req.file_paths.is_empty() {
+            String::new()
+        } else {
+            let list = req
+                .file_paths
+                .iter()
+                .map(|p| format!("- {}", p))
+                .collect::<Vec<_>>()
+                .join("\n");
+            format!("\n\n[참고 첨부 파일 — 직접 열어 내용을 확인하세요]\n{}", list)
+        };
         format!(
-            "{system}\n\n{content}\n\n[반드시 만족할 출력 JSON 스키마]\n{schema}\n\n\
+            "{system}\n\n{content}{files}\n\n[반드시 만족할 출력 JSON 스키마]\n{schema}\n\n\
              설명·Markdown 없이 위 스키마를 만족하는 JSON만 출력하세요.",
             system = req.system_prompt,
             content = user_content(req),
+            files = files,
             schema = schema,
         )
     }
@@ -131,6 +144,7 @@ mod tests {
             output_schema: json!({ "type": "object" }),
             images: Vec::new(),
             documents: Vec::new(),
+            file_paths: Vec::new(),
         }
     }
 
@@ -142,5 +156,16 @@ mod tests {
         assert!(prompt.contains("[문서 컨텍스트]"));
         assert!(prompt.contains("출력 JSON 스키마"));
         assert!(prompt.contains("JSON만 출력"));
+        // 첨부 파일이 없으면 참고 파일 섹션은 나오지 않는다.
+        assert!(!prompt.contains("참고 첨부 파일"));
+    }
+
+    #[test]
+    fn prompt_lists_attached_file_paths() {
+        let mut req = request();
+        req.file_paths = vec!["/Users/me/Downloads/계획서.pdf".to_string()];
+        let prompt = ClaudeCliProvider::build_prompt(&req);
+        assert!(prompt.contains("[참고 첨부 파일"));
+        assert!(prompt.contains("/Users/me/Downloads/계획서.pdf"));
     }
 }

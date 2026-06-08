@@ -119,6 +119,7 @@ mod tests {
             output_schema: json!({ "$schema": "draft-07", "type": "object" }),
             images: Vec::new(),
             documents: Vec::new(),
+            file_paths: Vec::new(),
         }
     }
 

@@ -712,6 +712,7 @@ describe('TauriBridge AI commands', () => {
       baseUrl: null,
       images: null,
       documents: null,
+      filePaths: null,
     });
   });
 
@@ -736,6 +737,7 @@ describe('TauriBridge AI commands', () => {
       baseUrl: 'https://api.groq.com/openai',
       images: null,
       documents: null,
+      filePaths: null,
     });
   });
 

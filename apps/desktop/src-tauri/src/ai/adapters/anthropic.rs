@@ -111,6 +111,7 @@ mod tests {
             output_schema: json!({ "type": "object", "marker": 7 }),
             images: Vec::new(),
             documents: Vec::new(),
+            file_paths: Vec::new(),
         }
     }
 

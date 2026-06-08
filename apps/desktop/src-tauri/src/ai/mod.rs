@@ -134,6 +134,7 @@ pub fn ai_request_edit(
     base_url: Option<String>,
     images: Option<Vec<ImageInput>>,
     documents: Option<Vec<ImageInput>>,
+    file_paths: Option<Vec<String>>,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
     // 민감 문서는 외부 provider 전송을 차단한다(스펙 6장 — 공문서 보호).
@@ -171,6 +172,7 @@ pub fn ai_request_edit(
         output_schema: schema::action_script_schema(),
         images: images.unwrap_or_default(),
         documents: documents.unwrap_or_default(),
+        file_paths: file_paths.unwrap_or_default(),
     };
 
     tauri::async_runtime::spawn(run_edit_request(
