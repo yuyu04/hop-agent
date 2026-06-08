@@ -259,7 +259,7 @@ describe('AgentSidebar', () => {
     build();
     await flush();
     find('hop-ai-prompt').value = '첫 지시';
-    find('hop-ai-provider').value = 'mock';
+    await selectProvider('ollama');
     find('hop-ai-send').click();
     await flush();
 
@@ -297,7 +297,7 @@ describe('AgentSidebar', () => {
     build();
     await flush();
     find('hop-ai-prompt').value = '첫 문단 바꿔줘';
-    find('hop-ai-provider').value = 'mock';
+    await selectProvider('ollama');
     find('hop-ai-send').click();
     await flush();
 
@@ -305,8 +305,8 @@ describe('AgentSidebar', () => {
     expect(bridge.aiRequestEdit).toHaveBeenCalledWith(
       'doc-1',
       '첫 문단 바꿔줘',
-      'mock',
-      'mock-1',
+      'ollama',
+      'llama3.1',
       null,
       null,
       null,
@@ -344,7 +344,7 @@ describe('AgentSidebar', () => {
     build();
     await flush();
     find('hop-ai-prompt').value = '바꿔줘';
-    find('hop-ai-provider').value = 'mock';
+    await selectProvider('ollama');
     find('hop-ai-send').click();
     await flush();
 
@@ -368,7 +368,7 @@ describe('AgentSidebar', () => {
     build(true); // 캔버스 있음 → 인라인 오버레이 배치 가능
     await flush();
     find('hop-ai-prompt').value = '표 값 바꿔줘';
-    find('hop-ai-provider').value = 'mock';
+    await selectProvider('ollama');
     find('hop-ai-send').click();
     await flush();
 
@@ -481,7 +481,8 @@ describe('AgentSidebar', () => {
     bridge.aiHasApiKey.mockResolvedValue(true);
     build();
     await flush();
-    // 기본 provider(mock)는 키가 필요 없다.
+    // 로컬 provider(ollama)는 키가 필요 없어 키 입력줄이 숨겨진다.
+    await selectProvider('ollama');
     expect(find('hop-ai-key-row').classList.contains('hop-ai-hidden')).toBe(true);
 
     await selectProvider('anthropic');
@@ -635,7 +636,7 @@ describe('AgentSidebar', () => {
     build();
     await flush();
     find('hop-ai-prompt').value = '바꿔줘';
-    find('hop-ai-provider').value = 'mock';
+    await selectProvider('ollama');
     find('hop-ai-send').click();
     await flush();
 
@@ -643,8 +644,8 @@ describe('AgentSidebar', () => {
     expect(bridge.aiRequestEdit).toHaveBeenCalledWith(
       'doc-1',
       '바꿔줘',
-      'mock',
-      'mock-1',
+      'ollama',
+      'llama3.1',
       'sec[0].p[7]',
       null,
       null,

@@ -58,17 +58,17 @@ export interface AgentSidebarDeps {
 /** 커스텀 OpenAI 호환 엔드포인트(Groq/OpenRouter/Together/LM Studio/게이트웨이). 스펙 5.3장. */
 const CUSTOM_PROVIDER = 'openai-compat';
 
-const PROVIDERS = ['mock', 'openai', 'anthropic', 'gemini', 'ollama', CUSTOM_PROVIDER] as const;
+const PROVIDERS = ['gemini', 'openai', 'anthropic', 'ollama', CUSTOM_PROVIDER] as const;
 
 const PROVIDER_LABELS: Record<string, string> = {
   [CUSTOM_PROVIDER]: 'OpenAI 호환 (Groq 등)',
 };
 
-/** API 키가 필수인 provider(mock/ollama는 불필요, openai-compat은 선택). 스펙 6장. */
+/** API 키가 필수인 provider(ollama는 불필요, openai-compat은 선택). 스펙 6장. */
 const KEY_PROVIDERS = new Set<string>(['openai', 'anthropic', 'gemini']);
 
 /** 본문이 외부로 나가지 않는 로컬 provider. 민감 문서에서도 허용된다(스펙 6장). */
-const LOCAL_PROVIDERS = new Set<string>(['mock', 'ollama']);
+const LOCAL_PROVIDERS = new Set<string>(['ollama']);
 
 /** openai-compat 프리셋 — Base URL + 추천 모델 자동 채움. */
 const CUSTOM_PRESETS: Record<string, { baseUrl: string; model: string }> = {
@@ -82,7 +82,6 @@ const CUSTOM_MODEL = '__custom__';
 
 /** provider별 선택 가능한 모델 목록(첫 항목이 기본 선택). 직접 입력 옵션이 항상 뒤따른다. */
 const MODELS: Record<string, string[]> = {
-  mock: ['mock-1'],
   openai: ['gpt-4o-mini', 'gpt-4o', 'gpt-4.1-mini'],
   anthropic: ['claude-3-5-haiku-latest', 'claude-3-5-sonnet-latest'],
   gemini: ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash-lite', 'gemini-flash-latest'],
@@ -327,7 +326,7 @@ export class AgentSidebar {
     }
     const provider = this.providerSelect.value;
     if (this.sensitive && !LOCAL_PROVIDERS.has(provider)) {
-      this.setStatus('민감 문서로 표시됨 — 로컬 모델(ollama)이나 mock만 사용할 수 있습니다.', 'warn');
+      this.setStatus('민감 문서로 표시됨 — 로컬 모델(ollama)만 사용할 수 있습니다.', 'warn');
       return;
     }
     if (KEY_PROVIDERS.has(provider) && this.keyState.get(provider) === false) {
@@ -861,7 +860,7 @@ function defaultModel(provider: string): string {
     case CUSTOM_PROVIDER:
       return 'llama-3.1-8b-instant';
     default:
-      return 'mock-1';
+      return 'gemini-2.5-flash';
   }
 }
 
