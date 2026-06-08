@@ -128,6 +128,11 @@ class FakeElement {
   scrollTop = 0;
   scrollHeight = 0;
 
+  contains(node: unknown): boolean {
+    if (node === this) return true;
+    return this.allDescendants().some((n) => n === node);
+  }
+
   querySelector(selector: string): FakeElement | null {
     return this.queryAll(selector)[0] ?? null;
   }
@@ -155,9 +160,26 @@ class FakeElement {
 
 class FakeDocument {
   body = new FakeElement('body');
+  private listeners = new Map<string, Array<(event: unknown) => void>>();
 
   createElement(tag: string): FakeElement {
     return new FakeElement(tag);
+  }
+
+  addEventListener(type: string, fn: (event: unknown) => void): void {
+    const list = this.listeners.get(type) ?? [];
+    list.push(fn);
+    this.listeners.set(type, list);
+  }
+
+  removeEventListener(type: string, fn: (event: unknown) => void): void {
+    const list = this.listeners.get(type) ?? [];
+    const idx = list.indexOf(fn);
+    if (idx >= 0) list.splice(idx, 1);
+  }
+
+  fire(type: string, event: unknown): void {
+    this.listeners.get(type)?.forEach((fn) => fn(event));
   }
 }
 
@@ -203,6 +225,7 @@ function createBridge() {
     getCellParagraphLengthByPath: vi.fn(() => 0),
     insertTextInCellByPath: vi.fn(() => ''),
     deleteTextInCellByPath: vi.fn(() => ''),
+    splitParagraphInCellByPath: vi.fn(() => ''),
     markDocumentDirty: vi.fn(),
   };
 }
@@ -421,6 +444,39 @@ describe('AgentSidebar', () => {
     expect(drop.preventDefault).toHaveBeenCalled();
     expect(panel.classList.contains('hop-ai-dragover')).toBe(false);
     expect(find('hop-ai-status').textContent).toContain('지원하지 않는 형식');
+  });
+
+  it('copies a panel text selection to the clipboard on Cmd/Ctrl+C', async () => {
+    const writeText = vi.fn(async () => undefined);
+    const getSelection = vi.fn();
+    vi.stubGlobal('navigator', { clipboard: { writeText } });
+    vi.stubGlobal('window', { getSelection });
+
+    build();
+    await flush();
+    const panelNode = find('hop-ai-prompt');
+    // 선택이 패널 안 노드에 걸쳐 있는 상태를 흉내낸다.
+    getSelection.mockReturnValue({ toString: () => '복사할 내용', anchorNode: panelNode });
+
+    const event = {
+      key: 'c',
+      metaKey: true,
+      ctrlKey: false,
+      preventDefault: vi.fn(),
+      stopImmediatePropagation: vi.fn(),
+    };
+    doc.fire('keydown', event);
+
+    expect(event.preventDefault).toHaveBeenCalled();
+    expect(writeText).toHaveBeenCalledWith('복사할 내용');
+
+    // 선택이 패널 밖이면 가로채지 않는다(에디터가 처리).
+    getSelection.mockReturnValue({ toString: () => '문서 본문', anchorNode: new FakeElement('div') });
+    const outside = { key: 'c', metaKey: true, preventDefault: vi.fn(), stopImmediatePropagation: vi.fn() };
+    doc.fire('keydown', outside);
+    expect(outside.preventDefault).not.toHaveBeenCalled();
+
+    vi.unstubAllGlobals();
   });
 
   it('ignores ready events for a different request id', async () => {

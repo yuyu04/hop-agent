@@ -38,6 +38,10 @@ class FakeWasm implements WasmEditing {
     this.calls.push(`deleteTextInCellByPath(${s},${pp},${pathJson},${off},${count})`);
     return '';
   }
+  splitParagraphInCellByPath(s: number, pp: number, pathJson: string, off: number): string {
+    this.calls.push(`splitParagraphInCellByPath(${s},${pp},${pathJson},${off})`);
+    return '';
+  }
 }
 
 function script(edits: ActionScript['edits']): ActionScript {
@@ -193,21 +197,48 @@ describe('applyActionScript', () => {
     ]);
   });
 
-  it('skips paragraph insertion into a table cell (structure change unsupported)', () => {
+  it('INSERT_AFTER into a table cell splits then inserts a new cell paragraph', () => {
     const wasm = new FakeWasm();
+    const path = '[{"controlIndex":0,"cellIndex":5,"cellParaIndex":0}]';
+    const pathNext = '[{"controlIndex":0,"cellIndex":5,"cellParaIndex":1}]';
+    wasm.lengths[`0.2.${path}`] = 3;
     const result = applyActionScript(
       wasm,
       script([
         {
           command: 'INSERT_AFTER',
           target_id: 'sec[0].p[2].tbl[0].cell[5].p[0]',
-          payload: { text: 'x' },
+          payload: { text: '추가 문단' },
         },
       ]),
     );
-    expect(result.applied).toBe(0);
-    expect(result.skipped[0].reason).toContain('표 셀');
-    expect(wasm.calls).toEqual([]);
+    expect(result.applied).toBe(1);
+    expect(wasm.calls).toEqual([
+      `getCellParagraphLengthByPath(0,2,${path})`,
+      `splitParagraphInCellByPath(0,2,${path},3)`,
+      `insertTextInCellByPath(0,2,${pathNext},0,"추가 문단")`,
+    ]);
+  });
+
+  it('INSERT_BEFORE into a NESTED table cell uses the full path', () => {
+    const wasm = new FakeWasm();
+    const path =
+      '[{"controlIndex":2,"cellIndex":0,"cellParaIndex":4},{"controlIndex":0,"cellIndex":11,"cellParaIndex":0}]';
+    const result = applyActionScript(
+      wasm,
+      script([
+        {
+          command: 'INSERT_BEFORE',
+          target_id: 'sec[0].p[0].tbl[2].cell[0].p[4].tbl[0].cell[11].p[0]',
+          payload: { text: '앞에 추가' },
+        },
+      ]),
+    );
+    expect(result.applied).toBe(1);
+    expect(wasm.calls).toEqual([
+      `splitParagraphInCellByPath(0,0,${path},0)`,
+      `insertTextInCellByPath(0,0,${path},0,"앞에 추가")`,
+    ]);
   });
 
   it('skips non-paragraph target ids', () => {

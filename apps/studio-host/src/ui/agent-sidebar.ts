@@ -146,6 +146,7 @@ export class AgentSidebar {
   private attachments: Attachment[] = [];
   private active: ActiveTurn | null = null;
   private unsubscribe: AiEventUnsubscribe | null = null;
+  private copyHandler: ((event: KeyboardEvent) => void) | null = null;
   private requestId: string | null = null;
   private context: DocumentContext | null = null;
   private pendingScript: ActionScript | null = null;
@@ -197,9 +198,14 @@ export class AgentSidebar {
     this.panel.addEventListener('dragover', (event) => this.onDragOver(event as DragEvent));
     this.panel.addEventListener('dragleave', (event) => this.onDragLeave(event as DragEvent));
     this.panel.addEventListener('drop', (event) => void this.onDrop(event as DragEvent));
-    // 패널 내부 키 입력(복사/붙여넣기/전체선택 등)이 문서 전역 단축키 핸들러로
+    // 패널 내부 키 입력(붙여넣기/전체선택 등)이 문서 전역 단축키 핸들러로
     // 전파돼 가로채이지 않도록 막는다. 버블 단계라 textarea의 Enter 처리는 유지된다.
     this.panel.addEventListener('keydown', (event) => (event as KeyboardEvent).stopPropagation());
+    // 패널 안 선택 텍스트(스트림/diff 등) 복사 — 에디터가 숨은 textarea에 포커스를
+    // 잡고 있어 일반 Cmd/Ctrl+C가 패널 선택을 복사하지 못한다. 캡처 단계에서
+    // 선택을 직접 클립보드에 써서, 패널 선택일 때만 가로채 처리한다.
+    this.copyHandler = (event) => this.onGlobalCopyKey(event);
+    document.addEventListener('keydown', this.copyHandler, true);
 
     document.body.appendChild(built.toggleBtn);
     document.body.appendChild(this.panel);
@@ -325,8 +331,26 @@ export class AgentSidebar {
 
   dispose(): void {
     this.unsubscribe?.();
+    if (this.copyHandler) document.removeEventListener('keydown', this.copyHandler, true);
     this.clearPreview();
     this.panel.remove();
+  }
+
+  /** Cmd/Ctrl+C에서 선택이 패널 안이면 선택 텍스트를 직접 클립보드에 쓴다. */
+  private onGlobalCopyKey(event: KeyboardEvent): void {
+    const isCopy = (event.metaKey || event.ctrlKey) && (event.key === 'c' || event.key === 'C');
+    if (!isCopy) return;
+    const selection = window.getSelection?.();
+    const text = selection?.toString() ?? '';
+    if (!text || !selection || !this.selectionInPanel(selection)) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    void navigator.clipboard?.writeText(text);
+  }
+
+  private selectionInPanel(selection: Selection): boolean {
+    const node = selection.anchorNode;
+    return node != null && this.panel.contains(node);
   }
 
   /** 새 대화 — 스레드 비우고 진행 중 미리보기를 정리한다. */

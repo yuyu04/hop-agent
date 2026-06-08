@@ -24,6 +24,12 @@ export interface WasmEditing {
     charOffset: number,
     text: string,
   ): string;
+  splitParagraphInCellByPath(
+    sec: number,
+    parentPara: number,
+    pathJson: string,
+    charOffset: number,
+  ): string;
   deleteTextInCellByPath(
     sec: number,
     parentPara: number,
@@ -123,13 +129,6 @@ export function applyActionScript(wasm: WasmEditing, script: ActionScript): Appl
 
     const cell = parseCellTarget(edit.target_id);
     if (cell) {
-      if (edit.command === 'INSERT_BEFORE' || edit.command === 'INSERT_AFTER') {
-        skipped.push({
-          targetId: edit.target_id,
-          reason: '표 셀에는 문단 삽입이 아직 미지원입니다. 셀 값 변경은 REPLACE를 쓰세요.',
-        });
-        continue;
-      }
       located.push({ kind: 'cell', edit, cell });
       continue;
     }
@@ -209,11 +208,39 @@ function applyOne(
 function applyOneCell(wasm: WasmEditing, edit: Edit, c: CellTarget): void {
   const text = edit.payload.text ?? '';
   const pathJson = JSON.stringify(c.path);
-  const length = wasm.getCellParagraphLengthByPath(c.sec, c.parentPara, pathJson);
-  if (length > 0) {
-    wasm.deleteTextInCellByPath(c.sec, c.parentPara, pathJson, 0, length);
-  }
-  if (edit.command === 'REPLACE') {
-    wasm.insertTextInCellByPath(c.sec, c.parentPara, pathJson, 0, text);
+
+  // 경로 마지막 단계의 cellParaIndex만 바꿔 같은 셀의 다른 문단을 가리킨다.
+  const pathAt = (cellParaIndex: number): string => {
+    const path = c.path.map((e) => ({ ...e }));
+    path[path.length - 1].cellParaIndex = cellParaIndex;
+    return JSON.stringify(path);
+  };
+  const lastIdx = c.path[c.path.length - 1].cellParaIndex;
+
+  switch (edit.command) {
+    case 'INSERT_AFTER': {
+      // 현재 셀 문단 끝에서 분할 → 새 문단(i+1)에 텍스트 삽입.
+      const length = wasm.getCellParagraphLengthByPath(c.sec, c.parentPara, pathJson);
+      wasm.splitParagraphInCellByPath(c.sec, c.parentPara, pathJson, length);
+      wasm.insertTextInCellByPath(c.sec, c.parentPara, pathAt(lastIdx + 1), 0, text);
+      break;
+    }
+    case 'INSERT_BEFORE': {
+      // 오프셋 0에서 분할 → 빈 문단이 i에 생기고 원문은 i+1로 밀린다. i에 삽입.
+      wasm.splitParagraphInCellByPath(c.sec, c.parentPara, pathJson, 0);
+      wasm.insertTextInCellByPath(c.sec, c.parentPara, pathJson, 0, text);
+      break;
+    }
+    case 'REPLACE': {
+      const length = wasm.getCellParagraphLengthByPath(c.sec, c.parentPara, pathJson);
+      if (length > 0) wasm.deleteTextInCellByPath(c.sec, c.parentPara, pathJson, 0, length);
+      wasm.insertTextInCellByPath(c.sec, c.parentPara, pathJson, 0, text);
+      break;
+    }
+    case 'DELETE': {
+      const length = wasm.getCellParagraphLengthByPath(c.sec, c.parentPara, pathJson);
+      if (length > 0) wasm.deleteTextInCellByPath(c.sec, c.parentPara, pathJson, 0, length);
+      break;
+    }
   }
 }
