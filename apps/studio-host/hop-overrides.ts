@@ -21,7 +21,7 @@ const overrideIds = [
   'command/commands/file',
   'ui/about-dialog',
   'ui/agent-sidebar',
-  'ui/ai-highlight',
+  'ui/ai-inline-diff',
   'ui/custom-select',
   'ui/dialog',
   'ui/home-screen',

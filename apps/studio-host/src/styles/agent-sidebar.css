@@ -346,17 +346,61 @@
   margin-top: 4px;
 }
 
-/* 페이지 위 휘발성 하이라이트 */
-.hop-ai-highlight {
+/* 페이지 위 인라인 Diff(Cursor식) — 변경 위치의 before/after + 떠 있는 승인/거절 바 */
+.hop-ai-inline-card {
+  z-index: 900;
+}
+.hop-ai-inline-before {
+  background: rgb(255, 221, 221);
+  text-decoration: line-through;
+  color: #7a1020;
+  padding: 1px 4px;
   border-radius: 3px;
+  white-space: pre-wrap;
+  font-size: 12px;
 }
-.hop-ai-highlight-insert {
-  background: rgba(34, 197, 94, 0.22);
-  outline: 1px solid rgba(34, 197, 94, 0.6);
+.hop-ai-inline-after {
+  background: rgb(221, 255, 221);
+  color: #0b5d2a;
+  padding: 1px 4px;
+  border-radius: 3px;
+  white-space: pre-wrap;
+  font-size: 12px;
+  margin-top: 1px;
 }
-.hop-ai-highlight-remove {
-  background: rgba(239, 68, 68, 0.22);
-  outline: 1px solid rgba(239, 68, 68, 0.6);
+.hop-ai-inline-bar {
+  z-index: 901;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  justify-content: flex-end;
+  pointer-events: auto;
+}
+.hop-ai-inline-label {
+  font-size: 11px;
+  color: #555;
+  background: #fff;
+  border: 1px solid #d0d4da;
+  border-radius: 10px;
+  padding: 1px 8px;
+}
+.hop-ai-inline-bar button {
+  font-size: 11px;
+  font-weight: 700;
+  border: 1px solid #c9ccd2;
+  border-radius: 6px;
+  padding: 2px 8px;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
+}
+.hop-ai-inline-accept {
+  background: #1a7f37;
+  color: #fff;
+  border-color: #1a7f37;
+}
+.hop-ai-inline-reject {
+  background: #fff;
+  color: #b00020;
 }
 
 .hop-ai-hidden {

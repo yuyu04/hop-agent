@@ -20,16 +20,22 @@ import {
   type DocumentContext,
 } from '@/core/ai-bridge';
 import type { AiBridgeApi, AiImageInput } from '@/core/tauri-bridge';
-import { applyActionScript, parseParagraphTarget, type WasmEditing } from '@/core/ai-apply';
+import {
+  applyActionScript,
+  parseCellTarget,
+  parseParagraphTarget,
+  type WasmEditing,
+} from '@/core/ai-apply';
 import { buildDiffModel, type DiffItem } from '@/core/ai-diff';
 import { AiSessionMachine } from '@/core/ai-session';
-import { clearHighlights, showHighlights, type HighlightTarget } from '@/ui/ai-highlight';
+import { clearInlineDiff, showInlineDiff, type InlineDiffEntry } from '@/ui/ai-inline-diff';
 import type { CursorRect, PageInfo } from '@/core/types';
 
 type AgentBridge = AiBridgeApi &
   WasmEditing & {
     currentDocId(): string | null;
     getCursorRect(sec: number, para: number, charOffset: number): CursorRect;
+    getCursorRectByPath(sec: number, parentPara: number, pathJson: string, charOffset: number): CursorRect;
     getPageInfo(pageIndex: number): PageInfo;
     /** 현재 캐럿 위치 — Sliding Window 기준(스펙 4장). 없으면 문서 앞쪽 기준. */
     getCaretPosition?(): { sectionIndex: number; paragraphIndex: number } | null;
@@ -328,7 +334,7 @@ export class AgentSidebar {
     if (!this.session.onReady()) return;
     this.pendingScript = script;
     this.renderDiff(script);
-    this.renderHighlights(script);
+    this.renderInlineDiff(script);
     this.setPreviewEnabled(true);
     this.setActiveStatus(`제안 ${script.edits.length}건 — 승인 또는 거부하세요.`);
   }
@@ -609,34 +615,62 @@ export class AgentSidebar {
     for (const item of items) this.active.bodyEl.appendChild(renderDiffItem(item));
   }
 
-  private renderHighlights(script: ActionScript): void {
+  /** 변경 위치마다 페이지 위에 before/after + 떠 있는 승인/거절 바를 그린다(Cursor식). */
+  private renderInlineDiff(script: ActionScript): void {
     const canvasView = this.deps.getCanvasView();
     if (!canvasView) return;
-    const targets: HighlightTarget[] = [];
+    const zoom = canvasView.getViewportManager().getZoom();
+    const before = new Map<string, string>();
+    for (const node of this.context?.content ?? []) before.set(node.id, node.text);
+
+    const entries: InlineDiffEntry[] = [];
     for (const edit of script.edits) {
-      const target = parseParagraphTarget(edit.target_id);
-      if (!target) continue;
-      const kind = edit.command.startsWith('INSERT') ? 'insert' : 'remove';
-      targets.push({ kind, sec: target.sec, para: target.para });
+      const rect = this.targetRect(edit.target_id);
+      if (!rect) continue;
+      const page = this.deps.bridge.getPageInfo(rect.pageIndex);
+      const pageTop = canvasView.getVirtualScroll().getPageOffset(rect.pageIndex);
+      const pageWidth = page.width * zoom;
+      const left = Math.max(0, (this.deps.scrollContent.clientWidth - pageWidth) / 2);
+      const isInsert = edit.command === 'INSERT_BEFORE' || edit.command === 'INSERT_AFTER';
+      entries.push({
+        top: pageTop + rect.y * zoom,
+        left,
+        width: pageWidth,
+        before: isInsert ? undefined : before.get(edit.target_id),
+        after: edit.command === 'DELETE' ? undefined : edit.payload.text,
+      });
     }
-    if (!targets.length) return;
-    showHighlights(
-      {
-        getCursorRect: (s, p, o) => this.deps.bridge.getCursorRect(s, p, o),
-        getParagraphLength: (s, p) => this.deps.bridge.getParagraphLength(s, p),
-        getPageInfo: (n) => this.deps.bridge.getPageInfo(n),
-        getZoom: () => canvasView.getViewportManager().getZoom(),
-        getPageOffset: (i) => canvasView.getVirtualScroll().getPageOffset(i),
-        scrollContent: this.deps.scrollContent,
-        scrollContainer: this.deps.scrollContainer,
-      },
-      targets,
+    if (!entries.length) return;
+    showInlineDiff(
+      { scrollContent: this.deps.scrollContent, scrollContainer: this.deps.scrollContainer },
+      entries,
+      { onAccept: () => this.accept(), onReject: () => this.reject() },
     );
+  }
+
+  /** 편집 대상(본문/표 셀/중첩 셀)의 페이지 커서 사각형. 실패 시 null. */
+  private targetRect(targetId: string): CursorRect | null {
+    try {
+      const cell = parseCellTarget(targetId);
+      if (cell) {
+        return this.deps.bridge.getCursorRectByPath(
+          cell.sec,
+          cell.parentPara,
+          JSON.stringify(cell.path),
+          0,
+        );
+      }
+      const para = parseParagraphTarget(targetId);
+      if (!para) return null;
+      return this.deps.bridge.getCursorRect(para.sec, para.para, 0);
+    } catch {
+      return null;
+    }
   }
 
   private clearPreview(): void {
     this.pendingScript = null;
-    clearHighlights(this.deps.scrollContent);
+    clearInlineDiff(this.deps.scrollContent);
     if (this.active) {
       this.active.bodyEl.replaceChildren();
       this.setPreviewEnabledFor(this.active, false);
