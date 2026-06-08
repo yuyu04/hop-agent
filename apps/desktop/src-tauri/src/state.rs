@@ -207,15 +207,31 @@ impl DocumentSessionManager {
                     .to_string(),
             );
         }
-        let bytes = std::fs::read(&staged_path).map_err(|e| {
+        let raw_bytes = std::fs::read(&staged_path).map_err(|e| {
             format!(
                 "staging 파일을 읽을 수 없습니다: {} ({})",
                 staged_path.display(),
                 e
             )
         })?;
-        let core =
-            editable_core_from_bytes(&bytes, "저장 바이트 검증 실패", "저장 문서 변환 실패")?;
+        // 저장 직전 표 CTRL_HEADER(개체 공통 속성)를 정상 48바이트 레이아웃으로 보정한다.
+        // 보정 결과가 검증을 통과하지 못하면 원본 바이트로 폴백해 저장을 악화시키지 않는다.
+        let fixed_bytes = crate::hwp_table_fix::fix_table_headers(raw_bytes.clone());
+        let (bytes, core) = match editable_core_from_bytes(
+            &fixed_bytes,
+            "저장 바이트 검증 실패",
+            "저장 문서 변환 실패",
+        ) {
+            Ok(core) => (fixed_bytes, core),
+            Err(_) => {
+                let core = editable_core_from_bytes(
+                    &raw_bytes,
+                    "저장 바이트 검증 실패",
+                    "저장 문서 변환 실패",
+                )?;
+                (raw_bytes, core)
+            }
+        };
         session.finish_hwp_save(target_path, &bytes, Some(core))?;
         let _ = std::fs::remove_file(&staged_path);
         Ok(session.save_result())

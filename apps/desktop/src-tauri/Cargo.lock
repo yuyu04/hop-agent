@@ -1975,6 +1975,8 @@ name = "hop-desktop"
 version = "0.3.1"
 dependencies = [
  "async-trait",
+ "cfb 0.14.0",
+ "flate2",
  "futures-util",
  "keyring",
  "objc2-app-kit",
