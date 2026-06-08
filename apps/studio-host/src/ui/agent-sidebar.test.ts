@@ -29,7 +29,7 @@ import { AgentSidebar, type AgentSidebarDeps } from './agent-sidebar';
 class FakeElement {
   tagName: string;
   className = '';
-  textContent: string | null = '';
+  private _textContent: string | null = '';
   title = '';
   value = '';
   type = '';
@@ -47,6 +47,16 @@ class FakeElement {
 
   constructor(tagName = 'div') {
     this.tagName = tagName.toUpperCase();
+  }
+
+  // 실제 DOM처럼 textContent 설정 시 자식 노드를 제거한다.
+  get textContent(): string | null {
+    return this._textContent;
+  }
+  set textContent(value: string | null) {
+    for (const child of this.children) child.parentNode = null;
+    this.children = [];
+    this._textContent = value;
   }
 
   get classList() {
@@ -348,17 +358,18 @@ describe('AgentSidebar', () => {
       null,
     );
 
-    // 부분 응답(Raw JSON)은 덤프하지 않고 진행 표시만 한다.
+    // 부분 응답(Raw JSON)은 덤프하지 않고 점 애니메이션(생각 중)만 표시한다.
     captured!.onDelta?.({ requestId: 'req-1', partialText: '{"edits":' });
     captured!.onDelta?.({ requestId: 'req-1', partialText: '[...]}' });
-    expect(find('hop-ai-stream').textContent).toBe('AI가 편집을 작성 중…');
+    expect(find('hop-ai-stream').querySelector('.hop-ai-thinking')).not.toBeNull();
 
     captured!.onEditReady?.({
       requestId: 'req-1',
       actionScriptJson: JSON.stringify(REPLACE_SCRIPT),
     });
-    // 완료 시 진행 표시는 사라진다.
+    // 완료 시 진행 표시(점 애니메이션)는 사라진다.
     expect(find('hop-ai-stream').textContent).toBe('');
+    expect(find('hop-ai-stream').querySelector('.hop-ai-thinking')).toBeNull();
 
     expect(find('hop-ai-accept').disabled).toBe(false);
     expect(find('hop-ai-diff').children.length).toBe(1);
@@ -400,7 +411,7 @@ describe('AgentSidebar', () => {
     expect(find('hop-ai-status').textContent).toContain('적용된 편집이 없습니다');
   });
 
-  it('shows the on-page accept/reject bar and hides the in-bubble buttons', async () => {
+  it('shows the on-page accept/reject bar AND keeps the in-bubble buttons available', async () => {
     build(true); // 캔버스 있음 → 인라인 오버레이 배치 가능
     await flush();
     find('hop-ai-prompt').value = '표 값 바꿔줘';
@@ -421,10 +432,11 @@ describe('AgentSidebar', () => {
       }),
     });
 
-    // 페이지 위 인라인 바가 떴고, 버블 내 승인/거절은 숨겨진다.
+    // 페이지 위 인라인 바가 뜨더라도, 버블 내 승인/거절은 항상 노출된다(인라인 바가
+    // 안 뜨는 표 삽입 등에서도 승인 수단을 잃지 않도록).
     expect(scrollContent.querySelector('.hop-ai-inline-bar')).not.toBeNull();
     expect(scrollContent.querySelector('.hop-ai-inline-after')?.textContent).toBe('1,000,000,000');
-    expect(find('hop-ai-decision').classList.contains('hop-ai-hidden')).toBe(true);
+    expect(find('hop-ai-decision').classList.contains('hop-ai-hidden')).toBe(false);
 
     // 인라인 바의 승인이 실제 적용(by-path)로 이어진다.
     scrollContent.querySelector('.hop-ai-inline-accept')!.click();

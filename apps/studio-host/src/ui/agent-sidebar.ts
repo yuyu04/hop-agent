@@ -598,8 +598,9 @@ export class AgentSidebar {
   private onDelta(delta: AiStreamDelta): void {
     if (delta.requestId !== this.requestId || !this.active) return;
     // 부분 응답은 Raw Action Script JSON이라 그대로 보여주면 혼란스럽다.
-    // 사람이 읽을 결과는 diff/인라인 카드로 보여주므로, 여기선 진행 표시만 한다.
-    this.active.streamEl.textContent = 'AI가 편집을 작성 중…';
+    // 사람이 읽을 결과는 diff/인라인 카드로 보여주므로, 생성 중에는 점 애니메이션만
+    // 유지한다(이미 표시 중이면 그대로 둔다).
+    if (!this.active.streamEl.querySelector('.hop-ai-thinking')) this.showThinking(this.active);
   }
 
   private onReady(ready: AiEditReady): void {
@@ -622,13 +623,16 @@ export class AgentSidebar {
       const result = applyActionScript(this.deps.bridge, script);
       this.reflowAndRender();
       this.applied = result;
-      const placed = this.renderDecisionBar(script, result.changed);
-      this.setPreviewEnabled(placed === 0);
+      // 페이지 위 인라인 표시(변경 위치 좌표를 잡을 수 있을 때만 뜬다 — 표 삽입 등은
+      // 좌표가 없어 안 뜰 수 있다). 인라인 바 유무와 무관하게 버블 내 승인/거절은
+      // 항상 노출해 사용자가 승인/거절 수단을 잃지 않도록 한다.
+      this.renderDecisionBar(script, result.changed);
+      this.setPreviewEnabled(true);
       const skippedNote = result.skipped.length ? `, 건너뜀 ${result.skipped.length}건` : '';
       this.setActiveStatus(`미리 적용 ${result.applied}건${skippedNote} — 승인 또는 거절하세요.`);
     } else {
-      const placed = this.renderInlineDiff(script);
-      this.setPreviewEnabled(placed === 0);
+      this.renderInlineDiff(script);
+      this.setPreviewEnabled(true);
       this.setActiveStatus(`제안 ${script.edits.length}건 — 승인 또는 거부하세요.`);
     }
   }
@@ -718,7 +722,17 @@ export class AgentSidebar {
     this.scrollThreadToEnd();
     const turn: ActiveTurn = { streamEl, bodyEl, decisionEl: decision, acceptBtn, rejectBtn, statusEl };
     this.setPreviewEnabledFor(turn, false);
+    this.showThinking(turn);
     return turn;
+  }
+
+  /** 정적 "작성 중…" 텍스트 대신 Claude식 점 3개 로딩 애니메이션을 표시한다. */
+  private showThinking(turn: ActiveTurn): void {
+    const dots = el('span', 'hop-ai-thinking');
+    dots.setAttribute('role', 'status');
+    dots.setAttribute('aria-label', 'AI가 생각 중입니다');
+    for (let i = 0; i < 3; i += 1) dots.appendChild(el('span', 'hop-ai-thinking-dot'));
+    turn.streamEl.replaceChildren(dots);
   }
 
   private scrollThreadToEnd(): void {
@@ -1199,8 +1213,9 @@ export class AgentSidebar {
   }
 
   private setPreviewEnabledFor(turn: ActiveTurn, enabled: boolean): void {
-    // 평소 버블 내 승인/거절은 숨긴다 — 페이지 위 인라인 바가 담당한다.
-    // 좌표를 못 잡은 폴백(enabled=true)일 때만 버블 버튼을 노출한다.
+    // 제안이 대기 중이면(enabled=true) 버블 내 승인/거절을 항상 노출한다 —
+    // 페이지 위 인라인 바는 보조 표시일 뿐, 좌표를 못 잡으면 안 뜰 수 있으므로
+    // 버블 버튼을 유일하게 신뢰할 수 있는 승인/거절 수단으로 둔다.
     turn.decisionEl.classList.toggle('hop-ai-hidden', !enabled);
     turn.acceptBtn.disabled = !enabled;
     turn.rejectBtn.disabled = !enabled;

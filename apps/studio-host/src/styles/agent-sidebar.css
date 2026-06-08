@@ -473,6 +473,46 @@
   display: none;
 }
 
+/* Claude식 "생각 중" 점 3개 로딩 애니메이션. */
+.hop-ai-thinking {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 2px;
+}
+.hop-ai-thinking-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #8a8f98;
+  opacity: 0.35;
+  animation: hop-ai-thinking-blink 1.2s infinite ease-in-out both;
+}
+.hop-ai-thinking-dot:nth-child(2) {
+  animation-delay: 0.2s;
+}
+.hop-ai-thinking-dot:nth-child(3) {
+  animation-delay: 0.4s;
+}
+@keyframes hop-ai-thinking-blink {
+  0%,
+  80%,
+  100% {
+    opacity: 0.25;
+    transform: translateY(0);
+  }
+  40% {
+    opacity: 0.9;
+    transform: translateY(-2px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hop-ai-thinking-dot {
+    animation: none;
+    opacity: 0.6;
+  }
+}
+
 .hop-ai-diff {
   display: flex;
   flex-direction: column;

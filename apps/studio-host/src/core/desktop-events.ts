@@ -30,6 +30,44 @@ interface CloseRequestEvent {
   preventDefault(): void;
 }
 
+/** 네이티브 Edit 메뉴 커맨드 → 포커스된 입력란에서 수행할 document.execCommand 이름. */
+const NATIVE_EDIT_COMMANDS: Record<string, string> = {
+  'edit:copy': 'copy',
+  'edit:cut': 'cut',
+  'edit:undo': 'undo',
+  'edit:redo': 'redo',
+};
+
+/**
+ * 실제 텍스트 입력(우리 UI 크롬: AI 글상자·대화상자 등)에 포커스가 있으면 그 입력란의
+ * 기본 편집 동작을 수행하고 true를 반환한다. 에디터의 숨은 입력 surface(본문 직속
+ * textarea/contenteditable)는 제외해 문서 복사/실행취소는 에디터 커맨드로 유지한다.
+ */
+function runNativeEditIfTextFieldFocused(execName: string): boolean {
+  if (typeof document === 'undefined') return false;
+  const el = document.activeElement as HTMLElement | null;
+  if (!el) return false;
+  // instanceof 대신 tagName으로 판별(브라우저/테스트 환경 모두에서 안전).
+  const tag = el.tagName;
+  const isInput = tag === 'INPUT';
+  const isTextarea = tag === 'TEXTAREA';
+  const editable = el.isContentEditable === true;
+  if (!isInput && !isTextarea && !editable) return false;
+  // <input>은 항상 실제 UI 필드(에디터 surface는 input이 아님). textarea/contenteditable은
+  // 알려진 크롬 컨테이너 안에 있을 때만 — 에디터의 숨은 surface는 body 직속이라 제외된다.
+  const isChromeField =
+    isInput ||
+    (typeof el.closest === 'function' &&
+      el.closest('.hop-ai-panel, .dialog, .dialog-overlay, [data-native-edit]') != null);
+  if (!isChromeField) return false;
+  try {
+    document.execCommand?.(execName);
+  } catch {
+    /* execCommand 미지원 환경은 무시 */
+  }
+  return true;
+}
+
 export async function setupDesktopEvents({
   bridge,
   dispatcher,
@@ -55,7 +93,13 @@ export async function setupDesktopEvents({
 
   await currentWindow.listen('hop-menu-command', (event) => {
     const command = String(event.payload || '');
-    if (command) dispatcher.dispatch(command);
+    if (!command) return;
+    // 네이티브 Edit 메뉴 단축키(Cmd+C/X/Z/Shift+Z)는 macOS에서 포커스된 웹뷰
+    // 입력란보다 먼저 메뉴가 가로채므로, AI 글상자 등 실제 텍스트 입력에 포커스가
+    // 있으면 에디터 커맨드 대신 그 입력란의 기본 편집 동작을 수행한다.
+    const nativeEdit = NATIVE_EDIT_COMMANDS[command];
+    if (nativeEdit && runNativeEditIfTextFieldFocused(nativeEdit)) return;
+    dispatcher.dispatch(command);
   });
 
   await currentWindow.listen('hop-app-quit-requested', async () => {

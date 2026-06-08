@@ -158,6 +158,43 @@ describe('desktop events', () => {
     expect(bridge.destroyCurrentWindow).toHaveBeenCalled();
   });
 
+  it('routes edit shortcuts to native field editing when a chrome text field is focused', async () => {
+    const { windowHandlers } = installTauriMocks();
+    (globalThis as { window?: unknown }).window = { __TAURI_INTERNALS__: {} };
+    const execCommand = vi.fn();
+    // AI 글상자(.hop-ai-panel 안 textarea)에 포커스가 있는 상태.
+    const composer = {
+      tagName: 'TEXTAREA',
+      isContentEditable: false,
+      closest: vi.fn(() => ({}) as unknown),
+    };
+    (globalThis as { document?: unknown }).document = {
+      getElementById: vi.fn(() => ({ classList: { toggle: vi.fn() } })),
+      activeElement: composer,
+      execCommand,
+    };
+
+    const dispatcher = { dispatch: vi.fn() };
+    await setupDesktopEvents({
+      bridge: { takePendingOpenPaths: vi.fn().mockResolvedValue([]) },
+      dispatcher: dispatcher as never,
+      eventBus: { emit: vi.fn() } as never,
+      setMessage: vi.fn(),
+      onUpdateState: vi.fn(),
+    });
+
+    // 글상자 포커스 → 네이티브 복사, 에디터 커맨드 디스패치 안 함.
+    await windowHandlers.get('hop-menu-command')?.({ payload: 'edit:copy' });
+    expect(execCommand).toHaveBeenCalledWith('copy');
+    expect(dispatcher.dispatch).not.toHaveBeenCalledWith('edit:copy');
+
+    // 에디터 본문(숨은 surface, 크롬 컨테이너 밖) → 에디터 커맨드로 디스패치.
+    composer.closest = vi.fn(() => null);
+    await windowHandlers.get('hop-menu-command')?.({ payload: 'edit:undo' });
+    expect(execCommand).not.toHaveBeenCalledWith('undo');
+    expect(dispatcher.dispatch).toHaveBeenCalledWith('edit:undo');
+  });
+
   it('routes app quit requests through the existing close guard and cancels on refusal', async () => {
     const { windowHandlers } = installTauriMocks();
     (globalThis as { window?: unknown }).window = { __TAURI_INTERNALS__: {} };
