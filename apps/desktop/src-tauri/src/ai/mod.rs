@@ -333,6 +333,10 @@ fn system_prompt() -> String {
      문서의 마지막 본문 문단 ID에 INSERT_AFTER로 문단을 여러 개 추가하세요. \
      각 문단은 별도의 edit으로 INSERT_AFTER 하고, 새 페이지에서 시작해야 하면 \
      payload.page_break를 true로 설정하세요. \
+     문서가 양식/템플릿(라벨 칸 + 빈 입력 칸으로 된 표)인 경우: '사 업 명', '과 제 명' \
+     같은 라벨 셀은 그대로 두고, 그 옆/아래의 빈 셀(텍스트가 비어 있는 셀)을 요청 내용으로 \
+     REPLACE 하여 채우세요. 라벨과 표 구조를 바꾸지 말고 기존 서식을 유지하세요. \
+     비어 있지 않은 셀은 사용자가 바꿔 달라고 한 경우에만 수정하세요. \
      설명 문장이나 Markdown 없이 JSON만 반환하세요."
         .to_string()
 }
@@ -383,5 +387,13 @@ mod tests {
 
         state.set_sensitive("doc-1".to_string(), false);
         assert!(!state.is_sensitive("doc-1"));
+    }
+
+    #[test]
+    fn system_prompt_guides_form_filling() {
+        let prompt = system_prompt();
+        assert!(prompt.contains("양식/템플릿"));
+        assert!(prompt.contains("라벨"));
+        assert!(prompt.contains("빈 셀"));
     }
 }
