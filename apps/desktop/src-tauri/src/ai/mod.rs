@@ -365,6 +365,8 @@ fn system_prompt() -> String {
      표를 새로 만들려면 본문 문단 ID에 INSERT_AFTER 하고 payload.type=\"table\", \
      payload.table_data에 rows, cols, matrix(행×열 문자열 2차원 배열)를 채우세요. \
      예: 예산 표는 첫 행을 머리글로 두고 matrix에 값을 넣습니다. \
+     머리글이 여러 열을 덮거나 같은 값이 세로로 이어지면 table_data.merges에 \
+     {start_row,start_col,end_row,end_col}(0-기준, 끝 포함) 영역을 넣어 셀을 병합하세요. \
      문서가 양식/템플릿(라벨 칸 + 빈 입력 칸으로 된 표)인 경우: '사 업 명', '과 제 명' \
      같은 라벨 셀은 그대로 두고, 그 옆/아래의 빈 셀(텍스트가 비어 있는 셀)을 요청 내용으로 \
      REPLACE 하여 채우세요. 라벨과 표 구조를 바꾸지 말고 기존 서식을 유지하세요. \

@@ -24,6 +24,16 @@ export interface WasmEditing {
     rows: number,
     cols: number,
   ): { ok: boolean; paraIdx: number; controlIdx: number };
+  /** 표 셀 영역을 병합한다(0-기준 행/열, 끝 포함). */
+  mergeTableCells(
+    sec: number,
+    parentPara: number,
+    controlIdx: number,
+    startRow: number,
+    startCol: number,
+    endRow: number,
+    endCol: number,
+  ): { ok: boolean; cellCount: number };
   // 표 셀 편집(중첩 포함, 스펙 2장). pathJson은 `[{controlIndex,cellIndex,cellParaIndex}, …]`.
   getCellParagraphLengthByPath(sec: number, parentPara: number, pathJson: string): number;
   insertTextInCellByPath(
@@ -292,6 +302,22 @@ function createTableAt(wasm: WasmEditing, sec: number, para: number, edit: Edit)
         { controlIndex: result.controlIdx, cellIndex: r * cols + c, cellParaIndex: 0 },
       ]);
       wasm.insertTextInCellByPath(sec, result.paraIdx, path, 0, value);
+    }
+  }
+  // 셀 병합(헤더·세로 병합 등) — 채운 뒤 적용해 좌상단 셀 내용이 유지되게 한다.
+  for (const m of data.merges ?? []) {
+    try {
+      wasm.mergeTableCells(
+        sec,
+        result.paraIdx,
+        result.controlIdx,
+        m.start_row,
+        m.start_col,
+        m.end_row,
+        m.end_col,
+      );
+    } catch {
+      /* 잘못된 병합 범위는 무시(표 자체는 유지) */
     }
   }
 }

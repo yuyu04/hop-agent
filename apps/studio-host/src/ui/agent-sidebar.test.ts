@@ -224,6 +224,7 @@ function createBridge() {
     mergeParagraph: vi.fn(() => ''),
     insertPageBreak: vi.fn(() => ''),
     createTable: vi.fn(() => ({ ok: true, paraIdx: 0, controlIdx: 0 })),
+    mergeTableCells: vi.fn(() => ({ ok: true, cellCount: 1 })),
     getCellParagraphLengthByPath: vi.fn(() => 0),
     insertTextInCellByPath: vi.fn(() => ''),
     deleteTextInCellByPath: vi.fn(() => ''),

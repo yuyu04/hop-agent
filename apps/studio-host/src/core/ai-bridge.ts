@@ -37,6 +37,8 @@ export interface EditPayload {
     rows: number;
     cols: number;
     matrix: string[][];
+    /** 병합할 셀 영역(0-기준, 끝 포함). */
+    merges?: { start_row: number; start_col: number; end_row: number; end_col: number }[];
   };
 }
 

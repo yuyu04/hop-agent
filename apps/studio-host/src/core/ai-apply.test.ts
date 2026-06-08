@@ -34,6 +34,10 @@ class FakeWasm implements WasmEditing {
     this.calls.push(`createTable(${sec},${para},${charOffset},${rows},${cols})`);
     return { ok: true, paraIdx: para, controlIdx: 0 };
   }
+  mergeTableCells(s: number, pp: number, ci: number, sr: number, sc: number, er: number, ec: number) {
+    this.calls.push(`mergeTableCells(${s},${pp},${ci},${sr},${sc},${er},${ec})`);
+    return { ok: true, cellCount: 1 };
+  }
   getCellParagraphLengthByPath(s: number, pp: number, pathJson: string): number {
     this.calls.push(`getCellParagraphLengthByPath(${s},${pp},${pathJson})`);
     return this.lengths[`${s}.${pp}.${pathJson}`] ?? 0;
@@ -138,6 +142,34 @@ describe('applyActionScript', () => {
     expect(result.applied).toBe(0);
     expect(result.skipped[0].reason).toContain('표 셀 안에는 표를');
     expect(wasm.calls).toEqual([]);
+  });
+
+  it('merges cells after filling when table_data.merges is given', () => {
+    const wasm = new FakeWasm();
+    wasm.lengths['0.4'] = 0;
+    applyActionScript(
+      wasm,
+      script([
+        {
+          command: 'INSERT_AFTER',
+          target_id: 'sec[0].p[4]',
+          payload: {
+            type: 'table',
+            table_data: {
+              rows: 2,
+              cols: 2,
+              matrix: [['머리글', ''], ['a', 'b']],
+              merges: [{ start_row: 0, start_col: 0, end_row: 0, end_col: 1 }],
+            },
+          },
+        },
+      ]),
+    );
+    // 채운 뒤 병합이 호출된다.
+    expect(wasm.calls).toContain('mergeTableCells(0,5,0,0,0,0,1)');
+    const fillIdx = wasm.calls.findIndex((c) => c.startsWith('insertTextInCellByPath'));
+    const mergeIdx = wasm.calls.findIndex((c) => c.startsWith('mergeTableCells'));
+    expect(fillIdx).toBeLessThan(mergeIdx);
   });
 
   it('INSERT_BEFORE splits at offset 0 and fills the new paragraph', () => {

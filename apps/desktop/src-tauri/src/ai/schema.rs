@@ -24,6 +24,18 @@ pub struct TableData {
     pub rows: u32,
     pub cols: u32,
     pub matrix: Vec<Vec<String>>,
+    /// 병합할 셀 영역들(선택). 헤더 병합·세로 병합 등에 쓴다.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub merges: Vec<MergeSpec>,
+}
+
+/// 표 셀 병합 영역(0-기준 행/열 범위, 끝 포함).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MergeSpec {
+    pub start_row: u32,
+    pub start_col: u32,
+    pub end_row: u32,
+    pub end_col: u32,
 }
 
 /// 편집 대상에 적용할 내용.
@@ -151,6 +163,19 @@ pub fn action_script_schema() -> Value {
                                         "matrix": {
                                             "type": "array",
                                             "items": { "type": "array", "items": { "type": "string" } }
+                                        },
+                                        "merges": {
+                                            "type": "array",
+                                            "description": "병합할 셀 영역(0-기준, 끝 포함). 헤더·세로 병합 등.",
+                                            "items": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "start_row": { "type": "integer" },
+                                                    "start_col": { "type": "integer" },
+                                                    "end_row": { "type": "integer" },
+                                                    "end_col": { "type": "integer" }
+                                                }
+                                            }
                                         }
                                     }
                                 }
