@@ -203,6 +203,7 @@ export class AgentSidebar {
     this.populateModels(this.providerSelect.value);
     this.renderChips();
     void this.subscribe();
+    void this.subscribeNativeDragDrop();
     void this.refreshKeyState();
   }
 
@@ -212,6 +213,82 @@ export class AgentSidebar {
       onEditReady: (r) => this.onReady(r),
       onEditFailed: (f) => this.onFailed(f),
     });
+  }
+
+  /**
+   * Tauri 데스크톱에서는 OS 파일 드롭을 네이티브가 가로채 웹 DOM `drop`이
+   * 오지 않으므로, `tauri://drag-drop` 이벤트(파일 경로 + 위치)를 구독한다.
+   * 드롭 위치가 패널 위일 때만 첨부로 처리한다(문서 열기와 충돌 방지).
+   */
+  private async subscribeNativeDragDrop(): Promise<void> {
+    let webview: { listen: (e: string, cb: (ev: { payload: unknown }) => void) => Promise<unknown> };
+    try {
+      const mod = await import('@tauri-apps/api/webviewWindow');
+      webview = mod.getCurrentWebviewWindow();
+    } catch {
+      return; // 웹/테스트 런타임 — DOM drop 폴백 사용.
+    }
+
+    const overPanel = (pos: { x: number; y: number } | undefined): boolean => {
+      if (!pos) return false;
+      const dpr = window.devicePixelRatio || 1;
+      const rect = this.panel.getBoundingClientRect();
+      const x = pos.x / dpr;
+      const y = pos.y / dpr;
+      return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+    };
+
+    await webview.listen('tauri://drag-enter', (ev) => {
+      const payload = ev.payload as { position?: { x: number; y: number } };
+      this.panel.classList.toggle('hop-ai-dragover', overPanel(payload.position));
+    });
+    await webview.listen('tauri://drag-over', (ev) => {
+      const payload = ev.payload as { position?: { x: number; y: number } };
+      this.panel.classList.toggle('hop-ai-dragover', overPanel(payload.position));
+    });
+    await webview.listen('tauri://drag-leave', () => {
+      this.panel.classList.remove('hop-ai-dragover');
+    });
+    await webview.listen('tauri://drag-drop', (ev) => {
+      const payload = ev.payload as { paths?: string[]; position?: { x: number; y: number } };
+      this.panel.classList.remove('hop-ai-dragover');
+      if (!this.panel.classList.contains('open') || !overPanel(payload.position)) return;
+      void this.attachPaths(payload.paths ?? []);
+    });
+  }
+
+  /** 드롭된 파일 경로들을 읽어 첨부한다(이미지=base64, 텍스트=인라인). */
+  private async attachPaths(paths: string[]): Promise<void> {
+    if (!paths.length) return;
+    let ignored = 0;
+    for (const path of paths) {
+      const name = path.split(/[\\/]/).pop() || path;
+      try {
+        if (/\.(png|jpe?g|gif|webp|bmp)$/i.test(name)) {
+          const { readFile } = await import('@tauri-apps/plugin-fs');
+          const bytes = await readFile(path);
+          this.attachments.push({
+            id: uid(),
+            kind: 'image',
+            name,
+            mime: mimeForImage(name),
+            dataBase64: base64FromBytes(bytes),
+          });
+        } else if (/\.(txt|md|markdown|csv|json|html?|xml)$/i.test(name)) {
+          const { readTextFile } = await import('@tauri-apps/plugin-fs');
+          const text = await readTextFile(path);
+          this.attachments.push({ id: uid(), kind: 'doc', name, text });
+        } else {
+          ignored += 1;
+          continue;
+        }
+        this.renderChips();
+      } catch {
+        this.setStatus(`첨부 실패: ${name}`, 'error');
+      }
+    }
+    if (ignored) this.setStatus(`이미지/텍스트 파일만 첨부할 수 있습니다(${ignored}개 무시).`, 'warn');
+    else this.setStatus('첨부했습니다. 이어서 지시를 입력하세요.', 'ok');
   }
 
   toggle(open?: boolean): void {
@@ -1004,6 +1081,25 @@ function uid(): string {
 function isTextLike(file: File): boolean {
   if (file.type.startsWith('text/')) return true;
   return /\.(txt|md|markdown|csv|json|html?|xml)$/i.test(file.name);
+}
+
+function mimeForImage(name: string): string {
+  const ext = name.toLowerCase().split('.').pop() ?? '';
+  if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg';
+  if (ext === 'gif') return 'image/gif';
+  if (ext === 'webp') return 'image/webp';
+  if (ext === 'bmp') return 'image/bmp';
+  return 'image/png';
+}
+
+/** 바이트 배열을 base64로(큰 이미지에서 호출 스택 폭주를 피하려 청크 처리). */
+function base64FromBytes(bytes: Uint8Array): string {
+  let binary = '';
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
 }
 
 function readAsDataUrl(file: File): Promise<string> {
