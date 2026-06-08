@@ -344,19 +344,8 @@ export class AgentSidebar {
             dataBase64: base64FromBytes(bytes),
             path,
           });
-        } else if (/\.pdf$/i.test(name)) {
-          const { readFile } = await import('@tauri-apps/plugin-fs');
-          const bytes = await readFile(path);
-          this.attachments.push({
-            id: uid(),
-            kind: 'file',
-            name,
-            mime: 'application/pdf',
-            dataBase64: base64FromBytes(bytes),
-            path,
-          });
-        } else if (/\.(hwp|hwpx|docx)$/i.test(name)) {
-          // 한글(HWP/HWPX)·워드(DOCX)는 네이티브로 평문 추출 → 모든 provider 인라인.
+        } else if (/\.(pdf|hwp|hwpx|docx)$/i.test(name)) {
+          // PDF·한글·워드는 네이티브로 평문 추출 → 모든 provider에 인라인(경로/샌드박스 무관).
           const text = await this.deps.bridge.aiExtractText(path);
           this.attachments.push({ id: uid(), kind: 'doc', name, text });
         } else if (/\.(txt|md|markdown|csv|json|html?|xml)$/i.test(name)) {
@@ -719,11 +708,9 @@ export class AgentSidebar {
   }
 
   private async addPickedDoc(file: File): Promise<void> {
-    if (file.type === 'application/pdf' || /\.pdf$/i.test(file.name)) {
-      await this.addBinaryFile(file, 'application/pdf');
-    } else if (/\.(hwp|hwpx|docx)$/i.test(file.name)) {
+    if (/\.(pdf|hwp|hwpx|docx)$/i.test(file.name) || file.type === 'application/pdf') {
       // 네이티브 텍스트 추출은 파일 경로가 필요하다 — 파일 선택엔 경로가 없다.
-      this.setStatus('HWP/HWPX/DOCX는 드래그&드롭으로 첨부하세요.', 'warn');
+      this.setStatus('PDF/HWP/HWPX/DOCX는 드래그&드롭으로 첨부하세요.', 'warn');
     } else {
       await this.addDocFile(file);
     }

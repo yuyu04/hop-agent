@@ -213,6 +213,11 @@ pub fn ai_set_document_sensitivity(
 pub fn ai_extract_text(path: String) -> Result<String, String> {
     let bytes = std::fs::read(&path).map_err(|e| format!("파일을 읽을 수 없습니다: {}", e))?;
     let lower = path.to_lowercase();
+    if lower.ends_with(".pdf") {
+        // PDF는 네이티브로 텍스트 추출 → 모든 provider에 인라인(경로/샌드박스 무관).
+        return pdf_extract::extract_text_from_mem(&bytes)
+            .map_err(|e| format!("PDF 텍스트 추출 실패: {}", e));
+    }
     if lower.ends_with(".docx") {
         return docx::extract_docx_text(&bytes);
     }
@@ -224,7 +229,7 @@ pub fn ai_extract_text(path: String) -> Result<String, String> {
         )?;
         return serialize::extract_all_text(&core);
     }
-    Err("HWP/HWPX/DOCX 파일만 텍스트 추출을 지원합니다.".to_string())
+    Err("PDF/HWP/HWPX/DOCX 파일만 텍스트 추출을 지원합니다.".to_string())
 }
 
 async fn run_edit_request(
@@ -408,4 +413,5 @@ mod tests {
         assert!(prompt.contains("라벨"));
         assert!(prompt.contains("빈 셀"));
     }
+
 }
