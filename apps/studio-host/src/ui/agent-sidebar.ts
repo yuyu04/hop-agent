@@ -58,13 +58,26 @@ export interface AgentSidebarDeps {
 /** 커스텀 OpenAI 호환 엔드포인트(Groq/OpenRouter/Together/LM Studio/게이트웨이). 스펙 5.3장. */
 const CUSTOM_PROVIDER = 'openai-compat';
 
-/** 로컬 CLI 위임 — 터미널에 로그인된 Claude Code를 호출(키·과금 없음). 스펙 5.3장. */
+/** 로컬 CLI 위임 — 터미널에 로그인된 CLI를 호출(키·과금 없음). 스펙 5.3장. */
 const CLAUDE_CLI_PROVIDER = 'claude-cli';
+const GEMINI_CLI_PROVIDER = 'gemini-cli';
 
-const PROVIDERS = ['gemini', 'openai', 'anthropic', 'ollama', CLAUDE_CLI_PROVIDER, CUSTOM_PROVIDER] as const;
+/** CLI 위임 provider — 첨부를 base64 대신 파일 경로로 넘기고 키가 필요 없다. */
+const CLI_PROVIDERS = new Set<string>([CLAUDE_CLI_PROVIDER, GEMINI_CLI_PROVIDER]);
+
+const PROVIDERS = [
+  'gemini',
+  'openai',
+  'anthropic',
+  'ollama',
+  CLAUDE_CLI_PROVIDER,
+  GEMINI_CLI_PROVIDER,
+  CUSTOM_PROVIDER,
+] as const;
 
 const PROVIDER_LABELS: Record<string, string> = {
   [CLAUDE_CLI_PROVIDER]: 'Claude Code (로컬 CLI)',
+  [GEMINI_CLI_PROVIDER]: 'Gemini CLI (로컬)',
   [CUSTOM_PROVIDER]: 'OpenAI 호환 (Groq 등)',
 };
 
@@ -91,6 +104,7 @@ const MODELS: Record<string, string[]> = {
   gemini: ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash-lite', 'gemini-flash-latest'],
   ollama: ['llama3.1', 'llama3.2', 'qwen2.5', 'mistral'],
   [CLAUDE_CLI_PROVIDER]: ['default', 'sonnet', 'opus', 'haiku'],
+  [GEMINI_CLI_PROVIDER]: ['default', 'gemini-2.5-flash', 'gemini-2.5-pro'],
   [CUSTOM_PROVIDER]: ['llama-3.1-8b-instant', 'llama-3.3-70b-versatile'],
 };
 
@@ -404,7 +418,7 @@ export class AgentSidebar {
 
     // 미확정 Diff가 있으면 자동 롤백 후 진행(스펙 4장 동시성).
     const attachments = this.attachments;
-    const isCli = provider === CLAUDE_CLI_PROVIDER;
+    const isCli = CLI_PROVIDERS.has(provider);
     const docText = attachments
       .filter((a) => a.kind === 'doc')
       .map((a) => `[첨부 문서: ${a.name}]\n${a.text ?? ''}`)
@@ -981,6 +995,7 @@ function defaultModel(provider: string): string {
     case 'ollama':
       return 'llama3.1';
     case CLAUDE_CLI_PROVIDER:
+    case GEMINI_CLI_PROVIDER:
       return 'default';
     case CUSTOM_PROVIDER:
       return 'llama-3.1-8b-instant';
