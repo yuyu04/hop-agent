@@ -29,6 +29,7 @@ impl GeminiProvider {
             "generationConfig": {
                 "responseMimeType": "application/json",
                 "responseSchema": gemini_action_script_schema(),
+                "maxOutputTokens": 8192,
             }
         })
     }

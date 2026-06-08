@@ -49,7 +49,7 @@ impl AnthropicProvider {
         };
         json!({
             "model": self.model,
-            "max_tokens": 4096,
+            "max_tokens": 8192,
             "stream": true,
             "system": req.system_prompt,
             "messages": [
