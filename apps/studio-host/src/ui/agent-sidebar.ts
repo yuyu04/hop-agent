@@ -186,6 +186,10 @@ export class AgentSidebar {
     this.presetSelect.addEventListener('change', () => this.applyPreset());
     this.promptInput.addEventListener('keydown', (event) => this.onPromptKeydown(event as KeyboardEvent));
     this.panel.addEventListener('paste', (event) => void this.onPaste(event as ClipboardEvent));
+    // 드래그&드롭으로 이미지·텍스트 문서 첨부.
+    this.panel.addEventListener('dragover', (event) => this.onDragOver(event as DragEvent));
+    this.panel.addEventListener('dragleave', (event) => this.onDragLeave(event as DragEvent));
+    this.panel.addEventListener('drop', (event) => void this.onDrop(event as DragEvent));
     // 패널 내부 키 입력(복사/붙여넣기/전체선택 등)이 문서 전역 단축키 핸들러로
     // 전파돼 가로채이지 않도록 막는다. 버블 단계라 textarea의 Enter 처리는 유지된다.
     this.panel.addEventListener('keydown', (event) => (event as KeyboardEvent).stopPropagation());
@@ -323,12 +327,15 @@ export class AgentSidebar {
 
   private onDelta(delta: AiStreamDelta): void {
     if (delta.requestId !== this.requestId || !this.active) return;
-    this.active.streamEl.textContent += delta.partialText;
+    // 부분 응답은 Raw Action Script JSON이라 그대로 보여주면 혼란스럽다.
+    // 사람이 읽을 결과는 diff/인라인 카드로 보여주므로, 여기선 진행 표시만 한다.
+    this.active.streamEl.textContent = 'AI가 편집을 작성 중…';
   }
 
   private onReady(ready: AiEditReady): void {
     if (ready.requestId !== this.requestId || !this.active) return;
     this.setRequesting(false);
+    this.active.streamEl.textContent = '';
     const script = parseActionScript(ready.actionScriptJson);
     if (!script) {
       this.session.onFailed();
@@ -349,6 +356,7 @@ export class AgentSidebar {
     if (failed.requestId !== this.requestId || !this.active) return;
     this.session.onFailed();
     this.setRequesting(false);
+    this.active.streamEl.textContent = '';
     this.setActiveStatus(`${interpretAiFailure(failed.code)} (${failed.reason})`, 'error');
   }
 
@@ -441,6 +449,40 @@ export class AgentSidebar {
       const file = item.getAsFile();
       if (file) await this.addImageFile(file);
     }
+  }
+
+  private onDragOver(event: DragEvent): void {
+    // 파일 드래그만 받아들이고 브라우저 기본 동작(파일 열기)을 막는다.
+    if (!Array.from(event.dataTransfer?.types ?? []).includes('Files')) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+    this.panel.classList.add('hop-ai-dragover');
+  }
+
+  private onDragLeave(event: DragEvent): void {
+    // 패널 밖으로 나갈 때만 강조 해제(자식 간 이동은 무시).
+    if (event.relatedTarget && this.panel.contains(event.relatedTarget as Node)) return;
+    this.panel.classList.remove('hop-ai-dragover');
+  }
+
+  private async onDrop(event: DragEvent): Promise<void> {
+    const files = Array.from(event.dataTransfer?.files ?? []);
+    if (!files.length) return;
+    event.preventDefault();
+    event.stopPropagation();
+    this.panel.classList.remove('hop-ai-dragover');
+    let ignored = 0;
+    for (const file of files) {
+      if (file.type.startsWith('image/')) {
+        await this.addImageFile(file);
+      } else if (isTextLike(file)) {
+        await this.addDocFile(file);
+      } else {
+        ignored += 1;
+      }
+    }
+    if (ignored) this.setStatus(`이미지/텍스트 파일만 첨부할 수 있습니다(${ignored}개 무시).`, 'warn');
   }
 
   private async addImageFile(file: File): Promise<void> {
@@ -956,6 +998,12 @@ function option(value: string, label: string): HTMLOptionElement {
 
 function uid(): string {
   return Math.random().toString(36).slice(2);
+}
+
+/** 텍스트로 읽어 인라인할 수 있는 문서인지(드롭 시 바이너리 첨부 방지). */
+function isTextLike(file: File): boolean {
+  if (file.type.startsWith('text/')) return true;
+  return /\.(txt|md|markdown|csv|json|html?|xml)$/i.test(file.name);
 }
 
 function readAsDataUrl(file: File): Promise<string> {

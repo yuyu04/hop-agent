@@ -35,6 +35,23 @@
 .hop-ai-panel.open {
   transform: translateX(0);
 }
+.hop-ai-panel.hop-ai-dragover {
+  outline: 2px dashed #2563eb;
+  outline-offset: -4px;
+}
+.hop-ai-panel.hop-ai-dragover::after {
+  content: '파일을 놓아 첨부';
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(37, 99, 235, 0.06);
+  color: #2563eb;
+  font-weight: 700;
+  pointer-events: none;
+  z-index: 1100;
+}
 
 .hop-ai-header {
   display: flex;

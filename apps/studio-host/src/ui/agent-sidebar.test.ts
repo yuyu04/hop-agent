@@ -116,8 +116,8 @@ class FakeElement {
     this.fire('click');
   }
 
-  fire(type: string): void {
-    this.listeners.get(type)?.forEach((fn) => fn({}));
+  fire(type: string, event: unknown = {}): void {
+    this.listeners.get(type)?.forEach((fn) => fn(event));
   }
 
   // 인라인 오버레이가 호출하는 스크롤/레이아웃 API(테스트용 no-op).
@@ -312,14 +312,17 @@ describe('AgentSidebar', () => {
       null,
     );
 
-    captured!.onDelta?.({ requestId: 'req-1', partialText: '부분 ' });
-    captured!.onDelta?.({ requestId: 'req-1', partialText: '응답' });
-    expect(find('hop-ai-stream').textContent).toBe('부분 응답');
+    // 부분 응답(Raw JSON)은 덤프하지 않고 진행 표시만 한다.
+    captured!.onDelta?.({ requestId: 'req-1', partialText: '{"edits":' });
+    captured!.onDelta?.({ requestId: 'req-1', partialText: '[...]}' });
+    expect(find('hop-ai-stream').textContent).toBe('AI가 편집을 작성 중…');
 
     captured!.onEditReady?.({
       requestId: 'req-1',
       actionScriptJson: JSON.stringify(REPLACE_SCRIPT),
     });
+    // 완료 시 진행 표시는 사라진다.
+    expect(find('hop-ai-stream').textContent).toBe('');
 
     expect(find('hop-ai-accept').disabled).toBe(false);
     expect(find('hop-ai-diff').children.length).toBe(1);
@@ -390,6 +393,32 @@ describe('AgentSidebar', () => {
     // 인라인 바의 승인이 실제 적용(by-path)로 이어진다.
     scrollContent.querySelector('.hop-ai-inline-accept')!.click();
     expect(bridge.insertTextInCellByPath).toHaveBeenCalled();
+  });
+
+  it('highlights on drag-over and ignores non image/text drops', async () => {
+    build();
+    await flush();
+    const panel = doc.body.querySelector('.hop-ai-panel')!;
+
+    const over = {
+      dataTransfer: { types: ['Files'], dropEffect: '' },
+      preventDefault: vi.fn(),
+      stopPropagation: vi.fn(),
+    };
+    panel.fire('dragover', over);
+    expect(over.preventDefault).toHaveBeenCalled();
+    expect(panel.classList.contains('hop-ai-dragover')).toBe(true);
+
+    const drop = {
+      dataTransfer: { files: [{ type: 'application/octet-stream', name: 'a.bin' }] },
+      preventDefault: vi.fn(),
+      stopPropagation: vi.fn(),
+    };
+    panel.fire('drop', drop);
+    await flush();
+    expect(drop.preventDefault).toHaveBeenCalled();
+    expect(panel.classList.contains('hop-ai-dragover')).toBe(false);
+    expect(find('hop-ai-status').textContent).toContain('이미지/텍스트 파일만');
   });
 
   it('ignores ready events for a different request id', async () => {
