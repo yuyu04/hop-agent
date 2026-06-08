@@ -38,6 +38,18 @@ class FakeWasm implements WasmEditing {
     this.calls.push(`mergeTableCells(${s},${pp},${ci},${sr},${sc},${er},${ec})`);
     return { ok: true, cellCount: 1 };
   }
+  getCellParagraphLength(s: number, pp: number, ci: number, ce: number, cp: number): number {
+    this.calls.push(`getCellParagraphLength(${s},${pp},${ci},${ce},${cp})`);
+    return this.lengths[`${s}.${pp}.${ci}.${ce}.${cp}`] ?? 0;
+  }
+  insertTextInCell(s: number, pp: number, ci: number, ce: number, cp: number, off: number, text: string): string {
+    this.calls.push(`insertTextInCell(${s},${pp},${ci},${ce},${cp},${off},"${text}")`);
+    return '';
+  }
+  deleteTextInCell(s: number, pp: number, ci: number, ce: number, cp: number, off: number, count: number): string {
+    this.calls.push(`deleteTextInCell(${s},${pp},${ci},${ce},${cp},${off},${count})`);
+    return '';
+  }
   getCellParagraphLengthByPath(s: number, pp: number, pathJson: string): number {
     this.calls.push(`getCellParagraphLengthByPath(${s},${pp},${pathJson})`);
     return this.lengths[`${s}.${pp}.${pathJson}`] ?? 0;
@@ -116,14 +128,15 @@ describe('applyActionScript', () => {
       ]),
     );
     expect(result.applied).toBe(1);
+    // 셀은 flat API로 채워 reflow(줄바꿈·높이 증가)가 일어난다.
     expect(wasm.calls).toEqual([
       'getParagraphLength(0,4)',
       'splitParagraph(0,4,2)',
       'createTable(0,5,0,2,2)',
-      `insertTextInCellByPath(0,5,[{"controlIndex":0,"cellIndex":0,"cellParaIndex":0}],0,"구분")`,
-      `insertTextInCellByPath(0,5,[{"controlIndex":0,"cellIndex":1,"cellParaIndex":0}],0,"금액")`,
-      `insertTextInCellByPath(0,5,[{"controlIndex":0,"cellIndex":2,"cellParaIndex":0}],0,"총액")`,
-      `insertTextInCellByPath(0,5,[{"controlIndex":0,"cellIndex":3,"cellParaIndex":0}],0,"10억")`,
+      'insertTextInCell(0,5,0,0,0,0,"구분")',
+      'insertTextInCell(0,5,0,1,0,0,"금액")',
+      'insertTextInCell(0,5,0,2,0,0,"총액")',
+      'insertTextInCell(0,5,0,3,0,0,"10억")',
     ]);
   });
 
@@ -167,7 +180,7 @@ describe('applyActionScript', () => {
     );
     // 채운 뒤 병합이 호출된다.
     expect(wasm.calls).toContain('mergeTableCells(0,5,0,0,0,0,1)');
-    const fillIdx = wasm.calls.findIndex((c) => c.startsWith('insertTextInCellByPath'));
+    const fillIdx = wasm.calls.findIndex((c) => c.startsWith('insertTextInCell('));
     const mergeIdx = wasm.calls.findIndex((c) => c.startsWith('mergeTableCells'));
     expect(fillIdx).toBeLessThan(mergeIdx);
   });
@@ -244,10 +257,10 @@ describe('applyActionScript', () => {
     expect(wasm.calls).toEqual([]);
   });
 
-  it('REPLACE on a top-level table cell clears then inserts via by-path', () => {
+  it('REPLACE on a top-level table cell clears then inserts via flat reflowing API', () => {
     const wasm = new FakeWasm();
-    const path = '[{"controlIndex":0,"cellIndex":5,"cellParaIndex":0}]';
-    wasm.lengths[`0.2.${path}`] = 11;
+    // 최상위 셀(path 길이 1)은 reflow가 일어나는 flat API를 쓴다.
+    wasm.lengths['0.2.0.5.0'] = 11;
     const result = applyActionScript(
       wasm,
       script([
@@ -260,9 +273,9 @@ describe('applyActionScript', () => {
     );
     expect(result.applied).toBe(1);
     expect(wasm.calls).toEqual([
-      `getCellParagraphLengthByPath(0,2,${path})`,
-      `deleteTextInCellByPath(0,2,${path},0,11)`,
-      `insertTextInCellByPath(0,2,${path},0,"총 사업비 10억")`,
+      'getCellParagraphLength(0,2,0,5,0)',
+      'deleteTextInCell(0,2,0,5,0,0,11)',
+      'insertTextInCell(0,2,0,5,0,0,"총 사업비 10억")',
     ]);
   });
 
@@ -289,17 +302,16 @@ describe('applyActionScript', () => {
     ]);
   });
 
-  it('DELETE on a table cell empties the cell text (no paragraph removal)', () => {
+  it('DELETE on a top-level table cell empties the cell text via flat reflowing API', () => {
     const wasm = new FakeWasm();
-    const path = '[{"controlIndex":0,"cellIndex":5,"cellParaIndex":0}]';
-    wasm.lengths[`0.2.${path}`] = 4;
+    wasm.lengths['0.2.0.5.0'] = 4;
     applyActionScript(
       wasm,
       script([{ command: 'DELETE', target_id: 'sec[0].p[2].tbl[0].cell[5].p[0]', payload: {} }]),
     );
     expect(wasm.calls).toEqual([
-      `getCellParagraphLengthByPath(0,2,${path})`,
-      `deleteTextInCellByPath(0,2,${path},0,4)`,
+      'getCellParagraphLength(0,2,0,5,0)',
+      'deleteTextInCell(0,2,0,5,0,0,4)',
     ]);
   });
 

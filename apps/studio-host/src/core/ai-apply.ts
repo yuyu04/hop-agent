@@ -34,6 +34,33 @@ export interface WasmEditing {
     endRow: number,
     endCol: number,
   ): { ok: boolean; cellCount: number };
+  // 최상위 표 셀 편집(플랫). by-path와 달리 셀 줄 재배치(reflow)를 수행해
+  // 긴 텍스트가 줄바꿈되고 셀 높이가 늘어난다.
+  getCellParagraphLength(
+    sec: number,
+    parentPara: number,
+    controlIdx: number,
+    cellIdx: number,
+    cellParaIdx: number,
+  ): number;
+  insertTextInCell(
+    sec: number,
+    parentPara: number,
+    controlIdx: number,
+    cellIdx: number,
+    cellParaIdx: number,
+    charOffset: number,
+    text: string,
+  ): string;
+  deleteTextInCell(
+    sec: number,
+    parentPara: number,
+    controlIdx: number,
+    cellIdx: number,
+    cellParaIdx: number,
+    charOffset: number,
+    count: number,
+  ): string;
   // 표 셀 편집(중첩 포함, 스펙 2장). pathJson은 `[{controlIndex,cellIndex,cellParaIndex}, …]`.
   getCellParagraphLengthByPath(sec: number, parentPara: number, pathJson: string): number;
   insertTextInCellByPath(
@@ -297,11 +324,9 @@ function createTableAt(wasm: WasmEditing, sec: number, para: number, edit: Edit)
     for (let c = 0; c < cols; c += 1) {
       const value = rowCells[c] ?? '';
       if (!value) continue;
-      // 생성된 표의 셀은 by-path(단일 단계)로 채운다. 셀은 행 우선(row-major).
-      const path = JSON.stringify([
-        { controlIndex: result.controlIdx, cellIndex: r * cols + c, cellParaIndex: 0 },
-      ]);
-      wasm.insertTextInCellByPath(sec, result.paraIdx, path, 0, value);
+      // 최상위 표이므로 flat API로 채운다 → 셀 reflow(줄바꿈·높이 증가)가 일어난다.
+      // 셀은 행 우선(row-major) 인덱스.
+      wasm.insertTextInCell(sec, result.paraIdx, result.controlIdx, r * cols + c, 0, 0, value);
     }
   }
   // 셀 병합(헤더·세로 병합 등) — 채운 뒤 적용해 좌상단 셀 내용이 유지되게 한다.
@@ -324,6 +349,19 @@ function createTableAt(wasm: WasmEditing, sec: number, para: number, edit: Edit)
 
 function applyOneCell(wasm: WasmEditing, edit: Edit, c: CellTarget): void {
   const text = edit.payload.text ?? '';
+
+  // 최상위 표 셀(경로 1단계)의 값 변경/비우기는 flat API로 처리한다 — by-path와
+  // 달리 셀 reflow가 일어나 긴 텍스트가 줄바꿈되고 셀 높이가 늘어난다.
+  if (c.path.length === 1 && (edit.command === 'REPLACE' || edit.command === 'DELETE')) {
+    const { controlIndex: ci, cellIndex: ce, cellParaIndex: cp } = c.path[0];
+    const length = wasm.getCellParagraphLength(c.sec, c.parentPara, ci, ce, cp);
+    if (length > 0) wasm.deleteTextInCell(c.sec, c.parentPara, ci, ce, cp, 0, length);
+    if (edit.command === 'REPLACE') {
+      wasm.insertTextInCell(c.sec, c.parentPara, ci, ce, cp, 0, text);
+    }
+    return;
+  }
+
   const pathJson = JSON.stringify(c.path);
 
   // 경로 마지막 단계의 cellParaIndex만 바꿔 같은 셀의 다른 문단을 가리킨다.
