@@ -885,6 +885,18 @@ export class AgentSidebar {
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
       void this.send();
+      return;
+    }
+    // Cmd/Ctrl+A → 글상자 전체 선택. 커스텀 네이티브 메뉴에 Select All 항목이 없어
+    // 웹뷰 기본 동작이 불안정하므로 직접 처리한다(macOS·Windows 공통, 한글 IME의 'ㅁ' 포함).
+    if (
+      (event.metaKey || event.ctrlKey) &&
+      !event.altKey &&
+      !event.shiftKey &&
+      (event.key === 'a' || event.key === 'A' || event.key === 'ㅁ')
+    ) {
+      event.preventDefault();
+      this.promptInput.select();
     }
   }
 

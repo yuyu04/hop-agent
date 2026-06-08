@@ -126,6 +126,11 @@ class FakeElement {
     this.fire('click');
   }
 
+  selectCalled = 0;
+  select(): void {
+    this.selectCalled += 1;
+  }
+
   fire(type: string, event: unknown = {}): void {
     this.listeners.get(type)?.forEach((fn) => fn(event));
   }
@@ -409,6 +414,25 @@ describe('AgentSidebar', () => {
     expect(emit).not.toHaveBeenCalled();
     expect(bridge.markDocumentDirty).not.toHaveBeenCalled();
     expect(find('hop-ai-status').textContent).toContain('적용된 편집이 없습니다');
+  });
+
+  it('selects all composer text on Cmd/Ctrl+A (macOS and Windows)', async () => {
+    build();
+    await flush();
+    const prompt = find('hop-ai-prompt');
+
+    let prevented = 0;
+    prompt.fire('keydown', { key: 'a', metaKey: true, preventDefault: () => (prevented += 1) });
+    expect(prompt.selectCalled).toBe(1);
+    expect(prevented).toBe(1);
+
+    // Windows: Ctrl+A.
+    prompt.fire('keydown', { key: 'a', ctrlKey: true, preventDefault: () => (prevented += 1) });
+    expect(prompt.selectCalled).toBe(2);
+
+    // Enter는 여전히 전송이고 전체선택을 트리거하지 않는다.
+    prompt.fire('keydown', { key: 'Enter', preventDefault: () => {} });
+    expect(prompt.selectCalled).toBe(2);
   });
 
   it('shows the on-page accept/reject bar AND keeps the in-bubble buttons available', async () => {
