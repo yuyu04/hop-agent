@@ -315,6 +315,26 @@ describe('applyActionScript', () => {
     ]);
   });
 
+  it('applies multiple INSERT_AFTER on the same paragraph in reverse so doc order matches input', () => {
+    const wasm = new FakeWasm();
+    // 입력 순서 A, B, C 를 같은 p[0]에 INSERT_AFTER. split→insert가 매번 p[1]에
+    // 끼우므로, 문서 정순(A,B,C)을 위해 역순(C,B,A)으로 적용해야 한다.
+    applyActionScript(
+      wasm,
+      script([
+        { command: 'INSERT_AFTER', target_id: 'sec[0].p[0]', payload: { text: 'A' } },
+        { command: 'INSERT_AFTER', target_id: 'sec[0].p[0]', payload: { text: 'B' } },
+        { command: 'INSERT_AFTER', target_id: 'sec[0].p[0]', payload: { text: 'C' } },
+      ]),
+    );
+    const inserts = wasm.calls.filter((c) => c.startsWith('insertText('));
+    expect(inserts).toEqual([
+      'insertText(0,1,0,"C")',
+      'insertText(0,1,0,"B")',
+      'insertText(0,1,0,"A")',
+    ]);
+  });
+
   it('skips non-paragraph target ids', () => {
     const wasm = new FakeWasm();
     const result = applyActionScript(

@@ -104,8 +104,8 @@ export function parseCellTarget(targetId: string): CellTarget | null {
 }
 
 type LocatedEdit =
-  | { kind: 'body'; edit: Edit; sec: number; para: number }
-  | { kind: 'cell'; edit: Edit; cell: CellTarget };
+  | { kind: 'body'; edit: Edit; sec: number; para: number; order: number }
+  | { kind: 'cell'; edit: Edit; cell: CellTarget; order: number };
 
 function locatedSec(item: LocatedEdit): number {
   return item.kind === 'body' ? item.sec : item.cell.sec;
@@ -124,7 +124,7 @@ export function applyActionScript(wasm: WasmEditing, script: ActionScript): Appl
   const located: LocatedEdit[] = [];
   const skipped: ApplySkip[] = [];
 
-  for (const edit of script.edits) {
+  script.edits.forEach((edit, order) => {
     // INSERT/REPLACE는 새 텍스트가 반드시 있어야 한다. text가 비면 적용 시 원문이
     // 빈 문단으로 지워지므로(조용한 내용 손실), 적용하지 않고 건너뛴다.
     // 표 생성(payload.type="table")은 text가 없어도 되므로 예외다.
@@ -134,7 +134,7 @@ export function applyActionScript(wasm: WasmEditing, script: ActionScript): Appl
         targetId: edit.target_id,
         reason: '새 텍스트(payload.text)가 비어 있어 건너뜀 — 모델이 본문을 채우지 못했습니다.',
       });
-      continue;
+      return;
     }
 
     const cell = parseCellTarget(edit.target_id);
@@ -145,10 +145,10 @@ export function applyActionScript(wasm: WasmEditing, script: ActionScript): Appl
           targetId: edit.target_id,
           reason: '표 셀 안에는 표를 만들 수 없습니다. 표 바깥 본문 문단에 INSERT 하세요.',
         });
-        continue;
+        return;
       }
-      located.push({ kind: 'cell', edit, cell });
-      continue;
+      located.push({ kind: 'cell', edit, cell, order });
+      return;
     }
 
     const target = parseParagraphTarget(edit.target_id);
@@ -157,14 +157,17 @@ export function applyActionScript(wasm: WasmEditing, script: ActionScript): Appl
         targetId: edit.target_id,
         reason: '문단/표 셀 대상이 아닙니다(글상자 등은 아직 미지원).',
       });
-      continue;
+      return;
     }
-    located.push({ kind: 'body', edit, sec: target.sec, para: target.para });
-  }
+    located.push({ kind: 'body', edit, sec: target.sec, para: target.para, order });
+  });
 
   // 문단 인덱스가 큰 것부터 적용해, 앞선 편집이 뒤 target의 인덱스를 어긋나게
-  // 만들지 않도록 한다. 셀은 본문 parentPara 기준으로 같이 정렬한다.
-  located.sort((a, b) => locatedSec(b) - locatedSec(a) || locatedPara(b) - locatedPara(a));
+  // 만들지 않도록 한다. 같은 문단에 여러 INSERT_AFTER가 있으면 입력 역순으로
+  // 적용해야 문서에 입력 순서대로(정순) 남는다(split→insert가 매번 앞에 끼우므로).
+  located.sort(
+    (a, b) => locatedSec(b) - locatedSec(a) || locatedPara(b) - locatedPara(a) || b.order - a.order,
+  );
 
   let applied = 0;
   for (const item of located) {
