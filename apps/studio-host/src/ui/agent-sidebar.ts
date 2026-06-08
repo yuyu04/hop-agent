@@ -24,6 +24,7 @@ import {
   applyActionScript,
   parseCellTarget,
   parseParagraphTarget,
+  type ApplyResult,
   type WasmEditing,
 } from '@/core/ai-apply';
 import { buildDiffModel, type DiffItem } from '@/core/ai-diff';
@@ -42,6 +43,12 @@ type AgentBridge = AiBridgeApi &
     /** 대량/구조 편집 후 줄·페이지 재배치를 강제한다(없으면 무시). */
     reflowLinesegs?(): number;
     markDocumentDirty?(): void;
+    // 낙관적 적용(승인 전 미리 반영) + 거절 시 복원용 스냅샷.
+    getSourceFormat?(): string;
+    exportHwp?(): Uint8Array;
+    exportHwpx?(): Uint8Array;
+    loadDocument?(data: Uint8Array, fileName?: string): unknown;
+    readonly fileName?: string;
   };
 
 interface CanvasViewLike {
@@ -173,9 +180,13 @@ export class AgentSidebar {
   private requestId: string | null = null;
   private context: DocumentContext | null = null;
   private pendingScript: ActionScript | null = null;
+  /** 낙관적 적용 전 문서 스냅샷(거절/롤백 시 복원). */
+  private snapshot: { bytes: Uint8Array; fileName: string } | null = null;
+  /** 낙관적 적용 결과(승인 메시지용). */
+  private applied: ApplyResult | null = null;
 
   constructor(private readonly deps: AgentSidebarDeps) {
-    this.session = new AiSessionMachine({ onRollback: () => this.clearPreview() });
+    this.session = new AiSessionMachine({ onRollback: () => this.revertToSnapshot() });
     const built = buildPanel();
     this.panel = built.panel;
     this.thread = built.thread;
@@ -524,11 +535,22 @@ export class AgentSidebar {
     if (!this.session.onReady()) return;
     this.pendingScript = script;
     this.renderDiff(script);
-    // 페이지 위 인라인 바가 승인/거절을 담당한다. 좌표를 못 잡아 0건이면
-    // 버블 내 버튼으로 폴백한다(사용자가 승인할 방법이 항상 있도록).
-    const placed = this.renderInlineDiff(script);
-    this.setPreviewEnabled(placed === 0);
-    this.setActiveStatus(`제안 ${script.edits.length}건 — 승인 또는 거부하세요.`);
+
+    // 스냅샷 가능(데스크톱)하면 승인 전 "미리 적용"해 문서에 바로 반영하고, 거절 시
+    // 스냅샷으로 되돌린다(Cursor/변경내용추적 방식). 불가하면 가상 미리보기로 폴백.
+    if (this.snapshotDocument()) {
+      const result = applyActionScript(this.deps.bridge, script);
+      this.reflowAndRender();
+      this.applied = result;
+      const placed = this.renderDecisionBar(script);
+      this.setPreviewEnabled(placed === 0);
+      const skippedNote = result.skipped.length ? `, 건너뜀 ${result.skipped.length}건` : '';
+      this.setActiveStatus(`미리 적용 ${result.applied}건${skippedNote} — 승인 또는 거절하세요.`);
+    } else {
+      const placed = this.renderInlineDiff(script);
+      this.setPreviewEnabled(placed === 0);
+      this.setActiveStatus(`제안 ${script.edits.length}건 — 승인 또는 거부하세요.`);
+    }
   }
 
   private onFailed(failed: AiEditFailed): void {
@@ -540,23 +562,31 @@ export class AgentSidebar {
   }
 
   private accept(): void {
+    const active = this.active;
+    if (this.snapshot) {
+      // 낙관적 적용 경로 — 이미 문서에 반영됨. 승인 = 그대로 두고 dirty 표시.
+      if (!this.session.accept()) return;
+      const result = this.applied;
+      this.snapshot = null;
+      this.applied = null;
+      this.clearPreview();
+      this.deps.bridge.markDocumentDirty?.();
+      const note = result && result.skipped.length ? `, 건너뜀 ${result.skipped.length}건` : '';
+      const count = result?.applied ?? 0;
+      this.setActiveStatus(`적용 완료: ${count}건${note}.`, 'ok', active);
+      return;
+    }
+
+    // 폴백(가상 미리보기) 경로 — 승인 시점에 적용.
     if (!this.pendingScript || !this.session.accept()) return;
     const result = applyActionScript(this.deps.bridge, this.pendingScript);
-    const active = this.active;
     this.clearPreview();
     if (result.applied === 0) {
       const reason = result.skipped[0]?.reason ?? '적용할 수 있는 편집이 없습니다.';
       this.setActiveStatus(`적용된 편집이 없습니다 — ${reason}`, 'warn', active);
       return;
     }
-    // 대량/구조 편집(문단·표 삽입 등) 후엔 줄·페이지 재배치를 강제해야 화면과
-    // 페이지 수가 새 내용에 맞게 갱신된다(WasmBridge: "caller가 별도로 reflow").
-    try {
-      this.deps.bridge.reflowLinesegs?.();
-    } catch {
-      /* reflow 실패는 무시 — 재렌더만으로도 대부분 반영된다. */
-    }
-    this.deps.eventBus.emit('document-changed', 'ai-edit');
+    this.reflowAndRender();
     this.deps.bridge.markDocumentDirty?.();
     const skippedNote = result.skipped.length ? `, 건너뜀 ${result.skipped.length}건` : '';
     this.setActiveStatus(`적용 완료: ${result.applied}건${skippedNote}.`, 'ok', active);
@@ -564,7 +594,8 @@ export class AgentSidebar {
 
   private reject(): void {
     const active = this.active;
-    if (this.session.reject()) this.setActiveStatus('제안을 거부했습니다.', 'info', active);
+    if (!this.session.reject()) return; // rollback 콜백이 스냅샷 복원/미리보기 정리를 한다.
+    this.setActiveStatus('제안을 거절하여 되돌렸습니다.', 'info', active);
   }
 
   // ── 대화 버블 ────────────────────────────────────────────────
@@ -944,6 +975,69 @@ export class AgentSidebar {
     } catch {
       return null;
     }
+  }
+
+  /** 낙관적 적용 직후, 변경 위치에 떠 있는 승인/거절 바만 띄운다(카드 없음). */
+  private renderDecisionBar(script: ActionScript): number {
+    const canvasView = this.deps.getCanvasView();
+    if (!canvasView) return 0;
+    const zoom = canvasView.getViewportManager().getZoom();
+    const edit = script.edits[0];
+    if (!edit) return 0;
+    const rect = this.targetRect(edit.target_id);
+    if (!rect) return 0;
+    const page = this.deps.bridge.getPageInfo(rect.pageIndex);
+    const pageTop = canvasView.getVirtualScroll().getPageOffset(rect.pageIndex);
+    const pageWidth = page.width * zoom;
+    const pageLeft = Math.max(0, (this.deps.scrollContent.clientWidth - pageWidth) / 2);
+    const top = pageTop + rect.y * zoom;
+    return showInlineDiff(
+      { scrollContent: this.deps.scrollContent, scrollContainer: this.deps.scrollContainer },
+      // before/after 없음 → 카드는 안 그리고 바만 띄운다.
+      [{ top, lineBottom: top, left: pageLeft + rect.x * zoom, maxWidth: pageWidth }],
+      { onAccept: () => this.accept(), onReject: () => this.reject() },
+    );
+  }
+
+  /** export/load를 지원하면 현재 문서를 스냅샷으로 잡는다. 반환: 스냅샷 성공 여부. */
+  private snapshotDocument(): boolean {
+    const b = this.deps.bridge;
+    if (!b.exportHwp || !b.loadDocument || !b.getSourceFormat) return false;
+    try {
+      const isHwpx = b.getSourceFormat() === 'hwpx';
+      const bytes = isHwpx && b.exportHwpx ? b.exportHwpx() : b.exportHwp();
+      this.snapshot = { bytes, fileName: b.fileName ?? 'document.hwp' };
+      return true;
+    } catch {
+      this.snapshot = null;
+      return false;
+    }
+  }
+
+  /** 스냅샷이 있으면 문서를 그 시점으로 되돌린다(거절/롤백). */
+  private revertToSnapshot(): void {
+    const b = this.deps.bridge;
+    if (this.snapshot && b.loadDocument) {
+      try {
+        b.loadDocument(this.snapshot.bytes, this.snapshot.fileName);
+        this.reflowAndRender();
+      } catch {
+        /* 복원 실패는 무시 — 최소한 미리보기 UI는 정리한다. */
+      }
+    }
+    this.snapshot = null;
+    this.applied = null;
+    this.clearPreview();
+  }
+
+  /** 줄·페이지 재배치 후 재렌더 트리거. */
+  private reflowAndRender(): void {
+    try {
+      this.deps.bridge.reflowLinesegs?.();
+    } catch {
+      /* reflow 실패는 무시 */
+    }
+    this.deps.eventBus.emit('document-changed', 'ai-edit');
   }
 
   private clearPreview(): void {

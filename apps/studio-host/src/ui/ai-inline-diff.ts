@@ -51,6 +51,15 @@ export function showInlineDiff(
   let minTop = Number.POSITIVE_INFINITY;
   let barLeft = 0;
   for (const entry of entries) {
+    // 위치만 있고 before/after가 없으면(이미 라이브 적용됨) 카드는 그리지 않고
+    // 떠 있는 바 위치 계산에만 쓴다.
+    if (entry.before === undefined && entry.after === undefined) {
+      if (entry.top < minTop) {
+        minTop = entry.top;
+        barLeft = entry.left;
+      }
+      continue;
+    }
     // 카드는 대상 줄 "아래"에 두어 원문을 가리지 않는다. 폭은 maxWidth로 제한.
     const card = document.createElement('div');
     card.setAttribute(ATTR, 'card');

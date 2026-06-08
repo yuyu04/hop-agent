@@ -482,6 +482,40 @@ describe('AgentSidebar', () => {
     vi.unstubAllGlobals();
   });
 
+  it('optimistically applies on ready and reverts via snapshot on reject', async () => {
+    // 스냅샷 가능한 브리지(export/load/getSourceFormat)를 단다.
+    const snapshotBytes = new Uint8Array([1, 2, 3]);
+    const exportHwp = vi.fn(() => snapshotBytes);
+    const loadDocument = vi.fn();
+    const extra = bridge as Record<string, unknown>;
+    extra.getSourceFormat = vi.fn(() => 'hwp');
+    extra.exportHwp = exportHwp;
+    extra.loadDocument = loadDocument;
+    extra.fileName = 'doc.hwp';
+
+    build(true);
+    await flush();
+    find('hop-ai-prompt').value = '바꿔줘';
+    find('hop-ai-provider').value = 'ollama';
+    find('hop-ai-send').click();
+    await flush();
+
+    captured!.onEditReady?.({
+      requestId: 'req-1',
+      actionScriptJson: JSON.stringify(REPLACE_SCRIPT),
+    });
+
+    // ready 시점에 이미 문서에 적용된다(승인 전 미리 반영).
+    expect(exportHwp).toHaveBeenCalled(); // 스냅샷 확보
+    expect(bridge.deleteText).toHaveBeenCalled();
+    expect(bridge.insertText).toHaveBeenCalled();
+    expect(find('hop-ai-status').textContent).toContain('미리 적용');
+
+    // 거절 → 스냅샷으로 복원(loadDocument 호출).
+    scrollContent.querySelector('.hop-ai-inline-reject')!.click();
+    expect(loadDocument).toHaveBeenCalledWith(snapshotBytes, 'doc.hwp');
+  });
+
   it('ignores ready events for a different request id', async () => {
     build();
     await flush();
@@ -515,7 +549,7 @@ describe('AgentSidebar', () => {
     expect(bridge.insertText).not.toHaveBeenCalled();
     expect(find('hop-ai-diff').children.length).toBe(0);
     expect(find('hop-ai-accept').disabled).toBe(true);
-    expect(find('hop-ai-status').textContent).toBe('제안을 거부했습니다.');
+    expect(find('hop-ai-status').textContent).toContain('거절');
   });
 
   it('surfaces a Korean message when the request fails', async () => {
