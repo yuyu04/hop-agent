@@ -15,6 +15,7 @@ export interface WasmEditing {
   deleteText(sec: number, para: number, charOffset: number, count: number): string;
   splitParagraph(sec: number, para: number, charOffset: number): string;
   mergeParagraph(sec: number, para: number): string;
+  insertPageBreak(sec: number, para: number, charOffset: number): string;
   // 표 셀 편집(중첩 포함, 스펙 2장). pathJson은 `[{controlIndex,cellIndex,cellParaIndex}, …]`.
   getCellParagraphLengthByPath(sec: number, parentPara: number, pathJson: string): number;
   insertTextInCellByPath(
@@ -170,17 +171,21 @@ function applyOne(
   { edit, sec, para }: { edit: Edit; sec: number; para: number },
 ): void {
   const text = edit.payload.text ?? '';
+  const pageBreak = edit.payload.page_break === true;
   switch (edit.command) {
     case 'INSERT_AFTER': {
       const length = wasm.getParagraphLength(sec, para);
       wasm.splitParagraph(sec, para, length);
       wasm.insertText(sec, para + 1, 0, text);
+      // 새 문단을 새 페이지에서 시작(긴 새 내용/새 절 추가용).
+      if (pageBreak) wasm.insertPageBreak(sec, para + 1, 0);
       break;
     }
     case 'INSERT_BEFORE': {
       // 오프셋 0에서 분할하면 빈 문단이 para 위치에 생기고 원문은 para+1로 밀린다.
       wasm.splitParagraph(sec, para, 0);
       wasm.insertText(sec, para, 0, text);
+      if (pageBreak) wasm.insertPageBreak(sec, para, 0);
       break;
     }
     case 'REPLACE': {

@@ -38,6 +38,9 @@ pub struct EditPayload {
     pub style: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub table_data: Option<TableData>,
+    /// INSERT 시 참이면 새 페이지에서 시작(본문 문단에만 적용).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page_break: Option<bool>,
 }
 
 /// 단일 편집 항목.
@@ -97,6 +100,10 @@ pub fn action_script_schema() -> Value {
                                 "type": { "type": "string", "enum": ["paragraph", "table"] },
                                 "text": { "type": "string" },
                                 "style": { "type": "string" },
+                                "page_break": {
+                                    "type": "boolean",
+                                    "description": "참이면 삽입한 문단을 새 페이지에서 시작한다(INSERT에만 유효)."
+                                },
                                 "table_data": {
                                     "type": "object",
                                     "properties": {

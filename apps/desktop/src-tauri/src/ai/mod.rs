@@ -324,6 +324,10 @@ fn system_prompt() -> String {
      표 셀은 `sec[s].p[p].tbl[c].cell[k].p[i]` 형식의 ID로 제공됩니다. 표 안의 값을 \
      바꿀 때는 그 셀 ID로 REPLACE, 셀 안에 내용을 새로 추가할 때는 그 셀 ID로 \
      INSERT_BEFORE/INSERT_AFTER를 쓰세요. \
+     긴 새 내용(예: 사업계획서 본문, 새 절)을 추가할 때는 기존 표를 줄이지 말고, \
+     문서의 마지막 본문 문단 ID에 INSERT_AFTER로 문단을 여러 개 추가하세요. \
+     각 문단은 별도의 edit으로 INSERT_AFTER 하고, 새 페이지에서 시작해야 하면 \
+     payload.page_break를 true로 설정하세요. \
      설명 문장이나 Markdown 없이 JSON만 반환하세요."
         .to_string()
 }

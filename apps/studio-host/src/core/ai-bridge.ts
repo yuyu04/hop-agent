@@ -31,6 +31,8 @@ export interface EditPayload {
   type?: 'paragraph' | 'table';
   text?: string;
   style?: string;
+  /** INSERT 시 참이면 새 페이지에서 시작(본문 문단에만 적용). */
+  page_break?: boolean;
   table_data?: {
     rows: number;
     cols: number;

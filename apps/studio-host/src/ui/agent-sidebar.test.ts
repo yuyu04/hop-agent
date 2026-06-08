@@ -222,6 +222,7 @@ function createBridge() {
     deleteText: vi.fn(() => ''),
     splitParagraph: vi.fn(() => ''),
     mergeParagraph: vi.fn(() => ''),
+    insertPageBreak: vi.fn(() => ''),
     getCellParagraphLengthByPath: vi.fn(() => 0),
     insertTextInCellByPath: vi.fn(() => ''),
     deleteTextInCellByPath: vi.fn(() => ''),

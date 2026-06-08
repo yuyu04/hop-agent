@@ -26,6 +26,10 @@ class FakeWasm implements WasmEditing {
     this.calls.push(`mergeParagraph(${sec},${para})`);
     return '';
   }
+  insertPageBreak(sec: number, para: number, charOffset: number): string {
+    this.calls.push(`insertPageBreak(${sec},${para},${charOffset})`);
+    return '';
+  }
   getCellParagraphLengthByPath(s: number, pp: number, pathJson: string): number {
     this.calls.push(`getCellParagraphLengthByPath(${s},${pp},${pathJson})`);
     return this.lengths[`${s}.${pp}.${pathJson}`] ?? 0;
@@ -63,6 +67,27 @@ describe('applyActionScript', () => {
       'getParagraphLength(0,1)',
       'splitParagraph(0,1,5)',
       'insertText(0,2,0,"새 문단")',
+    ]);
+  });
+
+  it('INSERT_AFTER with page_break starts the new paragraph on a new page', () => {
+    const wasm = new FakeWasm();
+    wasm.lengths['0.4'] = 7;
+    applyActionScript(
+      wasm,
+      script([
+        {
+          command: 'INSERT_AFTER',
+          target_id: 'sec[0].p[4]',
+          payload: { text: '새 절', page_break: true },
+        },
+      ]),
+    );
+    expect(wasm.calls).toEqual([
+      'getParagraphLength(0,4)',
+      'splitParagraph(0,4,7)',
+      'insertText(0,5,0,"새 절")',
+      'insertPageBreak(0,5,0)',
     ]);
   });
 
