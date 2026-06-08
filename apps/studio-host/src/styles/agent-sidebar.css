@@ -86,6 +86,53 @@
   font-size: 20px;
 }
 
+/* 대화 탭 바 */
+.hop-ai-tabbar {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  padding: 6px 8px 0;
+  border-bottom: 1px solid #e0e3e8;
+}
+.hop-ai-tab {
+  flex: 0 0 auto;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  border: 1px solid #d0d4da;
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  background: #eef0f3;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+.hop-ai-tab-active {
+  background: #fff;
+  font-weight: 600;
+}
+
+/* 본문(스레드 + 컴포저). 빈 대화면 컴포저를 위로 올린다. */
+.hop-ai-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.hop-ai-threads {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.hop-ai-panel.hop-ai-empty .hop-ai-composer {
+  order: -1;
+}
+.hop-ai-panel.hop-ai-empty .hop-ai-threads {
+  order: 0;
+}
+
 /* 대화 스레드 */
 .hop-ai-thread {
   flex: 1;
@@ -128,16 +175,50 @@
   gap: 4px;
 }
 
-/* 옵션 패널 */
+/* 설정 모달(Agent 설정) */
+.hop-ai-modal {
+  position: absolute;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.28);
+}
+.hop-ai-modal-card {
+  width: 320px;
+  max-width: 90%;
+  background: #fff;
+  border-radius: 10px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+}
+.hop-ai-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid #e0e3e8;
+}
+.hop-ai-modal-title {
+  font-weight: 700;
+  font-size: 13px;
+}
+.hop-ai-modal-close {
+  border: none;
+  background: transparent;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  color: #555;
+}
+
+/* 옵션 항목들(모달 내부) */
 .hop-ai-settings {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin: 0 12px;
-  padding: 8px;
-  border: 1px solid #e0e3e8;
-  border-radius: 6px;
-  background: #eef0f3;
+  gap: 10px;
+  padding: 12px;
 }
 .hop-ai-key-row,
 .hop-ai-custom-row {

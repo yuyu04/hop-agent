@@ -148,9 +148,24 @@ interface ActiveTurn {
   statusEl: HTMLElement;
 }
 
+/** 대화 하나(탭 + 스레드). 새 대화를 만들어도 기존이 지워지지 않는다. */
+interface Conversation {
+  id: string;
+  tab: HTMLElement;
+  thread: HTMLElement;
+  hasMessages: boolean;
+}
+
 export class AgentSidebar {
   private readonly panel: HTMLElement;
-  private readonly thread: HTMLElement;
+  private readonly tabBar: HTMLElement;
+  private readonly threadsWrap: HTMLElement;
+  private readonly conversations: Conversation[] = [];
+  private activeConv!: Conversation;
+  /** 활성 대화의 스레드(기존 코드 호환용 getter). */
+  private get thread(): HTMLElement {
+    return this.activeConv.thread;
+  }
   private readonly promptInput: HTMLTextAreaElement;
   private readonly providerSelect: HTMLSelectElement;
   private readonly modelSelect: HTMLSelectElement;
@@ -162,6 +177,7 @@ export class AgentSidebar {
   private readonly imageInput: HTMLInputElement;
   private readonly docInput: HTMLInputElement;
   private readonly settingsPanel: HTMLElement;
+  private readonly settingsModal: HTMLElement;
   private readonly keyRow: HTMLElement;
   private readonly keyInput: HTMLInputElement;
   private readonly keyStatus: HTMLElement;
@@ -190,7 +206,8 @@ export class AgentSidebar {
     this.session = new AiSessionMachine({ onRollback: () => this.revertToSnapshot() });
     const built = buildPanel();
     this.panel = built.panel;
-    this.thread = built.thread;
+    this.tabBar = built.tabBar;
+    this.threadsWrap = built.threadsWrap;
     this.promptInput = built.promptInput;
     this.providerSelect = built.providerSelect;
     this.modelSelect = built.modelSelect;
@@ -202,6 +219,7 @@ export class AgentSidebar {
     this.imageInput = built.imageInput;
     this.docInput = built.docInput;
     this.settingsPanel = built.settingsPanel;
+    this.settingsModal = built.settingsModal;
     this.keyRow = built.keyRow;
     this.keyInput = built.keyInput;
     this.keyStatus = built.keyStatus;
@@ -217,6 +235,7 @@ export class AgentSidebar {
     built.toggleBtn.addEventListener('click', () => this.toggle());
     built.newChatBtn.addEventListener('click', () => this.newConversation());
     built.settingsBtn.addEventListener('click', () => this.toggleSettings());
+    built.settingsClose.addEventListener('click', () => this.toggleSettings(false));
     built.attachImageBtn.addEventListener('click', () => this.imageInput.click());
     built.attachDocBtn.addEventListener('click', () => this.docInput.click());
     this.imageInput.addEventListener('change', () => void this.onImagePicked());
@@ -244,12 +263,12 @@ export class AgentSidebar {
 
     document.body.appendChild(built.toggleBtn);
     document.body.appendChild(this.panel);
-    this.settingsPanel.classList.add('hop-ai-hidden');
     this.keyRow.classList.add('hop-ai-hidden');
     this.customRow.classList.add('hop-ai-hidden');
     this.setRequesting(false);
     this.populateModels(this.providerSelect.value);
     this.renderChips();
+    this.newConversation(); // 첫 대화 생성(빈 상태 → 컴포저 상단)
     void this.subscribe();
     void this.subscribeNativeDragDrop();
     void this.refreshKeyState();
@@ -390,16 +409,59 @@ export class AgentSidebar {
     return node != null && this.panel.contains(node);
   }
 
-  /** 새 대화 — 스레드 비우고 진행 중 미리보기를 정리한다. */
+  /** 새 대화(탭)를 만든다 — 기존 대화는 지우지 않고 탭으로 보존한다. */
   private newConversation(): void {
-    this.session.cancel();
-    this.clearPreview();
+    // 진행 중 미확정 편집은 정리(다른 대화로 넘어가므로).
+    if (this.active) {
+      this.session.cancel();
+      this.clearPreview();
+    }
     this.requestId = null;
     this.active = null;
-    this.thread.replaceChildren();
     this.attachments = [];
     this.renderChips();
     this.setStatus('');
+
+    const id = uid();
+    const thread = el('div', 'hop-ai-thread');
+    thread.classList.add('hop-ai-hidden');
+    this.threadsWrap.appendChild(thread);
+    const tab = el('button', 'hop-ai-tab') as HTMLButtonElement;
+    tab.textContent = '새 대화';
+    tab.addEventListener('click', () => this.switchConversation(id));
+    this.tabBar.appendChild(tab);
+
+    const conv: Conversation = { id, tab, thread, hasMessages: false };
+    this.conversations.push(conv);
+    this.switchConversation(id);
+  }
+
+  private switchConversation(id: string): void {
+    const conv = this.conversations.find((c) => c.id === id);
+    if (!conv) return;
+    this.activeConv = conv;
+    for (const c of this.conversations) {
+      c.thread.classList.toggle('hop-ai-hidden', c !== conv);
+      c.tab.classList.toggle('hop-ai-tab-active', c === conv);
+    }
+    this.updateComposerPosition();
+  }
+
+  /** 활성 대화에 메시지가 있는지로 탭 제목·컴포저 위치를 갱신한다. */
+  private markActiveHasMessages(firstUserText?: string): void {
+    if (!this.activeConv.hasMessages) {
+      this.activeConv.hasMessages = true;
+      if (firstUserText) {
+        this.activeConv.tab.textContent =
+          firstUserText.length > 12 ? `${firstUserText.slice(0, 12)}…` : firstUserText;
+      }
+    }
+    this.updateComposerPosition();
+  }
+
+  /** 빈 새 대화면 입력창을 상단에, 대화가 시작되면 하단에 둔다(Cursor식). */
+  private updateComposerPosition(): void {
+    this.panel.classList.toggle('hop-ai-empty', !this.activeConv.hasMessages);
   }
 
   private async send(): Promise<void> {
@@ -602,6 +664,8 @@ export class AgentSidebar {
   // ── 대화 버블 ────────────────────────────────────────────────
 
   private appendUserTurn(text: string, attachments: Attachment[]): void {
+    // 첫 메시지면 컴포저를 하단으로 내리고 탭 제목을 갱신한다.
+    this.markActiveHasMessages(text);
     const bubble = el('div', 'hop-ai-msg hop-ai-msg-user');
     const body = el('div', 'hop-ai-msg-text');
     body.textContent = text;
@@ -794,8 +858,8 @@ export class AgentSidebar {
   }
 
   private toggleSettings(open?: boolean): void {
-    const show = open ?? this.settingsPanel.classList.contains('hop-ai-hidden');
-    this.settingsPanel.classList.toggle('hop-ai-hidden', !show);
+    const show = open ?? this.settingsModal.classList.contains('hop-ai-hidden');
+    this.settingsModal.classList.toggle('hop-ai-hidden', !show);
   }
 
   private async onProviderChange(): Promise<void> {
@@ -1161,7 +1225,10 @@ interface PanelParts {
   closeBtn: HTMLButtonElement;
   newChatBtn: HTMLButtonElement;
   settingsBtn: HTMLButtonElement;
-  thread: HTMLElement;
+  settingsModal: HTMLElement;
+  settingsClose: HTMLButtonElement;
+  tabBar: HTMLElement;
+  threadsWrap: HTMLElement;
   promptInput: HTMLTextAreaElement;
   providerSelect: HTMLSelectElement;
   modelSelect: HTMLSelectElement;
@@ -1193,7 +1260,7 @@ function buildPanel(): PanelParts {
 
   const panel = el('aside', 'hop-ai-panel');
 
-  // 헤더
+  // 헤더: 제목 + 새 대화(+) + 설정(⚙) + 닫기(×)
   const header = el('div', 'hop-ai-header');
   const title = el('span', 'hop-ai-title');
   title.textContent = 'AI 편집';
@@ -1202,13 +1269,16 @@ function buildPanel(): PanelParts {
   newChatBtn.title = '새 대화';
   const settingsBtn = el('button', 'hop-ai-settings-btn') as HTMLButtonElement;
   settingsBtn.textContent = '⚙';
-  settingsBtn.title = '옵션 (API 키·엔드포인트·민감 문서)';
+  settingsBtn.title = 'Agent 설정 (API 키·엔드포인트·민감 문서)';
   const closeBtn = el('button', 'hop-ai-close') as HTMLButtonElement;
   closeBtn.textContent = '×';
   header.append(title, newChatBtn, settingsBtn, closeBtn);
 
-  // 대화 스레드
-  const thread = el('div', 'hop-ai-thread');
+  // 대화 탭 바(여러 대화를 보존하고 전환).
+  const tabBar = el('div', 'hop-ai-tabbar');
+
+  // 대화 스레드들을 담는 래퍼(대화마다 thread 하나, 활성만 표시).
+  const threadsWrap = el('div', 'hop-ai-threads');
 
   // 옵션 패널(⚙)
   const keyInput = inputEl('hop-ai-key', 'password', 'API 키');
@@ -1243,6 +1313,19 @@ function buildPanel(): PanelParts {
 
   const settingsPanel = el('div', 'hop-ai-settings');
   settingsPanel.append(customRow, keyRow, sensitiveRow);
+
+  // 설정 모달(별도 창처럼) — 'Agent 설정'에서 열린다. 기본 숨김.
+  const settingsModal = el('div', 'hop-ai-modal');
+  settingsModal.classList.add('hop-ai-hidden');
+  const settingsCard = el('div', 'hop-ai-modal-card');
+  const settingsHeader = el('div', 'hop-ai-modal-header');
+  const settingsTitle = el('span', 'hop-ai-modal-title');
+  settingsTitle.textContent = 'Agent 설정';
+  const settingsClose = el('button', 'hop-ai-modal-close') as HTMLButtonElement;
+  settingsClose.textContent = '×';
+  settingsHeader.append(settingsTitle, settingsClose);
+  settingsCard.append(settingsHeader, settingsPanel);
+  settingsModal.appendChild(settingsCard);
 
   // 컴포저(하단 입력)
   const chipsArea = el('div', 'hop-ai-chips');
@@ -1284,7 +1367,10 @@ function buildPanel(): PanelParts {
   const composer = el('div', 'hop-ai-composer');
   composer.append(chipsArea, promptInput, composerBar, statusArea, imageInput, docInput);
 
-  panel.append(header, thread, settingsPanel, composer);
+  // 컴포저는 본문 영역에 두고, 빈 대화면 상단/대화 시작 시 하단으로 CSS order로 이동.
+  const body = el('div', 'hop-ai-body');
+  body.append(threadsWrap, composer);
+  panel.append(header, tabBar, body, settingsModal);
 
   return {
     panel,
@@ -1292,7 +1378,10 @@ function buildPanel(): PanelParts {
     closeBtn,
     newChatBtn,
     settingsBtn,
-    thread,
+    settingsModal,
+    settingsClose,
+    tabBar,
+    threadsWrap,
     promptInput,
     providerSelect,
     modelSelect,

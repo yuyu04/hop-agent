@@ -281,7 +281,7 @@ describe('AgentSidebar', () => {
     expect(captured).not.toBeNull();
   });
 
-  it('accumulates a conversation thread and clears it on new chat', async () => {
+  it('keeps prior conversations as tabs on new chat (does not wipe)', async () => {
     build();
     await flush();
     find('hop-ai-prompt').value = '첫 지시';
@@ -292,11 +292,15 @@ describe('AgentSidebar', () => {
     // 유저 버블 + 어시스턴트 버블이 스레드에 쌓인다.
     expect(doc.body.querySelectorAll('.hop-ai-msg').length).toBe(2);
     expect(doc.body.querySelector('.hop-ai-msg-text')?.textContent).toBe('첫 지시');
-    // 전송 후 입력칸은 비워진다.
     expect(find('hop-ai-prompt').value).toBe('');
+    // 대화 시작 → 컴포저 하단(빈 상태 클래스 제거).
+    expect(doc.body.querySelector('.hop-ai-panel')?.classList.contains('hop-ai-empty')).toBe(false);
 
     find('hop-ai-newchat').click();
-    expect(doc.body.querySelectorAll('.hop-ai-msg').length).toBe(0);
+    // 기존 대화는 보존(메시지 DOM 유지) + 새 탭 추가 + 새 활성 스레드는 비어 있음.
+    expect(doc.body.querySelectorAll('.hop-ai-msg').length).toBe(2); // 안 지워짐
+    expect(doc.body.querySelectorAll('.hop-ai-tab').length).toBe(2); // 탭 2개
+    expect(doc.body.querySelector('.hop-ai-panel')?.classList.contains('hop-ai-empty')).toBe(true);
   });
 
   it('refuses to send when the prompt is empty', async () => {
@@ -615,16 +619,17 @@ describe('AgentSidebar', () => {
     expect(find('hop-ai-status').textContent).toContain('API 키를 먼저 저장하세요');
   });
 
-  it('opens the options panel only when the ⚙ button is pressed', async () => {
+  it('opens the Agent settings modal only when the ⚙ button is pressed', async () => {
     build();
     await flush();
-    expect(find('hop-ai-settings').classList.contains('hop-ai-hidden')).toBe(true);
+    expect(find('hop-ai-modal').classList.contains('hop-ai-hidden')).toBe(true);
 
     find('hop-ai-settings-btn').click();
-    expect(find('hop-ai-settings').classList.contains('hop-ai-hidden')).toBe(false);
+    expect(find('hop-ai-modal').classList.contains('hop-ai-hidden')).toBe(false);
 
-    find('hop-ai-settings-btn').click();
-    expect(find('hop-ai-settings').classList.contains('hop-ai-hidden')).toBe(true);
+    // 모달 닫기 버튼으로 닫힌다.
+    find('hop-ai-modal-close').click();
+    expect(find('hop-ai-modal').classList.contains('hop-ai-hidden')).toBe(true);
   });
 
   it('populates the model dropdown per provider and sends the selected model', async () => {
