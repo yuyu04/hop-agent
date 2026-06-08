@@ -412,6 +412,50 @@ mod tests {
         assert_eq!(fixed_again, fixed, "보정은 멱등이어야 한다");
     }
 
+    /// 검증용: 병합 표(직접비×3 세로 병합)를 buggy/fixed 채우기로 각각 만들어
+    /// /tmp 에 저장한다. `cargo test --lib -- --ignored verify_merge_fill_writes`
+    /// 로 실행 후 hwp_table_check.py로 확인한다.
+    #[test]
+    #[ignore]
+    fn verify_merge_fill_writes_tmp_files() {
+        use rhwp::DocumentCore;
+
+        let build = |fill_covered: bool| -> Vec<u8> {
+            let mut core = DocumentCore::new_empty();
+            core.create_blank_document_native().unwrap();
+            // 3행×2열, col0 을 3행 세로 병합.
+            let ret = core.create_table_native(0, 0, 0, 3, 2).unwrap();
+            // 반환 JSON에서 paraIdx 파싱 (controlIdx는 항상 0).
+            let pi: usize = ret
+                .split("\"paraIdx\":")
+                .nth(1)
+                .and_then(|s| s.split(|ch: char| !ch.is_ascii_digit()).next())
+                .and_then(|s| s.parse().ok())
+                .unwrap();
+            let mut put = |idx: usize, t: &str| {
+                core.insert_text_in_cell_native(0, pi, 0, idx, 0, 0, t).unwrap();
+            };
+            let cell = |r: usize, c: usize| r * 2 + c; // row-major, cols=2
+            put(cell(0, 0), "직접비"); // 대표 셀(0,0)
+            if fill_covered {
+                // 가려질 셀에도 같은 텍스트(버그 재현).
+                put(cell(1, 0), "직접비");
+                put(cell(2, 0), "직접비");
+            }
+            // 우측 칸은 정상 텍스트.
+            put(cell(0, 1), "a");
+            put(cell(1, 1), "b");
+            put(cell(2, 1), "c");
+            // 병합 (0,0)~(2,0).
+            core.merge_table_cells_native(0, pi, 0, 0, 0, 2, 0).unwrap();
+            let bytes = core.export_hwp_native().unwrap();
+            fix_table_headers(bytes)
+        };
+
+        std::fs::write("/tmp/hop_buggy.hwp", build(true)).unwrap();
+        std::fs::write("/tmp/hop_fixed.hwp", build(false)).unwrap();
+    }
+
     #[test]
     fn cfb_round_trip_patches_section_stream() {
         // FileHeader(비압축) + BodyText/Section0(결함 표)로 된 CFB를 만들어

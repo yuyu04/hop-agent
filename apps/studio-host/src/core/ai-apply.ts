@@ -311,6 +311,26 @@ function isTableEdit(edit: Edit): boolean {
   );
 }
 
+/**
+ * 병합 영역에 가려지는 셀(대표=좌상단 셀 제외)의 행 우선 인덱스 집합.
+ * 표 생성 시 이 셀들엔 텍스트를 넣지 않아 병합 후 텍스트 중복을 막는다.
+ */
+function coveredCellIndices(
+  merges: NonNullable<Edit['payload']['table_data']>['merges'],
+  cols: number,
+): Set<number> {
+  const covered = new Set<number>();
+  for (const m of merges ?? []) {
+    for (let r = m.start_row; r <= m.end_row; r += 1) {
+      for (let c = m.start_col; c <= m.end_col; c += 1) {
+        if (r === m.start_row && c === m.start_col) continue; // 대표 셀은 채운다
+        covered.add(r * cols + c);
+      }
+    }
+  }
+  return covered;
+}
+
 /** `sec[para]` 위치에 표를 만들고 matrix 텍스트로 셀을 채운다. */
 function createTableAt(wasm: WasmEditing, sec: number, para: number, edit: Edit): void {
   const data = edit.payload.table_data!;
@@ -319,11 +339,16 @@ function createTableAt(wasm: WasmEditing, sec: number, para: number, edit: Edit)
   const result = wasm.createTable(sec, para, 0, rows, cols);
   if (!result.ok) throw new Error('표 생성에 실패했습니다.');
   const matrix = data.matrix ?? [];
+  // 병합에 가려지는 셀(대표=좌상단 셀 제외)은 채우지 않는다. rhwp의 merge_cells는
+  // 가려진 셀의 비어있지 않은 문단을 대표 셀로 합치므로, 여기서 같은 텍스트를 넣으면
+  // 병합 후 대표 셀에 같은 줄이 rowSpan/colSpan 배수로 중복된다.
+  const covered = coveredCellIndices(data.merges ?? [], cols);
   for (let r = 0; r < rows; r += 1) {
     const rowCells = matrix[r] ?? [];
     for (let c = 0; c < cols; c += 1) {
       const value = rowCells[c] ?? '';
       if (!value) continue;
+      if (covered.has(r * cols + c)) continue;
       // 최상위 표이므로 flat API로 채운다 → 셀 reflow(줄바꿈·높이 증가)가 일어난다.
       // 셀은 행 우선(row-major) 인덱스.
       wasm.insertTextInCell(sec, result.paraIdx, result.controlIdx, r * cols + c, 0, 0, value);

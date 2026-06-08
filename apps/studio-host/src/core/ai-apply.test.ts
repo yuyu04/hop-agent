@@ -185,6 +185,41 @@ describe('applyActionScript', () => {
     expect(fillIdx).toBeLessThan(mergeIdx);
   });
 
+  it('does not fill cells covered by a merge (avoids duplicated text after merge)', () => {
+    const wasm = new FakeWasm();
+    wasm.lengths['0.4'] = 0;
+    // 세로 2칸 병합(0,0)~(1,0)에 같은 텍스트가 matrix에 들어와도 대표 셀만 채워야 한다.
+    applyActionScript(
+      wasm,
+      script([
+        {
+          command: 'INSERT_AFTER',
+          target_id: 'sec[0].p[4]',
+          payload: {
+            type: 'table',
+            table_data: {
+              rows: 2,
+              cols: 2,
+              matrix: [
+                ['인건비', 'x'],
+                ['인건비', 'y'],
+              ],
+              merges: [{ start_row: 0, start_col: 0, end_row: 1, end_col: 0 }],
+            },
+          },
+        },
+      ]),
+    );
+    const fills = wasm.calls.filter((c) => c.startsWith('insertTextInCell('));
+    // 대표 셀(0,0)=인덱스0 만 '인건비'. 가려진 셀(1,0)=인덱스2 는 채우지 않는다.
+    expect(fills).toContain('insertTextInCell(0,5,0,0,0,0,"인건비")');
+    expect(fills.filter((c) => c.includes('"인건비"'))).toHaveLength(1);
+    expect(fills.some((c) => c.startsWith('insertTextInCell(0,5,0,2,'))).toBe(false);
+    // 가려지지 않은 셀(0,1)=1, (1,1)=3 은 정상 채움.
+    expect(fills).toContain('insertTextInCell(0,5,0,1,0,0,"x")');
+    expect(fills).toContain('insertTextInCell(0,5,0,3,0,0,"y")');
+  });
+
   it('INSERT_BEFORE splits at offset 0 and fills the new paragraph', () => {
     const wasm = new FakeWasm();
     applyActionScript(
