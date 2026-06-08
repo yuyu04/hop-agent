@@ -161,6 +161,14 @@ fn run_cli(
             let _ = err.read_to_string(&mut stderr);
         }
         let detail = stderr.trim();
+        // 인증 미설정은 흔한 사용자 단계 — 원본 덤프 대신 명확한 안내로 바꾼다.
+        let lower = detail.to_lowercase();
+        if lower.contains("auth") || lower.contains("api_key") || lower.contains("login") {
+            return Err(ProviderError::Provider(format!(
+                "{program} CLI 로그인이 필요합니다. 터미널에서 `{program}`을 한 번 실행해 \
+                 로그인(또는 API 키 설정)을 마친 뒤 다시 시도하세요."
+            )));
+        }
         return Err(ProviderError::Provider(format!(
             "{} CLI 오류{}",
             program,
