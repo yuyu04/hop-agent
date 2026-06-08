@@ -206,30 +206,50 @@ pub fn ai_set_document_sensitivity(
     Ok(())
 }
 
-/// 첨부용 — 한글(HWP/HWPX)·워드(DOCX) 파일에서 평문 텍스트를 추출한다. 열린
+/// 첨부 텍스트 상한(자). 너무 큰 문서를 통째로 인라인하면 토큰 한도를 넘고
+/// 응답이 느려지므로 앞부분만 자른다.
+const MAX_ATTACH_CHARS: usize = 60_000;
+
+/// 첨부용 — PDF·한글(HWP/HWPX)·워드(DOCX) 파일에서 평문 텍스트를 추출한다. 열린
 /// 문서와 무관하게 임의 경로의 파일을 파싱하므로, 사용자가 끌어다 놓은 문서를
-/// 프롬프트 컨텍스트로 인라인할 수 있다. PDF는 추출 대신 문서 첨부로 보낸다.
+/// 프롬프트 컨텍스트로 인라인할 수 있다(모든 provider에서 동작).
+///
+/// 파싱은 CPU 부하가 크므로(특히 PDF) blocking 풀에서 실행해 UI/IPC를 막지 않는다.
 #[tauri::command]
-pub fn ai_extract_text(path: String) -> Result<String, String> {
-    let bytes = std::fs::read(&path).map_err(|e| format!("파일을 읽을 수 없습니다: {}", e))?;
+pub async fn ai_extract_text(path: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || extract_text_blocking(&path))
+        .await
+        .map_err(|e| format!("문서 분석 태스크 실패: {}", e))?
+}
+
+fn extract_text_blocking(path: &str) -> Result<String, String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("파일을 읽을 수 없습니다: {}", e))?;
     let lower = path.to_lowercase();
-    if lower.ends_with(".pdf") {
-        // PDF는 네이티브로 텍스트 추출 → 모든 provider에 인라인(경로/샌드박스 무관).
-        return pdf_extract::extract_text_from_mem(&bytes)
-            .map_err(|e| format!("PDF 텍스트 추출 실패: {}", e));
-    }
-    if lower.ends_with(".docx") {
-        return docx::extract_docx_text(&bytes);
-    }
-    if lower.ends_with(".hwp") || lower.ends_with(".hwpx") {
+    let text = if lower.ends_with(".pdf") {
+        pdf_extract::extract_text_from_mem(&bytes)
+            .map_err(|e| format!("PDF 텍스트 추출 실패: {}", e))?
+    } else if lower.ends_with(".docx") {
+        docx::extract_docx_text(&bytes)?
+    } else if lower.ends_with(".hwp") || lower.ends_with(".hwpx") {
         let core = crate::state::editable_core_from_bytes(
             &bytes,
             "문서 파싱 실패",
             "편집 가능 문서 변환 실패",
         )?;
-        return serialize::extract_all_text(&core);
+        serialize::extract_all_text(&core)?
+    } else {
+        return Err("PDF/HWP/HWPX/DOCX 파일만 텍스트 추출을 지원합니다.".to_string());
+    };
+    Ok(truncate_chars(text, MAX_ATTACH_CHARS))
+}
+
+/// 앞 `max`자만 남기고 잘라낸 뒤 안내 꼬리표를 붙인다.
+fn truncate_chars(text: String, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text;
     }
-    Err("PDF/HWP/HWPX/DOCX 파일만 텍스트 추출을 지원합니다.".to_string())
+    let head: String = text.chars().take(max).collect();
+    format!("{}\n\n…(문서가 길어 앞부분만 첨부됨)", head)
 }
 
 async fn run_edit_request(

@@ -346,6 +346,8 @@ export class AgentSidebar {
           });
         } else if (/\.(pdf|hwp|hwpx|docx)$/i.test(name)) {
           // PDF·한글·워드는 네이티브로 평문 추출 → 모든 provider에 인라인(경로/샌드박스 무관).
+          // 큰 PDF는 수 초 걸릴 수 있어 진행 상태를 표시한다.
+          this.setStatus(`📄 "${name}" 분석 중… (잠시 걸릴 수 있어요)`);
           const text = await this.deps.bridge.aiExtractText(path);
           this.attachments.push({ id: uid(), kind: 'doc', name, text });
         } else if (/\.(txt|md|markdown|csv|json|html?|xml)$/i.test(name)) {
