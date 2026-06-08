@@ -39,6 +39,8 @@ type AgentBridge = AiBridgeApi &
     getPageInfo(pageIndex: number): PageInfo;
     /** 현재 캐럿 위치 — Sliding Window 기준(스펙 4장). 없으면 문서 앞쪽 기준. */
     getCaretPosition?(): { sectionIndex: number; paragraphIndex: number } | null;
+    /** 대량/구조 편집 후 줄·페이지 재배치를 강제한다(없으면 무시). */
+    reflowLinesegs?(): number;
     markDocumentDirty?(): void;
   };
 
@@ -546,6 +548,13 @@ export class AgentSidebar {
       const reason = result.skipped[0]?.reason ?? '적용할 수 있는 편집이 없습니다.';
       this.setActiveStatus(`적용된 편집이 없습니다 — ${reason}`, 'warn', active);
       return;
+    }
+    // 대량/구조 편집(문단·표 삽입 등) 후엔 줄·페이지 재배치를 강제해야 화면과
+    // 페이지 수가 새 내용에 맞게 갱신된다(WasmBridge: "caller가 별도로 reflow").
+    try {
+      this.deps.bridge.reflowLinesegs?.();
+    } catch {
+      /* reflow 실패는 무시 — 재렌더만으로도 대부분 반영된다. */
     }
     this.deps.eventBus.emit('document-changed', 'ai-edit');
     this.deps.bridge.markDocumentDirty?.();
