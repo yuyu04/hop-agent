@@ -27,7 +27,9 @@ export function buildDiffModel(script: ActionScript, context: DocumentContext): 
 
   return script.edits.map((edit) => {
     const original = textOf(byId.get(edit.target_id));
-    const inserted = edit.payload.text;
+    // 표 생성은 텍스트가 없으므로 "[표 R×C]"로 표시한다.
+    const table = edit.payload.type === 'table' ? edit.payload.table_data : undefined;
+    const inserted = table ? `[표 ${table.rows}×${table.cols}]` : edit.payload.text;
     switch (edit.command) {
       case 'DELETE':
         return { command: edit.command, targetId: edit.target_id, beforeText: original };

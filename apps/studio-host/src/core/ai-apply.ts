@@ -16,6 +16,14 @@ export interface WasmEditing {
   splitParagraph(sec: number, para: number, charOffset: number): string;
   mergeParagraph(sec: number, para: number): string;
   insertPageBreak(sec: number, para: number, charOffset: number): string;
+  /** 표를 생성한다. 생성된 표가 놓인 문단/컨트롤 인덱스를 반환한다. */
+  createTable(
+    sec: number,
+    para: number,
+    charOffset: number,
+    rows: number,
+    cols: number,
+  ): { ok: boolean; paraIdx: number; controlIdx: number };
   // 표 셀 편집(중첩 포함, 스펙 2장). pathJson은 `[{controlIndex,cellIndex,cellParaIndex}, …]`.
   getCellParagraphLengthByPath(sec: number, parentPara: number, pathJson: string): number;
   insertTextInCellByPath(
@@ -119,7 +127,8 @@ export function applyActionScript(wasm: WasmEditing, script: ActionScript): Appl
   for (const edit of script.edits) {
     // INSERT/REPLACE는 새 텍스트가 반드시 있어야 한다. text가 비면 적용 시 원문이
     // 빈 문단으로 지워지므로(조용한 내용 손실), 적용하지 않고 건너뛴다.
-    const needsText = edit.command !== 'DELETE';
+    // 표 생성(payload.type="table")은 text가 없어도 되므로 예외다.
+    const needsText = edit.command !== 'DELETE' && !isTableEdit(edit);
     if (needsText && (edit.payload.text ?? '') === '') {
       skipped.push({
         targetId: edit.target_id,
@@ -176,7 +185,11 @@ function applyOne(
     case 'INSERT_AFTER': {
       const length = wasm.getParagraphLength(sec, para);
       wasm.splitParagraph(sec, para, length);
-      wasm.insertText(sec, para + 1, 0, text);
+      if (isTableEdit(edit)) {
+        createTableAt(wasm, sec, para + 1, edit);
+      } else {
+        wasm.insertText(sec, para + 1, 0, text);
+      }
       // 새 문단을 새 페이지에서 시작(긴 새 내용/새 절 추가용).
       if (pageBreak) wasm.insertPageBreak(sec, para + 1, 0);
       break;
@@ -184,7 +197,11 @@ function applyOne(
     case 'INSERT_BEFORE': {
       // 오프셋 0에서 분할하면 빈 문단이 para 위치에 생기고 원문은 para+1로 밀린다.
       wasm.splitParagraph(sec, para, 0);
-      wasm.insertText(sec, para, 0, text);
+      if (isTableEdit(edit)) {
+        createTableAt(wasm, sec, para, edit);
+      } else {
+        wasm.insertText(sec, para, 0, text);
+      }
       if (pageBreak) wasm.insertPageBreak(sec, para, 0);
       break;
     }
@@ -210,6 +227,39 @@ function applyOne(
  * 셀의 문단 구조는 건드리지 않고 텍스트만 교체한다 — 표 행/열 구조 변경(문단
  * 삽입·삭제)은 호출 측에서 INSERT를 미리 건너뛰므로 여기 들어오지 않는다.
  */
+/** INSERT로 표를 생성하는 편집인지(payload.type="table" + table_data). */
+function isTableEdit(edit: Edit): boolean {
+  return (
+    (edit.command === 'INSERT_AFTER' || edit.command === 'INSERT_BEFORE') &&
+    edit.payload.type === 'table' &&
+    !!edit.payload.table_data &&
+    edit.payload.table_data.rows > 0 &&
+    edit.payload.table_data.cols > 0
+  );
+}
+
+/** `sec[para]` 위치에 표를 만들고 matrix 텍스트로 셀을 채운다. */
+function createTableAt(wasm: WasmEditing, sec: number, para: number, edit: Edit): void {
+  const data = edit.payload.table_data!;
+  const rows = data.rows;
+  const cols = data.cols;
+  const result = wasm.createTable(sec, para, 0, rows, cols);
+  if (!result.ok) throw new Error('표 생성에 실패했습니다.');
+  const matrix = data.matrix ?? [];
+  for (let r = 0; r < rows; r += 1) {
+    const rowCells = matrix[r] ?? [];
+    for (let c = 0; c < cols; c += 1) {
+      const value = rowCells[c] ?? '';
+      if (!value) continue;
+      // 생성된 표의 셀은 by-path(단일 단계)로 채운다. 셀은 행 우선(row-major).
+      const path = JSON.stringify([
+        { controlIndex: result.controlIdx, cellIndex: r * cols + c, cellParaIndex: 0 },
+      ]);
+      wasm.insertTextInCellByPath(sec, result.paraIdx, path, 0, value);
+    }
+  }
+}
+
 function applyOneCell(wasm: WasmEditing, edit: Edit, c: CellTarget): void {
   const text = edit.payload.text ?? '';
   const pathJson = JSON.stringify(c.path);

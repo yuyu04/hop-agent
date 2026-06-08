@@ -30,6 +30,10 @@ class FakeWasm implements WasmEditing {
     this.calls.push(`insertPageBreak(${sec},${para},${charOffset})`);
     return '';
   }
+  createTable(sec: number, para: number, charOffset: number, rows: number, cols: number) {
+    this.calls.push(`createTable(${sec},${para},${charOffset},${rows},${cols})`);
+    return { ok: true, paraIdx: para, controlIdx: 0 };
+  }
   getCellParagraphLengthByPath(s: number, pp: number, pathJson: string): number {
     this.calls.push(`getCellParagraphLengthByPath(${s},${pp},${pathJson})`);
     return this.lengths[`${s}.${pp}.${pathJson}`] ?? 0;
@@ -88,6 +92,34 @@ describe('applyActionScript', () => {
       'splitParagraph(0,4,7)',
       'insertText(0,5,0,"새 절")',
       'insertPageBreak(0,5,0)',
+    ]);
+  });
+
+  it('INSERT_AFTER with a table payload creates and fills a table', () => {
+    const wasm = new FakeWasm();
+    wasm.lengths['0.4'] = 2;
+    const result = applyActionScript(
+      wasm,
+      script([
+        {
+          command: 'INSERT_AFTER',
+          target_id: 'sec[0].p[4]',
+          payload: {
+            type: 'table',
+            table_data: { rows: 2, cols: 2, matrix: [['구분', '금액'], ['총액', '10억']] },
+          },
+        },
+      ]),
+    );
+    expect(result.applied).toBe(1);
+    expect(wasm.calls).toEqual([
+      'getParagraphLength(0,4)',
+      'splitParagraph(0,4,2)',
+      'createTable(0,5,0,2,2)',
+      `insertTextInCellByPath(0,5,[{"controlIndex":0,"cellIndex":0,"cellParaIndex":0}],0,"구분")`,
+      `insertTextInCellByPath(0,5,[{"controlIndex":0,"cellIndex":1,"cellParaIndex":0}],0,"금액")`,
+      `insertTextInCellByPath(0,5,[{"controlIndex":0,"cellIndex":2,"cellParaIndex":0}],0,"총액")`,
+      `insertTextInCellByPath(0,5,[{"controlIndex":0,"cellIndex":3,"cellParaIndex":0}],0,"10억")`,
     ]);
   });
 
