@@ -17,10 +17,8 @@ export interface InlineDiffEntry {
   maxWidth: number;
   /** REPLACE/DELETE에서 사라지는 원문(빨강 카드). */
   before?: string;
-  /** INSERT/REPLACE로 들어오는 텍스트(초록 카드 — 가상 미리보기 모드). */
+  /** INSERT/REPLACE로 들어오는 텍스트(초록 카드 — 가상 미리보기 폴백 모드). */
   after?: string;
-  /** 낙관적 적용 모드: 새로 추가/바뀐 영역에 초록 반투명 박스를 덮는다. */
-  highlight?: boolean;
 }
 
 export interface InlineDiffCallbacks {
@@ -58,21 +56,7 @@ export function showInlineDiff(
       barLeft = entry.left;
     }
 
-    // 낙관적 적용 모드: 새로 추가/바뀐 영역에 초록 반투명 박스를 덮는다.
-    if (entry.highlight) {
-      const box = document.createElement('div');
-      box.setAttribute(ATTR, 'highlight');
-      box.className = 'hop-ai-inline-highlight';
-      box.style.position = 'absolute';
-      box.style.left = `${entry.left}px`;
-      box.style.top = `${entry.top}px`;
-      box.style.width = `${Math.max(40, entry.maxWidth)}px`;
-      box.style.height = `${Math.max(8, entry.lineBottom - entry.top)}px`;
-      box.style.pointerEvents = 'none';
-      deps.scrollContent.appendChild(box);
-    }
-
-    // 위치/하이라이트만 있고 before/after 카드가 없으면 카드는 생략.
+    // 위치만 있고 before/after 카드가 없으면(새 내용은 이미 문서에 적용됨) 카드 생략.
     if (entry.before === undefined && entry.after === undefined) {
       continue;
     }

@@ -978,8 +978,9 @@ export class AgentSidebar {
   }
 
   /**
-   * 낙관적 적용 직후: 새로 추가/바뀐 영역에 초록 하이라이트, 사라진 기존 내용은
-   * 빨간 카드로 보여주고, 변경 위치에 승인/거절 바를 띄운다(Cursor식 녹/빨).
+   * 낙관적 적용 직후: 새 내용은 이미 문서에 반영(=초록 역할). 여기서는 사라진 기존
+   * 내용만 빨간 카드로 보여주고, 변경 위치에 승인/거절 바를 띄운다. 적용 후 좌표는
+   * 어긋날 수 있으므로 위치는 대략치(바·카드 띄움 + 스크롤용)로만 쓴다.
    */
   private renderDecisionBar(script: ActionScript): number {
     const canvasView = this.deps.getCanvasView();
@@ -998,17 +999,14 @@ export class AgentSidebar {
       const pageLeft = Math.max(0, (this.deps.scrollContent.clientWidth - pageWidth) / 2);
       const left = pageLeft + rect.x * zoom;
       const top = pageTop + rect.y * zoom;
-      const lineBottom = pageTop + (rect.y + rect.height) * zoom;
-      // REPLACE/DELETE는 사라진 기존 내용을 빨간 카드로(이미 문서에선 제거됨).
+      // 사라진 기존 내용(REPLACE/DELETE)만 빨간 카드로. 새 내용은 이미 문서에 보인다.
       const removed = edit.command === 'REPLACE' || edit.command === 'DELETE';
       entries.push({
         top,
-        lineBottom,
+        lineBottom: pageTop + (rect.y + rect.height) * zoom,
         left,
         maxWidth: Math.max(120, pageLeft + pageWidth - left - 4),
         before: removed ? before.get(edit.target_id) : undefined,
-        // DELETE는 새 내용이 없으므로 초록 하이라이트 생략.
-        highlight: edit.command !== 'DELETE',
       });
     }
     if (!entries.length) return 0;
