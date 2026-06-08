@@ -399,6 +399,13 @@
   word-break: break-word;
   font-size: 12px;
 }
+.hop-ai-inline-changebar {
+  z-index: 899;
+  width: 4px;
+  background: #1a7f37;
+  border-radius: 2px;
+  box-shadow: 0 0 0 1px rgba(26, 127, 55, 0.25);
+}
 .hop-ai-inline-bar {
   z-index: 901;
   display: flex;

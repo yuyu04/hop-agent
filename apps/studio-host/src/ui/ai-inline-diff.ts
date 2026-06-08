@@ -19,6 +19,8 @@ export interface InlineDiffEntry {
   before?: string;
   /** INSERT/REPLACE로 들어오는 텍스트(초록 카드 — 가상 미리보기 폴백 모드). */
   after?: string;
+  /** 낙관적 적용 모드: 새/바뀐 줄 왼쪽 여백에 얇은 초록 변경 표시줄(텍스트 안 가림). */
+  changeBar?: boolean;
 }
 
 export interface InlineDiffCallbacks {
@@ -56,7 +58,20 @@ export function showInlineDiff(
       barLeft = entry.left;
     }
 
-    // 위치만 있고 before/after 카드가 없으면(새 내용은 이미 문서에 적용됨) 카드 생략.
+    // 새/바뀐 줄 왼쪽에 얇은 초록 변경 표시줄(여백에 위치 — 텍스트를 가리지 않음).
+    if (entry.changeBar) {
+      const bar = document.createElement('div');
+      bar.setAttribute(ATTR, 'changebar');
+      bar.className = 'hop-ai-inline-changebar';
+      bar.style.position = 'absolute';
+      bar.style.left = `${Math.max(0, entry.left - 8)}px`;
+      bar.style.top = `${entry.top}px`;
+      bar.style.height = `${Math.max(10, entry.lineBottom - entry.top)}px`;
+      bar.style.pointerEvents = 'none';
+      deps.scrollContent.appendChild(bar);
+    }
+
+    // 위치/표시줄만 있고 before/after 카드가 없으면 카드 생략.
     if (entry.before === undefined && entry.after === undefined) {
       continue;
     }

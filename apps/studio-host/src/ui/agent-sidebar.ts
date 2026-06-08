@@ -25,6 +25,7 @@ import {
   parseCellTarget,
   parseParagraphTarget,
   type ApplyResult,
+  type ChangedPara,
   type WasmEditing,
 } from '@/core/ai-apply';
 import { buildDiffModel, type DiffItem } from '@/core/ai-diff';
@@ -542,7 +543,7 @@ export class AgentSidebar {
       const result = applyActionScript(this.deps.bridge, script);
       this.reflowAndRender();
       this.applied = result;
-      const placed = this.renderDecisionBar(script);
+      const placed = this.renderDecisionBar(script, result.changed);
       this.setPreviewEnabled(placed === 0);
       const skippedNote = result.skipped.length ? `, 건너뜀 ${result.skipped.length}건` : '';
       this.setActiveStatus(`미리 적용 ${result.applied}건${skippedNote} — 승인 또는 거절하세요.`);
@@ -978,36 +979,47 @@ export class AgentSidebar {
   }
 
   /**
-   * 낙관적 적용 직후: 새 내용은 이미 문서에 반영(=초록 역할). 여기서는 사라진 기존
-   * 내용만 빨간 카드로 보여주고, 변경 위치에 승인/거절 바를 띄운다. 적용 후 좌표는
-   * 어긋날 수 있으므로 위치는 대략치(바·카드 띄움 + 스크롤용)로만 쓴다.
+   * 낙관적 적용 직후: 새/바뀐 본문 줄(정확한 최종 위치 changed[])에 초록 변경
+   * 표시줄, 사라진 기존 내용(REPLACE/DELETE)은 빨간 카드, 변경 위치에 승인/거절 바.
    */
-  private renderDecisionBar(script: ActionScript): number {
+  private renderDecisionBar(script: ActionScript, changed: ChangedPara[]): number {
     const canvasView = this.deps.getCanvasView();
     if (!canvasView) return 0;
     const zoom = canvasView.getViewportManager().getZoom();
-    const before = new Map<string, string>();
-    for (const node of this.context?.content ?? []) before.set(node.id, node.text);
+    const beforeById = new Map<string, string>();
+    for (const node of this.context?.content ?? []) beforeById.set(node.id, node.text);
 
-    const entries: InlineDiffEntry[] = [];
-    for (const edit of script.edits) {
-      const rect = this.targetRect(edit.target_id);
-      if (!rect) continue;
+    const toEntry = (rect: CursorRect, opts: Partial<InlineDiffEntry>): InlineDiffEntry => {
       const page = this.deps.bridge.getPageInfo(rect.pageIndex);
       const pageTop = canvasView.getVirtualScroll().getPageOffset(rect.pageIndex);
       const pageWidth = page.width * zoom;
       const pageLeft = Math.max(0, (this.deps.scrollContent.clientWidth - pageWidth) / 2);
       const left = pageLeft + rect.x * zoom;
-      const top = pageTop + rect.y * zoom;
-      // 사라진 기존 내용(REPLACE/DELETE)만 빨간 카드로. 새 내용은 이미 문서에 보인다.
-      const removed = edit.command === 'REPLACE' || edit.command === 'DELETE';
-      entries.push({
-        top,
+      return {
+        top: pageTop + rect.y * zoom,
         lineBottom: pageTop + (rect.y + rect.height) * zoom,
         left,
         maxWidth: Math.max(120, pageLeft + pageWidth - left - 4),
-        before: removed ? before.get(edit.target_id) : undefined,
-      });
+        ...opts,
+      };
+    };
+
+    const entries: InlineDiffEntry[] = [];
+    // 초록 변경 표시줄 — 새/바뀐 본문 문단의 정확한 최종 위치.
+    for (const { sec, para } of changed) {
+      try {
+        entries.push(toEntry(this.deps.bridge.getCursorRect(sec, para, 0), { changeBar: true }));
+      } catch {
+        /* 좌표 실패는 무시 */
+      }
+    }
+    // 빨간 카드 — 사라진 기존 내용(REPLACE/DELETE).
+    for (const edit of script.edits) {
+      if (edit.command !== 'REPLACE' && edit.command !== 'DELETE') continue;
+      const old = beforeById.get(edit.target_id);
+      if (old === undefined) continue;
+      const rect = this.targetRect(edit.target_id);
+      if (rect) entries.push(toEntry(rect, { before: old }));
     }
     if (!entries.length) return 0;
     return showInlineDiff(

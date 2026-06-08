@@ -511,6 +511,9 @@ describe('AgentSidebar', () => {
     expect(bridge.insertText).toHaveBeenCalled();
     expect(find('hop-ai-status').textContent).toContain('미리 적용');
 
+    // 새/바뀐 줄에 초록 변경 표시줄이 그려진다.
+    expect(scrollContent.querySelector('.hop-ai-inline-changebar')).not.toBeNull();
+
     // 거절 → 스냅샷으로 복원(loadDocument 호출).
     scrollContent.querySelector('.hop-ai-inline-reject')!.click();
     expect(loadDocument).toHaveBeenCalledWith(snapshotBytes, 'doc.hwp');

@@ -53,9 +53,17 @@ export interface ApplySkip {
   reason: string;
 }
 
+/** 적용 후 새로/바뀐 본문 문단의 최종 위치(녹색 변경 표시용). */
+export interface ChangedPara {
+  sec: number;
+  para: number;
+}
+
 export interface ApplyResult {
   applied: number;
   skipped: ApplySkip[];
+  /** 새로 추가·교체된 본문 문단의 최종 인덱스(셀/표 내부는 제외). */
+  changed: ChangedPara[];
 }
 
 const TARGET_PATTERN = /^sec\[(\d+)\]\.p\[(\d+)\]$/;
@@ -169,6 +177,13 @@ export function applyActionScript(wasm: WasmEditing, script: ActionScript): Appl
     (a, b) => locatedSec(b) - locatedSec(a) || locatedPara(b) - locatedPara(a) || b.order - a.order,
   );
 
+  // 본문 INSERT/REPLACE의 최종 위치를 추적한다. 적용 순서(내림차순)에서 낮은
+  // 문단에 삽입이 일어나면 이미 기록된(더 높은) 위치를 +1 밀어 정합을 유지한다.
+  const changed: ChangedPara[] = [];
+  const shiftFrom = (sec: number, fromPara: number) => {
+    for (const c of changed) if (c.sec === sec && c.para >= fromPara) c.para += 1;
+  };
+
   let applied = 0;
   for (const item of located) {
     try {
@@ -176,6 +191,16 @@ export function applyActionScript(wasm: WasmEditing, script: ActionScript): Appl
         applyOneCell(wasm, item.edit, item.cell);
       } else {
         applyOne(wasm, item);
+        const { sec, para, edit } = item;
+        if (edit.command === 'INSERT_AFTER') {
+          shiftFrom(sec, para + 1);
+          changed.push({ sec, para: para + 1 });
+        } else if (edit.command === 'INSERT_BEFORE') {
+          shiftFrom(sec, para);
+          changed.push({ sec, para });
+        } else if (edit.command === 'REPLACE') {
+          changed.push({ sec, para });
+        }
       }
       applied += 1;
     } catch (error) {
@@ -183,7 +208,7 @@ export function applyActionScript(wasm: WasmEditing, script: ActionScript): Appl
     }
   }
 
-  return { applied, skipped };
+  return { applied, skipped, changed };
 }
 
 function applyOne(
