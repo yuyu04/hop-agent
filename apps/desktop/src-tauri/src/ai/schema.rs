@@ -63,9 +63,48 @@ pub struct ActionScript {
 /// provider가 네이티브 구조화 출력을 쓰면 순수 JSON이 오지만, 방어적으로
 /// Markdown 코드펜스(```json ... ```)를 감싸 보낸 경우도 벗겨낸다.
 pub fn parse_action_script(raw: &str) -> Result<ActionScript, String> {
-    let cleaned = strip_code_fences(raw);
-    serde_json::from_str::<ActionScript>(cleaned)
-        .map_err(|e| format!("Action Script JSON 파싱 실패: {}", e))
+    let cleaned = strip_code_fences(raw).trim();
+    if cleaned.is_empty() {
+        return Err(
+            "빈 응답을 받았습니다 — 모델이 출력을 내지 않았습니다(다른 모델/Provider로 시도하세요)."
+                .to_string(),
+        );
+    }
+    // 1차: 정리된 전체를 그대로 파싱.
+    if let Ok(script) = serde_json::from_str::<ActionScript>(cleaned) {
+        return Ok(script);
+    }
+    // 2차: 설명 문장에 둘러싸인 경우 가장 바깥 `{...}`만 떼어 파싱(특히 CLI 응답).
+    if let Some(braced) = extract_braced_object(cleaned) {
+        if let Ok(script) = serde_json::from_str::<ActionScript>(braced) {
+            return Ok(script);
+        }
+    }
+    Err(format!(
+        "Action Script JSON 파싱 실패. 받은 응답 일부: {}",
+        preview(cleaned, 200)
+    ))
+}
+
+/// 텍스트에서 첫 `{`부터 마지막 `}`까지(가장 바깥 객체 후보)를 잘라낸다.
+fn extract_braced_object(text: &str) -> Option<&str> {
+    let start = text.find('{')?;
+    let end = text.rfind('}')?;
+    if end > start {
+        Some(&text[start..=end])
+    } else {
+        None
+    }
+}
+
+/// 진단 메시지용 — 앞 `max_chars`자만, 길면 말줄임표.
+fn preview(text: &str, max_chars: usize) -> String {
+    let collected: String = text.chars().take(max_chars).collect();
+    if text.chars().count() > max_chars {
+        format!("{}…", collected)
+    } else {
+        collected
+    }
 }
 
 /// 화이트리스트에 없는 `target_id`(환각으로 간주) 목록을 반환한다. 빈 벡터면 통과.
@@ -179,6 +218,27 @@ mod tests {
     #[test]
     fn rejects_malformed_json() {
         assert!(parse_action_script("{not json").is_err());
+    }
+
+    #[test]
+    fn empty_response_gives_clear_message() {
+        let err = parse_action_script("   \n  ").unwrap_err();
+        assert!(err.contains("빈 응답"));
+    }
+
+    #[test]
+    fn extracts_json_object_wrapped_in_prose() {
+        // CLI 등이 설명 문장으로 감싼 경우에도 가장 바깥 객체를 떼어 파싱한다.
+        let raw = "물론이죠! 아래가 결과입니다:\n{\"edits\":[]}\n도움이 되었길 바랍니다.";
+        let script = parse_action_script(raw).unwrap();
+        assert!(script.edits.is_empty());
+    }
+
+    #[test]
+    fn parse_failure_includes_received_preview() {
+        let err = parse_action_script("죄송하지만 편집할 수 없습니다.").unwrap_err();
+        assert!(err.contains("받은 응답 일부"));
+        assert!(err.contains("죄송하지만"));
     }
 
     #[test]

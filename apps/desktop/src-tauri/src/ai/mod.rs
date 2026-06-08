@@ -274,11 +274,14 @@ fn emit_validated(
 
     let violations = schema::collect_violations(&script, whitelist);
     if violations.is_empty() {
+        // 원문(raw)은 설명 문장에 둘러싸였을 수 있으므로, 파싱된 스크립트를 다시
+        // 정규 JSON으로 직렬화해 보낸다. 프론트의 단순 JSON.parse가 항상 통과한다.
+        let canonical = serde_json::to_string(&script).unwrap_or_else(|_| raw.to_string());
         let _ = app.emit(
             "hop-ai-edit-ready",
             AiEditReady {
                 request_id: request_id.to_string(),
-                action_script_json: raw.to_string(),
+                action_script_json: canonical,
             },
         );
     } else {
