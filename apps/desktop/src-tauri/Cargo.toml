@@ -38,6 +38,8 @@ open = "5"
 svg2pdf = "0.13"
 usvg = "0.45"
 pdf-writer = "0.12"
+zip = { version = "8.5", default-features = false, features = ["deflate"] }
+quick-xml = "0.38"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSDocumentController"] }

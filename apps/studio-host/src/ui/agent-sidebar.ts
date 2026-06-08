@@ -291,8 +291,8 @@ export class AgentSidebar {
             mime: 'application/pdf',
             dataBase64: base64FromBytes(bytes),
           });
-        } else if (/\.(hwp|hwpx)$/i.test(name)) {
-          // 한글 문서는 네이티브 rhwp로 평문 추출 → 모든 provider에서 인라인 가능.
+        } else if (/\.(hwp|hwpx|docx)$/i.test(name)) {
+          // 한글(HWP/HWPX)·워드(DOCX)는 네이티브로 평문 추출 → 모든 provider 인라인.
           const text = await this.deps.bridge.aiExtractText(path);
           this.attachments.push({ id: uid(), kind: 'doc', name, text });
         } else if (/\.(txt|md|markdown|csv|json|html?|xml)$/i.test(name)) {
@@ -310,7 +310,7 @@ export class AgentSidebar {
     }
     if (ignored) {
       this.setStatus(
-        `지원하지 않는 형식이 있습니다(${ignored}개 무시). 이미지·PDF·HWP/HWPX·텍스트만 가능합니다.`,
+        `지원하지 않는 형식이 있습니다(${ignored}개 무시). 이미지·PDF·HWP/HWPX·DOCX·텍스트만 가능합니다.`,
         'warn',
       );
     } else {
@@ -550,6 +550,9 @@ export class AgentSidebar {
   private async addPickedDoc(file: File): Promise<void> {
     if (file.type === 'application/pdf' || /\.pdf$/i.test(file.name)) {
       await this.addBinaryFile(file, 'application/pdf');
+    } else if (/\.(hwp|hwpx|docx)$/i.test(file.name)) {
+      // 네이티브 텍스트 추출은 파일 경로가 필요하다 — 파일 선택엔 경로가 없다.
+      this.setStatus('HWP/HWPX/DOCX는 드래그&드롭으로 첨부하세요.', 'warn');
     } else {
       await this.addDocFile(file);
     }

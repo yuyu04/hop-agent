@@ -6,6 +6,7 @@
 //! `adapters`/`secrets` 모듈이 담당한다(스펙 5·6장).
 
 pub mod adapters;
+pub mod docx;
 pub mod provider;
 pub mod schema;
 pub mod secrets;
@@ -203,22 +204,25 @@ pub fn ai_set_document_sensitivity(
     Ok(())
 }
 
-/// 첨부용 — HWP/HWPX 파일에서 평문 텍스트를 추출한다(rhwp). 열린 문서와 무관하게
-/// 임의 경로의 파일을 파싱하므로, 사용자가 끌어다 놓은 한글 문서를 프롬프트
-/// 컨텍스트로 인라인할 수 있다. PDF·DOCX 등은 여기서 처리하지 않는다.
+/// 첨부용 — 한글(HWP/HWPX)·워드(DOCX) 파일에서 평문 텍스트를 추출한다. 열린
+/// 문서와 무관하게 임의 경로의 파일을 파싱하므로, 사용자가 끌어다 놓은 문서를
+/// 프롬프트 컨텍스트로 인라인할 수 있다. PDF는 추출 대신 문서 첨부로 보낸다.
 #[tauri::command]
 pub fn ai_extract_text(path: String) -> Result<String, String> {
-    let lower = path.to_lowercase();
-    if !(lower.ends_with(".hwp") || lower.ends_with(".hwpx")) {
-        return Err("HWP/HWPX 파일만 텍스트 추출을 지원합니다.".to_string());
-    }
     let bytes = std::fs::read(&path).map_err(|e| format!("파일을 읽을 수 없습니다: {}", e))?;
-    let core = crate::state::editable_core_from_bytes(
-        &bytes,
-        "문서 파싱 실패",
-        "편집 가능 문서 변환 실패",
-    )?;
-    serialize::extract_all_text(&core)
+    let lower = path.to_lowercase();
+    if lower.ends_with(".docx") {
+        return docx::extract_docx_text(&bytes);
+    }
+    if lower.ends_with(".hwp") || lower.ends_with(".hwpx") {
+        let core = crate::state::editable_core_from_bytes(
+            &bytes,
+            "문서 파싱 실패",
+            "편집 가능 문서 변환 실패",
+        )?;
+        return serialize::extract_all_text(&core);
+    }
+    Err("HWP/HWPX/DOCX 파일만 텍스트 추출을 지원합니다.".to_string())
 }
 
 async fn run_edit_request(
