@@ -359,34 +359,41 @@ fn page_media_box(path: &str, page_number: usize) -> Option<(f64, f64, f64, f64)
 /// 그림(벡터/이미지)이 없으면 None.
 fn page_graphics_bbox(doc: &Document, page_id: lopdf::ObjectId, mw: f64, mh: f64) -> Option<(f64, f64, f64, f64)> {
     let content = doc.get_and_decode_page_content(page_id).ok()?;
-    bbox_from_operations(&content, mw, mh)
+    let elements = collect_graphic_elements(&content, mw, mh)?;
+    pick_figure_cluster(&elements, mw, mh)
 }
 
-/// 페이지 전체 면적 대비 배경/괘선으로 보이는 도형은 제외하고 그림 경계 상자를 구한다.
-fn bbox_from_operations(content: &Content, mw: f64, mh: f64) -> Option<(f64, f64, f64, f64)> {
+/// 그리기 요소 하나(경계 상자 + 곡선/이미지 여부). curved=true면 도형·일러스트(그림)
+/// 후보, false면 직선·사각형(표·텍스트 박스 등)일 가능성이 높다.
+#[derive(Clone, Copy)]
+struct GraphicEl {
+    bbox: BBox,
+    curved: bool,
+}
+
+/// 콘텐츠 스트림에서 '그리기' 요소(칠해진 경로·이미지)의 개별 경계 상자 목록을 모은다.
+/// 텍스트(BT…ET)는 제외하고, 배경(페이지 80%↑)·괘선(얇고 긴 선)은 걸러낸다.
+fn collect_graphic_elements(content: &Content, mw: f64, mh: f64) -> Option<Vec<GraphicEl>> {
     let page_area = (mw * mh).max(1.0);
     let mut ctm: Mat = IDENTITY;
     let mut stack: Vec<Mat> = Vec::new();
-    let mut path = BBox::default(); // 현재 구성 중인 경로의 device(user) 좌표 범위
-    let mut fig = BBox::default(); // 누적 그림 경계
+    let mut path = BBox::default();
+    let mut path_curved = false; // 현재 경로에 베지어 곡선(c/v/y)이 있었나
+    let mut elements: Vec<GraphicEl> = Vec::new();
     let mut in_text = false;
 
-    // 현재 경로를 칠할 때(또는 이미지) 호출 — 배경/괘선이면 건너뛴다.
-    let commit = |b: &BBox, fig: &mut BBox| {
+    let mut commit = |b: &BBox, curved: bool, elements: &mut Vec<GraphicEl>| {
         if !b.set {
             return;
         }
         let (bw, bh) = (b.w(), b.h());
-        // 페이지 대부분을 덮는 도형 = 배경 → 제외.
         if bw * bh > page_area * 0.8 {
-            return;
+            return; // 배경
         }
-        // 얇고 넓은(가로 괘선) / 얇고 긴(세로 괘선) 선 = 머리글·구분선 → 제외.
         if (bh < 3.0 && bw > mw * 0.6) || (bw < 3.0 && bh > mh * 0.6) {
-            return;
+            return; // 괘선·구분선
         }
-        fig.add(b.min_x, b.min_y);
-        fig.add(b.max_x, b.max_y);
+        elements.push(GraphicEl { bbox: *b, curved });
     };
 
     for op in &content.operations {
@@ -394,7 +401,7 @@ fn bbox_from_operations(content: &Content, mw: f64, mh: f64) -> Option<(f64, f64
         match op.operator.as_str() {
             "BT" => in_text = true,
             "ET" => in_text = false,
-            _ if in_text => {} // 텍스트 영역 내부 연산은 그림 경계에 넣지 않는다.
+            _ if in_text => {}
             "q" => stack.push(ctm),
             "Q" => {
                 if let Some(m) = stack.pop() {
@@ -413,17 +420,18 @@ fn bbox_from_operations(content: &Content, mw: f64, mh: f64) -> Option<(f64, f64
                 ctm = mat_mul(m, ctm);
             }
             "m" | "l" if operands.len() == 2 => {
-                let (x, y) = (num(&operands[0])?, num(&operands[1])?);
-                let (dx, dy) = xform(ctm, x, y);
+                let (dx, dy) = xform(ctm, num(&operands[0])?, num(&operands[1])?);
                 path.add(dx, dy);
             }
             "c" if operands.len() == 6 => {
+                path_curved = true;
                 for k in [(0, 1), (2, 3), (4, 5)] {
                     let (dx, dy) = xform(ctm, num(&operands[k.0])?, num(&operands[k.1])?);
                     path.add(dx, dy);
                 }
             }
             "v" | "y" if operands.len() == 4 => {
+                path_curved = true;
                 for k in [(0, 1), (2, 3)] {
                     let (dx, dy) = xform(ctm, num(&operands[k.0])?, num(&operands[k.1])?);
                     path.add(dx, dy);
@@ -441,31 +449,97 @@ fn bbox_from_operations(content: &Content, mw: f64, mh: f64) -> Option<(f64, f64
                     path.add(dx, dy);
                 }
             }
-            // 칠하기/긋기 → 현재 경로를 그림 경계에 반영하고 경로 리셋.
             "S" | "s" | "f" | "F" | "f*" | "B" | "B*" | "b" | "b*" => {
-                commit(&path, &mut fig);
+                commit(&path, path_curved, &mut elements);
                 path = BBox::default();
+                path_curved = false;
             }
-            // 경로만 끝내고 칠하지 않음(클립 등) → 반영 없이 리셋.
-            "n" => path = BBox::default(),
-            // 이미지/폼 XObject 배치 → 단위 사각형을 CTM으로 변환한 영역을 그림으로 간주.
+            "n" => {
+                path = BBox::default();
+                path_curved = false;
+            }
+            // 이미지/폼 XObject = 진짜 그림 → curved 취급(그림 후보).
             "Do" => {
                 let mut b = BBox::default();
                 for (px, py) in [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (1.0, 1.0)] {
                     let (dx, dy) = xform(ctm, px, py);
                     b.add(dx, dy);
                 }
-                commit(&b, &mut fig);
+                commit(&b, true, &mut elements);
             }
             _ => {}
         }
     }
 
-    if fig.set && fig.w() > 4.0 && fig.h() > 4.0 {
-        Some((fig.min_x, fig.min_y, fig.max_x, fig.max_y))
-    } else {
+    if elements.is_empty() {
         None
+    } else {
+        Some(elements)
     }
+}
+
+fn boxes_near(a: &BBox, b: &BBox, gap: f64) -> bool {
+    let x_near = a.min_x <= b.max_x + gap && b.min_x <= a.max_x + gap;
+    let y_near = a.min_y <= b.max_y + gap && b.min_y <= a.max_y + gap;
+    x_near && y_near
+}
+
+/// 그리기 요소들을 근접 클러스터로 묶고, '그림'으로 가장 그럴듯한(면적 최대) 클러스터의
+/// 경계 상자를 고른다. 작은 마크(글머리 기호 등)는 먼저 걸러 헤더 막대·본문 점이
+/// 그림과 한 덩어리로 합쳐지는 것을 막는다.
+fn pick_figure_cluster(elements: &[GraphicEl], mw: f64, mh: f64) -> Option<(f64, f64, f64, f64)> {
+    // 작은 마크 제거(글머리 기호·아이콘 점). 한 변이라도 12pt↑면 유지.
+    let min_dim = 12.0;
+    let items: Vec<GraphicEl> = elements
+        .iter()
+        .copied()
+        .filter(|e| e.bbox.w().max(e.bbox.h()) >= min_dim)
+        .collect();
+    if items.is_empty() {
+        return None;
+    }
+    // 근접 병합(연결 요소). 라벨 박스와 도형이 한 그림으로 묶이도록 gap은 넉넉히.
+    // 클러스터마다 경계 상자 + 곡선 요소 개수를 추적한다.
+    // 요소가 아주 많으면(복잡 표 등) 병합 비용을 피해 전체 합집합으로 폴백.
+    let gap = (mh * 0.06).clamp(24.0, 80.0);
+    let mut clusters: Vec<(BBox, u32)> = items
+        .iter()
+        .map(|e| (e.bbox, if e.curved { 1 } else { 0 }))
+        .collect();
+    if clusters.len() <= 1500 {
+        loop {
+            let mut merged_any = false;
+            'scan: for i in 0..clusters.len() {
+                for j in (i + 1)..clusters.len() {
+                    if boxes_near(&clusters[i].0, &clusters[j].0, gap) {
+                        let other = clusters[j];
+                        clusters[i].0.add(other.0.min_x, other.0.min_y);
+                        clusters[i].0.add(other.0.max_x, other.0.max_y);
+                        clusters[i].1 += other.1;
+                        clusters.remove(j);
+                        merged_any = true;
+                        break 'scan;
+                    }
+                }
+            }
+            if !merged_any {
+                break;
+            }
+        }
+    }
+    // '그림' 후보 = 곡선 요소가 여러 개(≥3)인 클러스터. 도형·일러스트·차트는 곡선이
+    // 많지만, 둥근 모서리 텍스트 박스(곡선 1개)나 표(직선만)는 제외된다 → 글이 그림으로
+    // 들어가는 것을 막는다.
+    let best = clusters
+        .iter()
+        .filter(|(b, curves)| *curves >= 3 && b.set && b.w() > 4.0 && b.h() > 4.0)
+        .max_by(|(a, _), (b, _)| (a.w() * a.h()).partial_cmp(&(b.w() * b.h())).unwrap())?
+        .0;
+    // 너무 작은(아이콘 수준) 클러스터면 그림 없음으로 본다.
+    if best.w() < mw * 0.15 || best.h() < mh * 0.06 {
+        return None;
+    }
+    Some((best.min_x, best.min_y, best.max_x, best.max_y))
 }
 
 /// 페이지를 렌더한 뒤 '그림' 영역만 잘라 반환한다(텍스트 제외). 그림이 없으면 None.
@@ -516,16 +590,39 @@ mod tests {
             Operation::new("BT", vec![]),
             Operation::new("m", vec![10.into(), 700.into()]),
             Operation::new("ET", vec![]),
-            // 작은 도형(그림): (100,100)~(250,300).
-            Operation::new("re", vec![100.into(), 100.into(), 150.into(), 200.into()]),
+            // 곡선 도형 3개(서로 가까움) = 그림 후보. 합쳐서 경계 (100,100)~(250,300).
+            Operation::new("m", vec![100.into(), 100.into()]),
+            Operation::new("c", vec![120.into(), 100.into(), 140.into(), 120.into(), 150.into(), 150.into()]),
+            Operation::new("f", vec![]),
+            Operation::new("m", vec![150.into(), 150.into()]),
+            Operation::new("c", vec![180.into(), 180.into(), 210.into(), 210.into(), 230.into(), 250.into()]),
+            Operation::new("f", vec![]),
+            Operation::new("m", vec![200.into(), 200.into()]),
+            Operation::new("c", vec![220.into(), 250.into(), 240.into(), 280.into(), 250.into(), 300.into()]),
             Operation::new("f", vec![]),
         ];
         let content = Content { operations: ops };
-        let bbox = bbox_from_operations(&content, 600.0, 800.0).unwrap();
+        let elements = collect_graphic_elements(&content, 600.0, 800.0).unwrap();
+        // 배경은 걸러지고 곡선 도형 3개만 남는다.
+        assert_eq!(elements.len(), 3);
+        assert!(elements.iter().all(|e| e.curved));
+        let bbox = pick_figure_cluster(&elements, 600.0, 800.0).unwrap();
         assert!((bbox.0 - 100.0).abs() < 1.0);
         assert!((bbox.1 - 100.0).abs() < 1.0);
         assert!((bbox.2 - 250.0).abs() < 1.0);
         assert!((bbox.3 - 300.0).abs() < 1.0);
+
+        // 곡선이 1개뿐인 클러스터(둥근 텍스트 박스 흉내)는 그림으로 보지 않는다.
+        let rounded_box = vec![GraphicEl {
+            bbox: {
+                let mut b = BBox::default();
+                b.add(50.0, 50.0);
+                b.add(550.0, 400.0);
+                b
+            },
+            curved: true,
+        }];
+        assert!(pick_figure_cluster(&rounded_box, 600.0, 800.0).is_none());
     }
 
     #[test]
