@@ -1603,15 +1603,69 @@ function mimeForImage(name: string): string {
 async function buildInsertImages(inputs: AiImageInput[]): Promise<ImageForInsert[]> {
   const out: ImageForInsert[] = [];
   for (const input of inputs) {
-    const dims = await imageDimensions(input.mimeType, input.dataBase64);
-    out.push({
-      bytes: bytesFromBase64(input.dataBase64),
-      extension: extensionFromMime(input.mimeType),
-      naturalWidthPx: dims.width,
-      naturalHeightPx: dims.height,
-    });
+    const normalized = await normalizeForInsert(input.mimeType, input.dataBase64);
+    if (normalized) out.push(normalized);
   }
   return out;
+}
+
+/**
+ * HWP가 임베드할 수 있는 포맷(png/jpg)으로 정규화한다. webp·gif·bmp 등은 캔버스로
+ * 디코드해 PNG로 재인코딩한다(HWP는 webp를 못 넣어 안 보이는 문제 해결). 원본 픽셀
+ * 크기도 함께 잰다.
+ */
+async function normalizeForInsert(mime: string, base64: string): Promise<ImageForInsert | null> {
+  const ext = extensionFromMime(mime);
+  // png/jpg는 그대로(재인코딩으로 인한 용량 증가 방지).
+  if (ext === 'png' || ext === 'jpg') {
+    const dims = await imageDimensions(mime, base64);
+    if (dims.width === 0 || dims.height === 0) return null;
+    return {
+      bytes: bytesFromBase64(base64),
+      extension: ext,
+      naturalWidthPx: dims.width,
+      naturalHeightPx: dims.height,
+    };
+  }
+  // 그 외(webp/gif/bmp 등) → 캔버스로 PNG 변환.
+  const png = await reencodeToPng(mime, base64);
+  return png;
+}
+
+/** data URL → 캔버스 → PNG 바이트. 캔버스를 못 쓰는 환경에선 null. */
+function reencodeToPng(mime: string, base64: string): Promise<ImageForInsert | null> {
+  return new Promise((resolve) => {
+    if (typeof Image === 'undefined' || typeof document === 'undefined') {
+      resolve(null);
+      return;
+    }
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          resolve(null);
+          return;
+        }
+        ctx.drawImage(img, 0, 0);
+        const dataUrl = canvas.toDataURL('image/png');
+        const b64 = dataUrl.split(',')[1] ?? '';
+        resolve({
+          bytes: bytesFromBase64(b64),
+          extension: 'png',
+          naturalWidthPx: img.naturalWidth,
+          naturalHeightPx: img.naturalHeight,
+        });
+      } catch {
+        resolve(null);
+      }
+    };
+    img.onerror = () => resolve(null);
+    img.src = `data:${mime};base64,${base64}`;
+  });
 }
 
 /** 프롬프트 텍스트에서 http(s) URL을 찾아 Rust로 다운로드(CORS 우회)해 이미지만 반환한다. */
