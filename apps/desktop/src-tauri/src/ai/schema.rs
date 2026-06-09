@@ -183,7 +183,11 @@ pub fn action_script_schema() -> Value {
                             "properties": {
                                 "type": { "type": "string", "enum": ["paragraph", "table", "image"] },
                                 "text": { "type": "string" },
-                                "style": { "type": "string" },
+                                "style": {
+                                    "type": "string",
+                                    "enum": ["title", "heading", "subheading", "body", "caption", "quote", "emphasis"],
+                                    "description": "문단의 의미 역할. 제목=title, 큰 제목=heading, 소제목=subheading, 본문=body, 그림/표 설명=caption, 인용=quote, 강조 한 줄=emphasis. 실제 글꼴 크기·정렬·간격은 앱이 일관되게 적용한다."
+                                },
                                 "image_index": {
                                     "type": "integer",
                                     "description": "type=\"image\"일 때 삽입할 첨부 이미지의 0-기준 인덱스(첨부된 순서)."

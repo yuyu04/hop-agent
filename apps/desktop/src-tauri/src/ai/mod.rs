@@ -496,6 +496,13 @@ fn system_prompt() -> String {
      문서가 표로만 차 있으면 가장 큰(마지막) `.tbl` 없는 `sec[s].p[p]`를 골라 그 뒤에 \
      INSERT_AFTER 하세요. 각 문단은 별도 edit으로 INSERT_AFTER 하고, 새 페이지에서 \
      시작해야 하면 payload.page_break를 true로 설정하세요. \
+     [디자인] 결과가 보기 좋도록 문단마다 역할(payload.style)을 지정하세요: 문서·절 제목은 \
+     title, 큰 제목은 heading, 소제목은 subheading, 일반 설명은 body, 그림/표 아래 설명은 \
+     caption, 인용문은 quote. 한 문장만 강조하려면 그 문장을 별도 문단으로 INSERT 하고 \
+     style=emphasis. 글꼴 크기·정렬·줄간격은 앱이 일관되게 입히므로, 당신은 역할만 정확히 \
+     고르면 됩니다(긴 글을 한 문단에 몰지 말고 제목/소제목/본문으로 구조화하세요). \
+     표의 머리글 행은 앱이 자동으로 굵게+연한 배경+가운데로 꾸미므로 머리글 칸에 별도 \
+     장식을 넣지 마세요. \
      표를 새로 만들려면 본문 문단 ID에 INSERT_AFTER 하고 payload.type=\"table\", \
      payload.table_data에 rows, cols, matrix(행×열 문자열 2차원 배열)를 채우세요. \
      원본/첨부 표를 옮길 때는 모든 열과 모든 값을 빠짐없이 포함하세요 — '증액가능여부', \

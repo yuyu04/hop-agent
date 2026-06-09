@@ -101,7 +101,7 @@ export interface WasmEditing {
     parentPara: number,
     controlIdx: number,
     cellIdx: number,
-    props: { width?: number },
+    props: { width?: number; fillType?: string; fillColor?: string; verticalAlign?: number },
   ): { ok: boolean };
   /** 셀 문단 서식 적용(정렬 등). propsJson 예: `{"alignment":"left"}`. */
   applyParaFormatInCell?(
@@ -110,6 +110,21 @@ export interface WasmEditing {
     controlIdx: number,
     cellIdx: number,
     cellParaIdx: number,
+    propsJson: string,
+  ): string;
+  /** 본문 문단의 글자 서식(굵게·크기·색 등)을 [start,end) 범위에 적용. propsJson은 CharProperties. */
+  applyCharFormat?(sec: number, para: number, startOffset: number, endOffset: number, propsJson: string): string;
+  /** 본문 문단의 문단 서식(정렬·줄간격·여백 등) 적용. propsJson은 ParaProperties. */
+  applyParaFormat?(sec: number, para: number, propsJson: string): string;
+  /** 셀 문단의 글자 서식을 [start,end) 범위에 적용(헤더 굵게 등). */
+  applyCharFormatInCell?(
+    sec: number,
+    parentPara: number,
+    controlIdx: number,
+    cellIdx: number,
+    cellParaIdx: number,
+    startOffset: number,
+    endOffset: number,
     propsJson: string,
   ): string;
   /** 표 속성(쪽 나눔 등). pageBreak: 0=없음, 1=셀 단위, 2=행 단위. */
@@ -310,6 +325,57 @@ export function applyActionScript(
   return { applied, skipped, changed };
 }
 
+/**
+ * 의미 기반(semantic) 문단 스타일 → 글자/문단 서식 매핑. AI는 payload.style에 역할만
+ * 지정하고(title/heading/…), 실제 폰트 크기·정렬·간격은 여기서 일관되게 적용한다.
+ * fontSize는 HWPUNIT(1pt=100). 색/크기는 과하지 않게 — 깔끔한 문서 톤.
+ */
+const PARA_STYLES: Record<string, { char?: Record<string, unknown>; para?: Record<string, unknown> }> = {
+  title: {
+    char: { bold: true, fontSize: 1800, textColor: '#1A1A1A' },
+    para: { alignment: 'center', spacingBefore: 4, spacingAfter: 10 },
+  },
+  heading: {
+    char: { bold: true, fontSize: 1400, textColor: '#1F3864' },
+    para: { spacingBefore: 12, spacingAfter: 4 },
+  },
+  subheading: {
+    char: { bold: true, fontSize: 1200, textColor: '#2F2F2F' },
+    para: { spacingBefore: 8, spacingAfter: 2 },
+  },
+  body: {
+    char: { fontSize: 1000 },
+    para: { alignment: 'justify', lineSpacingType: 'Percent', lineSpacing: 160 },
+  },
+  caption: {
+    char: { fontSize: 900, textColor: '#666666' },
+    para: { alignment: 'center', spacingBefore: 2, spacingAfter: 8 },
+  },
+  quote: {
+    char: { italic: true, textColor: '#444444' },
+    para: { marginLeft: 24, lineSpacingType: 'Percent', lineSpacing: 160 },
+  },
+  emphasis: { char: { bold: true } },
+};
+
+/** 삽입된 본문 문단(sec,para)의 [0,len)에 semantic 스타일을 적용한다. 미지정·미지원이면 무시. */
+function applyParaStyle(wasm: WasmEditing, sec: number, para: number, text: string, style?: string): void {
+  if (!style) return;
+  const spec = PARA_STYLES[style];
+  if (!spec) return;
+  const len = [...text].length;
+  try {
+    if (spec.char && len > 0 && wasm.applyCharFormat) {
+      wasm.applyCharFormat(sec, para, 0, len, JSON.stringify(spec.char));
+    }
+    if (spec.para && wasm.applyParaFormat) {
+      wasm.applyParaFormat(sec, para, JSON.stringify(spec.para));
+    }
+  } catch {
+    /* 서식 적용 실패는 무시 — 텍스트 내용은 이미 들어갔다. */
+  }
+}
+
 function applyOne(
   wasm: WasmEditing,
   { edit, sec, para }: { edit: Edit; sec: number; para: number },
@@ -327,6 +393,7 @@ function applyOne(
         insertImageAt(wasm, sec, para + 1, edit, images);
       } else {
         wasm.insertText(sec, para + 1, 0, text);
+        applyParaStyle(wasm, sec, para + 1, text, edit.payload.style);
       }
       // 새 문단을 새 페이지에서 시작(긴 새 내용/새 절 추가용).
       if (pageBreak) wasm.insertPageBreak(sec, para + 1, 0);
@@ -341,6 +408,7 @@ function applyOne(
         insertImageAt(wasm, sec, para, edit, images);
       } else {
         wasm.insertText(sec, para, 0, text);
+        applyParaStyle(wasm, sec, para, text, edit.payload.style);
       }
       if (pageBreak) wasm.insertPageBreak(sec, para, 0);
       break;
@@ -349,6 +417,7 @@ function applyOne(
       const length = wasm.getParagraphLength(sec, para);
       if (length > 0) wasm.deleteText(sec, para, 0, length);
       wasm.insertText(sec, para, 0, text);
+      applyParaStyle(wasm, sec, para, text, edit.payload.style);
       break;
     }
     case 'DELETE': {
@@ -487,8 +556,11 @@ function createTableAt(wasm: WasmEditing, sec: number, para: number, edit: Edit)
     data.col_weights && data.col_weights.length === cols
       ? data.col_weights
       : autoColWeights(matrix, cols);
-  styleTableCells(wasm, sec, result.paraIdx, result.controlIdx, weights, cols);
+  styleTableCells(wasm, sec, result.paraIdx, result.controlIdx, weights, cols, matrix);
 }
+
+/** 헤더 셀 배경색(연한 청회색) — 표를 깔끔하게 보이게 하는 기본 테마. */
+const HEADER_FILL = '#E8EEF6';
 
 /**
  * matrix 내용 길이로 열별 상대 폭을 자동 산정한다(AI가 col_weights를 안 줄 때).
@@ -523,6 +595,7 @@ function styleTableCells(
   ctrl: number,
   weights: number[] | undefined,
   cols: number,
+  matrix?: string[][],
 ): void {
   if (!wasm.getTableCellBboxes) return;
   let cells: Array<{ cellIdx: number; col: number; row: number; colSpan: number }>;
@@ -544,7 +617,30 @@ function styleTableCells(
     }
   }
 
-  // 2) 열 폭 가중치 — 표 전체 폭을 유지한 채 가중치 비율로 재분배(병합 셀은 덮는 열 합).
+  // 2) 헤더(0행) 테마: 연한 배경색 + 굵게 + 세로 가운데. 표를 깔끔하게 보이게 한다.
+  for (const c of cells) {
+    if (c.row !== 0) continue;
+    try {
+      wasm.setCellProperties?.(sec, para, ctrl, c.cellIdx, {
+        fillType: 'solid',
+        fillColor: HEADER_FILL,
+        verticalAlign: 1, // center
+      });
+    } catch {
+      /* 헤더 배경 실패는 무시 */
+    }
+    const headerText = matrix?.[0]?.[c.col] ?? '';
+    const len = [...headerText].length;
+    if (len > 0 && wasm.applyCharFormatInCell) {
+      try {
+        wasm.applyCharFormatInCell(sec, para, ctrl, c.cellIdx, 0, 0, len, JSON.stringify({ bold: true }));
+      } catch {
+        /* 헤더 굵게 실패는 무시 */
+      }
+    }
+  }
+
+  // 3) 열 폭 가중치 — 표 전체 폭을 유지한 채 가중치 비율로 재분배(병합 셀은 덮는 열 합).
   if (!weights || weights.length !== cols) return;
   const total = weights.reduce((a, b) => a + Math.max(0, b), 0);
   if (total <= 0 || !wasm.getTableProperties || !wasm.setCellProperties) return;
