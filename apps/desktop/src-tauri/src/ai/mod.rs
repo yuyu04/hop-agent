@@ -243,6 +243,52 @@ fn extract_text_blocking(path: &str) -> Result<String, String> {
     Ok(truncate_chars(text, MAX_ATTACH_CHARS))
 }
 
+/// 다운로드 이미지 최대 크기(바이트). 너무 큰 이미지는 거절한다.
+const MAX_IMAGE_BYTES: usize = 20 * 1024 * 1024;
+
+/// URL에서 이미지를 내려받아 base64+MIME로 반환한다(웹뷰 CORS 우회 — Rust에서 받음).
+/// 반환: JSON `{"dataBase64":"...","mime":"image/..."}`. 이미지가 아니면 오류.
+#[tauri::command]
+pub async fn ai_fetch_image(url: String) -> Result<String, String> {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return Err("http(s) URL만 가져올 수 있습니다.".to_string());
+    }
+    let client = crate::ai::adapters::http_client().map_err(|e| e.to_string())?;
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("이미지 다운로드 실패: {}", e))?;
+    if !resp.status().is_success() {
+        return Err(format!("이미지 다운로드 실패: HTTP {}", resp.status()));
+    }
+    // Content-Type으로 이미지 여부 확인(확장자 없는 URL도 처리).
+    let mime = resp
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.split(';').next().unwrap_or(s).trim().to_string())
+        .unwrap_or_default();
+    if !mime.starts_with("image/") {
+        return Err(format!("이미지가 아닙니다(Content-Type: {}).", mime));
+    }
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| format!("이미지 본문 읽기 실패: {}", e))?;
+    if bytes.len() > MAX_IMAGE_BYTES {
+        return Err("이미지가 너무 큽니다(최대 20MB).".to_string());
+    }
+    let data_base64 = STANDARD.encode(&bytes);
+    Ok(format!(
+        "{{\"dataBase64\":{},\"mime\":{}}}",
+        serde_json::to_string(&data_base64).unwrap_or_default(),
+        serde_json::to_string(&mime).unwrap_or_default()
+    ))
+}
+
 /// 앞 `max`자만 남기고 잘라낸 뒤 안내 꼬리표를 붙인다.
 fn truncate_chars(text: String, max: usize) -> String {
     if text.chars().count() <= max {

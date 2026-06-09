@@ -43,6 +43,7 @@ quick-xml = "0.38"
 pdf-extract = "0.9"
 cfb = "0.14"
 flate2 = "1.0"
+base64 = "0.22"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSDocumentController"] }

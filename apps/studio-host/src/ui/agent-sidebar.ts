@@ -520,6 +520,14 @@ export class AgentSidebar {
       .map((a) => `[첨부 문서: ${a.name}]\n${a.text ?? ''}`)
       .join('\n\n');
 
+    // 삽입/비전용 이미지 소스: 첨부 이미지 + 프롬프트의 이미지 URL(같은 순서).
+    // image_index가 이 순서를 가리킨다(첨부 먼저, URL 다음).
+    const attachImageInputs: AiImageInput[] = attachments
+      .filter((a) => a.kind === 'image' && a.dataBase64)
+      .map((a) => ({ mimeType: a.mime ?? 'image/png', dataBase64: a.dataBase64! }));
+    const urlImageInputs = await this.fetchPromptImageUrls(prompt);
+    const allImageInputs = [...attachImageInputs, ...urlImageInputs];
+
     // claude-cli는 로컬 파일을 직접 읽으므로 이미지·PDF는 base64 대신 경로로 넘긴다.
     let images: AiImageInput[] = [];
     let documents: AiImageInput[] = [];
@@ -530,9 +538,7 @@ export class AgentSidebar {
         .map((a) => a.path!);
       filePaths = paths.length ? paths : null;
     } else {
-      images = attachments
-        .filter((a) => a.kind === 'image' && a.dataBase64)
-        .map((a) => ({ mimeType: a.mime ?? 'image/png', dataBase64: a.dataBase64! }));
+      images = allImageInputs;
       documents = attachments
         .filter((a) => a.kind === 'file' && a.dataBase64)
         .map((a) => ({ mimeType: a.mime ?? 'application/pdf', dataBase64: a.dataBase64! }));
@@ -547,8 +553,8 @@ export class AgentSidebar {
     }
     const effectivePrompt = docText ? `${docText}\n\n${prompt}` : prompt;
 
-    // 삽입용 이미지(첨부 순서) 디코드 — image_index가 이 배열을 가리킨다.
-    this.pendingInsertImages = await buildInsertImages(attachments);
+    // 삽입용 이미지 디코드(원본 픽셀 크기) — image_index가 이 배열을 가리킨다.
+    this.pendingInsertImages = await buildInsertImages(allImageInputs);
 
     this.appendUserTurn(prompt, attachments);
     this.active = this.appendAssistantTurn();
@@ -585,6 +591,22 @@ export class AgentSidebar {
       this.setRequesting(false);
       this.setActiveStatus(`요청 실패: ${String(error)}`, 'error');
     }
+  }
+
+  /** 프롬프트의 이미지 URL을 Rust로 다운로드(CORS 우회)해 이미지 입력으로 반환한다. */
+  private async fetchPromptImageUrls(prompt: string): Promise<AiImageInput[]> {
+    if (typeof this.deps.bridge.aiFetchImage !== 'function') return [];
+    const urls = Array.from(new Set(prompt.match(URL_PATTERN) ?? []));
+    const out: AiImageInput[] = [];
+    for (const url of urls) {
+      try {
+        const { dataBase64, mime } = await this.deps.bridge.aiFetchImage(url);
+        if (dataBase64) out.push({ mimeType: mime || 'image/png', dataBase64 });
+      } catch {
+        /* 이미지가 아니거나 다운로드 실패한 URL은 건너뛴다 */
+      }
+    }
+    return out;
   }
 
   private async cancel(): Promise<void> {
@@ -1549,22 +1571,23 @@ function mimeForImage(name: string): string {
   return 'image/png';
 }
 
-/** 첨부 이미지(첨부 순서)를 삽입용 ImageForInsert[]로 디코드한다. image_index가 이 순서를 가리킨다. */
-async function buildInsertImages(attachments: Attachment[]): Promise<ImageForInsert[]> {
-  const imgs = attachments.filter((a) => a.kind === 'image' && a.dataBase64);
+/** 이미지 입력(base64+MIME, 첨부+URL 순서)을 삽입용 ImageForInsert[]로 디코드한다. */
+async function buildInsertImages(inputs: AiImageInput[]): Promise<ImageForInsert[]> {
   const out: ImageForInsert[] = [];
-  for (const a of imgs) {
-    const mime = a.mime ?? 'image/png';
-    const dims = await imageDimensions(mime, a.dataBase64!);
+  for (const input of inputs) {
+    const dims = await imageDimensions(input.mimeType, input.dataBase64);
     out.push({
-      bytes: bytesFromBase64(a.dataBase64!),
-      extension: extensionFromMime(mime),
+      bytes: bytesFromBase64(input.dataBase64),
+      extension: extensionFromMime(input.mimeType),
       naturalWidthPx: dims.width,
       naturalHeightPx: dims.height,
     });
   }
   return out;
 }
+
+/** 프롬프트 텍스트에서 http(s) URL을 찾아 Rust로 다운로드(CORS 우회)해 이미지만 반환한다. */
+const URL_PATTERN = /https?:\/\/[^\s)>"']+/g;
 
 /** data URL로 이미지를 로드해 원본 픽셀 크기를 잰다(실패 시 0). */
 function imageDimensions(mime: string, base64: string): Promise<{ width: number; height: number }> {
