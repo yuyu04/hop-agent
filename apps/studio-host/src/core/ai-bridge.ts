@@ -56,6 +56,8 @@ export interface Edit {
 
 export interface ActionScript {
   edits: Edit[];
+  /** 사용자에게 보여줄 대화형 요약(AI가 무엇을 했는지). */
+  message?: string;
 }
 
 /** `hop-ai-stream-delta` payload. */

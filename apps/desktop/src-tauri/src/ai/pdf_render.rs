@@ -72,11 +72,10 @@ pub fn render_pdf_page(path: &str, page_number: usize, scale: f64) -> Option<Rgb
         CGContextTranslateCTM(Some(&ctx), -media.origin.x, -media.origin.y);
         CGContextDrawPDFPage(Some(&ctx), Some(&page));
 
-        // CG 비트맵은 좌하단 원점(첫 행=맨 아래) → 세로로 뒤집어 이미지에 채운다.
+        // CGBitmapContext 버퍼는 첫 행=맨 위(top-down)로 저장된다. 그대로 채운다.
         let mut img = RgbaImage::new(pw as u32, ph as u32);
         for y in 0..ph {
-            let src_row = ph - 1 - y;
-            let base = src_row * bytes_per_row;
+            let base = y * bytes_per_row;
             for x in 0..pw {
                 let p = base + x * 4;
                 img.put_pixel(

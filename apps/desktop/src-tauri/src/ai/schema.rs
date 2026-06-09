@@ -90,6 +90,9 @@ pub struct Edit {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ActionScript {
     pub edits: Vec<Edit>,
+    /// 사용자에게 보여줄 대화형 요약(무엇을 했는지/못 했으면 이유). 한국어 1~3문장.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
 }
 
 /// LLM 응답 문자열을 `ActionScript`로 파싱한다.
@@ -157,6 +160,10 @@ pub fn action_script_schema() -> Value {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "type": "object",
         "properties": {
+            "message": {
+                "type": "string",
+                "description": "사용자에게 보여줄 대화형 요약(무엇을 했는지, 못 했으면 이유). 한국어 1~3문장."
+            },
             "edits": {
                 "type": "array",
                 "items": {

@@ -259,8 +259,15 @@ pub async fn ai_fetch_image(url: String) -> Result<String, String> {
         return Err("http(s) URL만 가져올 수 있습니다.".to_string());
     }
     let client = crate::ai::adapters::http_client().map_err(|e| e.to_string())?;
+    // 일부 CDN(나무위키 등)은 User-Agent/Referer 없는 요청을 막으므로 브라우저처럼 보낸다.
     let resp = client
         .get(&url)
+        .header(
+            reqwest::header::USER_AGENT,
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 \
+             (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+        )
+        .header(reqwest::header::ACCEPT, "image/avif,image/webp,image/*,*/*")
         .send()
         .await
         .map_err(|e| format!("이미지 다운로드 실패: {}", e))?;
@@ -529,7 +536,9 @@ fn system_prompt() -> String {
      (예: crop={\"x\":0.1,\"y\":0.25,\"w\":0.8,\"h\":0.4} — 페이지 왼쪽10%/위25% 지점부터 \
      폭80%/높이40%). 페이지 전체가 아니라 그림 영역만 정확히 감싸세요. 일반 첨부/URL 이미지를 \
      통째로 넣을 때는 crop을 생략하세요. \
-     설명 문장이나 Markdown 없이 JSON만 반환하세요."
+     항상 최상위 message 필드에 무엇을 했는지(또는 못 했으면 이유를) 한국어로 1~3문장 \
+     적으세요 — 사용자에게 대화하듯 결과를 알려주는 요약입니다. \
+     JSON 외의 설명 문장이나 Markdown은 쓰지 말고 JSON만 반환하세요(요약은 message 안에)."
         .to_string()
 }
 

@@ -169,6 +169,32 @@
   align-self: flex-start;
   width: 100%;
 }
+.hop-ai-msg-assistant .hop-ai-msg-text {
+  background: #f1f3f5;
+  color: #1f2328;
+  border-radius: 12px 12px 12px 2px;
+  padding: 8px 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+/* AI 요약이 비어 있으면 빈 박스를 숨긴다. */
+.hop-ai-msg-assistant .hop-ai-msg-text:empty {
+  display: none;
+}
+/* 지난 사용자 메시지의 '수정' 버튼 — 작고 은은하게. */
+.hop-ai-msg-edit {
+  align-self: flex-end;
+  background: none;
+  border: none;
+  color: #8a8f98;
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0 2px;
+}
+.hop-ai-msg-edit:hover {
+  color: #2563eb;
+  text-decoration: underline;
+}
 .hop-ai-msg-chips {
   display: flex;
   flex-wrap: wrap;

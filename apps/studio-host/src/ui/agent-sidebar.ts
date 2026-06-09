@@ -144,6 +144,8 @@ const DOC_PROVIDERS = new Set<string>(['gemini', 'anthropic']);
 /** 진행 중인 어시스턴트 턴의 DOM 참조. */
 interface ActiveTurn {
   streamEl: HTMLElement;
+  /** AI의 대화형 요약(무엇을 했는지). */
+  msgEl: HTMLElement;
   bodyEl: HTMLElement;
   decisionEl: HTMLElement;
   acceptBtn: HTMLButtonElement;
@@ -707,6 +709,7 @@ export class AgentSidebar {
       await this.applyImageCrops(script);
     }
     this.pendingScript = script;
+    if (this.active && script.message) this.active.msgEl.textContent = script.message;
     this.renderDiff(script);
 
     // 스냅샷 가능(데스크톱)하면 승인 전 "미리 적용"해 문서에 바로 반영하고, 거절 시
@@ -783,6 +786,21 @@ export class AgentSidebar {
     const body = el('div', 'hop-ai-msg-text');
     body.textContent = text;
     bubble.appendChild(body);
+    // 지난 메시지를 다시 다듬어 보낼 수 있게 '수정' 버튼 — 클릭하면 컴포저로 불러온다.
+    const editBtn = el('button', 'hop-ai-msg-edit') as HTMLButtonElement;
+    editBtn.type = 'button';
+    editBtn.textContent = '✎ 수정';
+    editBtn.title = '이 메시지를 입력창으로 불러와 수정 후 다시 보냅니다';
+    editBtn.addEventListener('click', () => {
+      this.promptInput.value = text;
+      this.promptInput.focus();
+      try {
+        this.promptInput.setSelectionRange(text.length, text.length);
+      } catch {
+        /* 일부 환경은 setSelectionRange 미지원 */
+      }
+    });
+    bubble.appendChild(editBtn);
     if (attachments.length) {
       const chips = el('div', 'hop-ai-msg-chips');
       for (const a of attachments) {
@@ -799,6 +817,7 @@ export class AgentSidebar {
   private appendAssistantTurn(): ActiveTurn {
     const bubble = el('div', 'hop-ai-msg hop-ai-msg-assistant');
     const streamEl = el('pre', 'hop-ai-stream');
+    const msgEl = el('div', 'hop-ai-msg-text');
     const bodyEl = el('div', 'hop-ai-diff');
     const statusEl = el('div', 'hop-ai-status hop-ai-bubble-status');
     const acceptBtn = el('button', 'hop-ai-accept') as HTMLButtonElement;
@@ -809,10 +828,10 @@ export class AgentSidebar {
     decision.append(acceptBtn, rejectBtn);
     acceptBtn.addEventListener('click', () => this.accept());
     rejectBtn.addEventListener('click', () => this.reject());
-    bubble.append(streamEl, bodyEl, decision, statusEl);
+    bubble.append(streamEl, msgEl, bodyEl, decision, statusEl);
     this.thread.appendChild(bubble);
     this.scrollThreadToEnd();
-    const turn: ActiveTurn = { streamEl, bodyEl, decisionEl: decision, acceptBtn, rejectBtn, statusEl };
+    const turn: ActiveTurn = { streamEl, msgEl, bodyEl, decisionEl: decision, acceptBtn, rejectBtn, statusEl };
     this.setPreviewEnabledFor(turn, false);
     this.showThinking(turn);
     return turn;
