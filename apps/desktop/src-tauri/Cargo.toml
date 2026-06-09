@@ -44,6 +44,9 @@ pdf-extract = "0.9"
 cfb = "0.14"
 flate2 = "1.0"
 base64 = "0.22"
+lopdf = "0.36"
+png = "0.17"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSDocumentController"] }

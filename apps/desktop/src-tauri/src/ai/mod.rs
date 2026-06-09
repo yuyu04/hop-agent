@@ -7,6 +7,7 @@
 
 pub mod adapters;
 pub mod docx;
+pub mod pdf_images;
 pub mod provider;
 pub mod schema;
 pub mod secrets;
@@ -289,6 +290,39 @@ pub async fn ai_fetch_image(url: String) -> Result<String, String> {
     ))
 }
 
+/// 추출할 PDF 이미지 최대 개수(너무 많은 이미지로 토큰/메모리가 폭주하지 않도록).
+const MAX_PDF_IMAGES: usize = 20;
+
+/// PDF에서 내장 이미지를 추출해 base64+MIME 목록(JSON)으로 반환한다.
+/// 반환: JSON `[{"dataBase64":"...","mime":"image/..."}, ...]`.
+#[tauri::command]
+pub async fn ai_extract_pdf_images(path: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || extract_pdf_images_blocking(&path))
+        .await
+        .map_err(|e| format!("PDF 이미지 추출 태스크 실패: {}", e))?
+}
+
+fn extract_pdf_images_blocking(path: &str) -> Result<String, String> {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    if !path.to_lowercase().ends_with(".pdf") {
+        return Err("PDF 파일만 이미지 추출을 지원합니다.".to_string());
+    }
+    let bytes = std::fs::read(path).map_err(|e| format!("파일을 읽을 수 없습니다: {}", e))?;
+    let images = pdf_images::extract_pdf_images(&bytes)?;
+    let items: Vec<String> = images
+        .into_iter()
+        .take(MAX_PDF_IMAGES)
+        .map(|img| {
+            format!(
+                "{{\"dataBase64\":{},\"mime\":{}}}",
+                serde_json::to_string(&STANDARD.encode(&img.data)).unwrap_or_default(),
+                serde_json::to_string(&img.mime).unwrap_or_default()
+            )
+        })
+        .collect();
+    Ok(format!("[{}]", items.join(",")))
+}
+
 /// 앞 `max`자만 남기고 잘라낸 뒤 안내 꼬리표를 붙인다.
 fn truncate_chars(text: String, max: usize) -> String {
     if text.chars().count() <= max {
@@ -446,6 +480,8 @@ fn system_prompt() -> String {
      payload.type=\"image\", image_index=N(첨부된 이미지의 0-기준 순서: 첫 이미지=0)으로 \
      지정하세요. 이미지는 표 셀이 아니라 표 바깥 본문 문단에 넣어야 합니다. \
      payload.text에 간단한 설명(대체 텍스트)을 넣을 수 있습니다. \
+     첨부 PDF에서 추출된 그림이 있으면 그것들도 같은 image_index 목록(첨부 이미지 뒤에 이어짐)에 \
+     포함되므로, 요청한 그림에 해당하는 image_index를 골라 넣으세요. \
      설명 문장이나 Markdown 없이 JSON만 반환하세요."
         .to_string()
 }

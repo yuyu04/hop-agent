@@ -354,7 +354,7 @@ export class AgentSidebar {
         } else if (/\.(pdf|hwp|hwpx|docx)$/i.test(name)) {
           // PDF·한글·워드는 네이티브로 평문 추출 → 모든 provider에 인라인(경로/샌드박스 무관).
           // 칩은 즉시 띄우고(로딩), 추출은 백그라운드로 — 기다리지 않게 한다.
-          const att: Attachment = { id: uid(), kind: 'doc', name, text: '', loading: true };
+          const att: Attachment = { id: uid(), kind: 'doc', name, text: '', loading: true, path };
           this.attachments.push(att);
           this.extractTasks.push(
             (async () => {
@@ -526,7 +526,8 @@ export class AgentSidebar {
       .filter((a) => a.kind === 'image' && a.dataBase64)
       .map((a) => ({ mimeType: a.mime ?? 'image/png', dataBase64: a.dataBase64! }));
     const urlImageInputs = await this.fetchPromptImageUrls(prompt);
-    const allImageInputs = [...attachImageInputs, ...urlImageInputs];
+    const pdfImageInputs = await this.fetchPdfAttachmentImages(attachments, prompt);
+    const allImageInputs = [...attachImageInputs, ...urlImageInputs, ...pdfImageInputs];
 
     // claude-cli는 로컬 파일을 직접 읽으므로 이미지·PDF는 base64 대신 경로로 넘긴다.
     let images: AiImageInput[] = [];
@@ -591,6 +592,33 @@ export class AgentSidebar {
       this.setRequesting(false);
       this.setActiveStatus(`요청 실패: ${String(error)}`, 'error');
     }
+  }
+
+  /**
+   * 첨부된 PDF에서 내장 이미지를 추출해 이미지 입력으로 반환한다. 그림/이미지 관련 요청일
+   * 때만(PDF마다 이미지가 많아 매번 보내면 토큰 낭비) 추출한다.
+   */
+  private async fetchPdfAttachmentImages(
+    attachments: Attachment[],
+    prompt: string,
+  ): Promise<AiImageInput[]> {
+    if (typeof this.deps.bridge.aiExtractPdfImages !== 'function') return [];
+    if (!/그림|이미지|그래프|사진|도표|차트|figure|그래픽|graph|image|picture/i.test(prompt)) {
+      return [];
+    }
+    const pdfs = attachments.filter((a) => a.path && /\.pdf$/i.test(a.path));
+    const out: AiImageInput[] = [];
+    for (const a of pdfs) {
+      try {
+        const imgs = await this.deps.bridge.aiExtractPdfImages(a.path!);
+        for (const img of imgs) {
+          if (img.dataBase64) out.push({ mimeType: img.mime || 'image/png', dataBase64: img.dataBase64 });
+        }
+      } catch {
+        /* 추출 실패한 PDF는 건너뛴다 */
+      }
+    }
+    return out;
   }
 
   /** 프롬프트의 이미지 URL을 Rust로 다운로드(CORS 우회)해 이미지 입력으로 반환한다. */

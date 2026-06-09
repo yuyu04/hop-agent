@@ -126,6 +126,8 @@ export interface AiBridgeApi {
   aiExtractText(path: string): Promise<string>;
   /** URL에서 이미지를 내려받아 base64+MIME로 반환한다(웹뷰 CORS 우회). */
   aiFetchImage(url: string): Promise<{ dataBase64: string; mime: string }>;
+  /** PDF에서 내장 이미지를 추출해 base64+MIME 목록으로 반환한다. */
+  aiExtractPdfImages(path: string): Promise<{ dataBase64: string; mime: string }[]>;
   /** 진행 중인 요청을 취소한다(스펙 7장). */
   aiCancelRequest(requestId: string): Promise<void>;
   /** provider API 키를 OS 보안 저장소에 저장한다(스펙 6장). */
@@ -359,6 +361,11 @@ export class TauriBridge extends WasmBridge implements DesktopBridgeApi, AiBridg
   async aiFetchImage(url: string): Promise<{ dataBase64: string; mime: string }> {
     const json = await this.invoke<string>('ai_fetch_image', { url });
     return JSON.parse(json) as { dataBase64: string; mime: string };
+  }
+
+  async aiExtractPdfImages(path: string): Promise<{ dataBase64: string; mime: string }[]> {
+    const json = await this.invoke<string>('ai_extract_pdf_images', { path });
+    return JSON.parse(json) as { dataBase64: string; mime: string }[];
   }
 
   async aiCancelRequest(requestId: string): Promise<void> {
