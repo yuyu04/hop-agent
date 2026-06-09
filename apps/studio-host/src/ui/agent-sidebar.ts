@@ -187,6 +187,8 @@ export class AgentSidebar {
   private readonly logPanel: HTMLElement;
   /** 디버그 로그 버퍼(최근 N줄). */
   private logs: string[] = [];
+  /** '로그 보기'로 연 별도 로그 창(있으면 실시간 갱신). */
+  private logWindow: Window | null = null;
   private readonly keyRow: HTMLElement;
   private readonly keyInput: HTMLInputElement;
   private readonly keyStatus: HTMLElement;
@@ -250,7 +252,6 @@ export class AgentSidebar {
     built.toggleBtn.addEventListener('click', () => this.toggle());
     built.newChatBtn.addEventListener('click', () => this.newConversation());
     built.settingsBtn.addEventListener('click', () => this.toggleMenu());
-    built.logBtn.addEventListener('click', () => this.toggleLog());
     built.settingsClose.addEventListener('click', () => this.toggleSettings(false));
     built.attachImageBtn.addEventListener('click', () => this.imageInput.click());
     built.attachDocBtn.addEventListener('click', () => this.docInput.click());
@@ -724,6 +725,8 @@ export class AgentSidebar {
 
   private async onReady(ready: AiEditReady): Promise<void> {
     if (ready.requestId !== this.requestId || !this.active) return;
+    // 같은 요청의 ready 이벤트가 두 번 와도 한 번만 처리(이중 적용 방지).
+    this.requestId = null;
     this.setRequesting(false);
     this.active.streamEl.textContent = '';
     const script = parseActionScript(ready.actionScriptJson);
@@ -732,6 +735,19 @@ export class AgentSidebar {
       this.session.onFailed();
       this.setActiveStatus(interpretAiFailure('PARSE_ERROR'), 'error');
       return;
+    }
+    // 동일한 편집(명령+대상+payload)이 중복되면 한 번만 적용한다(AI가 같은 작업을 두 번
+    // 내보내는 경우 방지).
+    const seenEdits = new Set<string>();
+    const before = script.edits.length;
+    script.edits = script.edits.filter((e) => {
+      const key = `${e.command}|${e.target_id}|${JSON.stringify(e.payload)}`;
+      if (seenEdits.has(key)) return false;
+      seenEdits.add(key);
+      return true;
+    });
+    if (script.edits.length < before) {
+      this.log(`중복 편집 ${before - script.edits.length}건 제거`);
     }
     this.log(
       `응답: 편집 ${script.edits.length}건. ${script.edits
@@ -1082,6 +1098,13 @@ export class AgentSidebar {
     }
     const divider = el('div', 'hop-ai-menu-divider');
     this.menu.appendChild(divider);
+    const logItem = el('button', 'hop-ai-menu-item') as HTMLButtonElement;
+    logItem.textContent = '🛈 로그 보기';
+    logItem.addEventListener('click', () => {
+      this.toggleMenu(false);
+      this.openLogWindow();
+    });
+    this.menu.appendChild(logItem);
     const settings = el('button', 'hop-ai-menu-item') as HTMLButtonElement;
     settings.textContent = '⚙ Agent 설정';
     settings.addEventListener('click', () => {
@@ -1397,7 +1420,62 @@ export class AgentSidebar {
     if (this.logs.length > 300) this.logs.shift();
     // eslint-disable-next-line no-console
     console.log('[hop-ai]', msg);
+    // 별도 로그 창이 열려 있으면 실시간 반영, 폴백 인라인 패널이 켜져 있으면 그쪽도 갱신.
+    if (this.logWindow && !this.logWindow.closed) this.writeLogWindow();
     if (!this.logPanel.classList.contains('hop-ai-hidden')) this.renderLog();
+  }
+
+  /**
+   * 로그를 별도 창으로 연다(설정 메뉴 → '로그 보기'). 새 창을 못 열면(웹뷰가 차단)
+   * 인라인 패널로 폴백한다.
+   */
+  private openLogWindow(): void {
+    if (this.logWindow && !this.logWindow.closed) {
+      this.logWindow.focus();
+      this.writeLogWindow();
+      return;
+    }
+    const win = window.open('', 'hop-ai-log', 'width=680,height=520');
+    if (!win) {
+      // 새 창 차단 시 인라인 패널 폴백.
+      this.logPanel.classList.remove('hop-ai-hidden');
+      this.renderLog();
+      return;
+    }
+    this.logWindow = win;
+    this.writeLogWindow();
+  }
+
+  /** 별도 로그 창의 내용을 현재 버퍼로 다시 그린다. */
+  private writeLogWindow(): void {
+    const win = this.logWindow;
+    if (!win || win.closed) return;
+    const text = this.logs.join('\n') || '(로그 없음)';
+    const doc = win.document;
+    doc.open();
+    doc.write(
+      `<!DOCTYPE html><html><head><meta charset="utf-8"><title>HOP AI 로그</title>` +
+        `<style>body{margin:0;font:12px/1.5 ui-monospace,Menlo,Consolas,monospace;` +
+        `background:#1e1e1e;color:#d4d4d4}` +
+        `header{position:sticky;top:0;display:flex;gap:8px;align-items:center;` +
+        `padding:8px 12px;background:#252526;border-bottom:1px solid #333}` +
+        `button{font:inherit;cursor:pointer;background:#333;color:#d4d4d4;` +
+        `border:1px solid #555;border-radius:4px;padding:3px 10px}` +
+        `pre{margin:0;padding:12px;white-space:pre-wrap;word-break:break-all}</style></head>` +
+        `<body><header><b>HOP AI 디버그 로그</b><button id="c">지우기</button>` +
+        `<button id="r">새로고침</button></header><pre id="t"></pre></body></html>`,
+    );
+    doc.close();
+    const pre = doc.getElementById('t');
+    if (pre) {
+      pre.textContent = text;
+      win.scrollTo(0, doc.body.scrollHeight);
+    }
+    doc.getElementById('c')?.addEventListener('click', () => {
+      this.logs = [];
+      this.writeLogWindow();
+    });
+    doc.getElementById('r')?.addEventListener('click', () => this.writeLogWindow());
   }
 
   private renderLog(): void {
@@ -1412,11 +1490,6 @@ export class AgentSidebar {
     });
     this.logPanel.append(clearBtn, pre);
     pre.scrollTop = pre.scrollHeight;
-  }
-
-  private toggleLog(): void {
-    const hidden = this.logPanel.classList.toggle('hop-ai-hidden');
-    if (!hidden) this.renderLog();
   }
 
   /** 건너뜀 건수 + 첫 사유를 사람이 읽을 수 있게 만든다(빈 문자열이면 건너뜀 없음). */
@@ -1490,7 +1563,6 @@ interface PanelParts {
   closeBtn: HTMLButtonElement;
   newChatBtn: HTMLButtonElement;
   settingsBtn: HTMLButtonElement;
-  logBtn: HTMLButtonElement;
   logPanel: HTMLElement;
   menu: HTMLElement;
   settingsModal: HTMLElement;
@@ -1537,15 +1609,12 @@ function buildPanel(): PanelParts {
   newChatBtn.title = '새 대화';
   const settingsBtn = el('button', 'hop-ai-settings-btn') as HTMLButtonElement;
   settingsBtn.textContent = '⋯';
-  settingsBtn.title = '메뉴 (최근 대화 · Agent 설정)';
-  const logBtn = el('button', 'hop-ai-log-btn') as HTMLButtonElement;
-  logBtn.textContent = '🛈';
-  logBtn.title = '로그 보기(디버그)';
+  settingsBtn.title = '메뉴 (최근 대화 · 로그 · Agent 설정)';
   const closeBtn = el('button', 'hop-ai-close') as HTMLButtonElement;
   closeBtn.textContent = '×';
-  header.append(title, newChatBtn, logBtn, settingsBtn, closeBtn);
+  header.append(title, newChatBtn, settingsBtn, closeBtn);
 
-  // 디버그 로그 패널(기본 숨김). 도구 옆 🛈 버튼으로 토글.
+  // 디버그 로그 패널(기본 숨김) — 새 창을 못 열 때의 폴백 표시용. 메뉴의 '로그 보기'로 토글.
   const logPanel = el('div', 'hop-ai-log');
   logPanel.classList.add('hop-ai-hidden');
 
@@ -1657,7 +1726,6 @@ function buildPanel(): PanelParts {
     closeBtn,
     newChatBtn,
     settingsBtn,
-    logBtn,
     logPanel,
     menu,
     settingsModal,
