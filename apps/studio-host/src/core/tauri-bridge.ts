@@ -132,7 +132,7 @@ export interface AiBridgeApi {
   aiRenderPdfFigurePages(
     path: string,
     query: string,
-  ): Promise<{ dataBase64: string; mime: string; page?: number }[]>;
+  ): Promise<{ dataBase64: string; mime: string; page?: number; figureOnly?: boolean }[]>;
   /** 진행 중인 요청을 취소한다(스펙 7장). */
   aiCancelRequest(requestId: string): Promise<void>;
   /** provider API 키를 OS 보안 저장소에 저장한다(스펙 6장). */
@@ -376,9 +376,14 @@ export class TauriBridge extends WasmBridge implements DesktopBridgeApi, AiBridg
   async aiRenderPdfFigurePages(
     path: string,
     query: string,
-  ): Promise<{ dataBase64: string; mime: string; page?: number }[]> {
+  ): Promise<{ dataBase64: string; mime: string; page?: number; figureOnly?: boolean }[]> {
     const json = await this.invoke<string>('ai_render_pdf_figure_pages', { path, query });
-    return JSON.parse(json) as { dataBase64: string; mime: string; page?: number }[];
+    return JSON.parse(json) as {
+      dataBase64: string;
+      mime: string;
+      page?: number;
+      figureOnly?: boolean;
+    }[];
   }
 
   async aiCancelRequest(requestId: string): Promise<void> {

@@ -10,6 +10,8 @@
 #![allow(deprecated)]
 
 use image::RgbaImage;
+use lopdf::content::Content;
+use lopdf::{Document, Object};
 use objc2_core_foundation::{CFURLCreateFromFileSystemRepresentation, CGPoint, CGRect, CGSize};
 use objc2_core_graphics::{
     CGBitmapContextCreate, CGColorSpaceCreateDeviceRGB, CGContextDrawPDFPage, CGContextFillRect,
@@ -200,8 +202,8 @@ pub fn explicit_pages(query: &str) -> Vec<usize> {
     out
 }
 
-pub fn render_query_pages(path: &str, query: &str, scale: f64, top_k: usize) -> Vec<(usize, RgbaImage)> {
-    // 1) 프롬프트가 페이지를 명시하면 그 페이지를 그대로 렌더(최우선).
+/// 쿼리와 관련된 페이지 번호(1-기준)를 고른다. 명시 페이지 > 텍스트 매칭 > 그림 폴백.
+pub fn select_query_pages(path: &str, query: &str, top_k: usize) -> Vec<usize> {
     let explicit = explicit_pages(query);
     let mut page_nums: Vec<usize> = if !explicit.is_empty() {
         explicit.into_iter().take(8).collect()
@@ -231,9 +233,13 @@ pub fn render_query_pages(path: &str, query: &str, scale: f64, top_k: usize) -> 
         nums
     };
     page_nums.sort_unstable();
+    page_nums
+}
 
+#[allow(dead_code)] // 전체 페이지 렌더 경로(실험 테스트·폴백 참고용). 기본은 render_query_figures.
+pub fn render_query_pages(path: &str, query: &str, scale: f64, top_k: usize) -> Vec<(usize, RgbaImage)> {
     let mut out = Vec::new();
-    for p in page_nums {
+    for p in select_query_pages(path, query, top_k) {
         if let Some(img) = render_pdf_page(path, p, scale) {
             out.push((p, img));
         }
@@ -241,10 +247,286 @@ pub fn render_query_pages(path: &str, query: &str, scale: f64, top_k: usize) -> 
     out
 }
 
+/// 쿼리 관련 페이지에서 '그림 영역만'(텍스트 제외) 잘라 반환한다(구조적 분리).
+/// 그림 경계를 못 구한 페이지는 페이지 전체 렌더로 폴백한다. 반환: (page, 그림이면 true, img).
+pub fn render_query_figures(
+    path: &str,
+    query: &str,
+    scale: f64,
+    top_k: usize,
+) -> Vec<(usize, bool, RgbaImage)> {
+    let doc = Document::load(path).ok();
+    let mut out = Vec::new();
+    for p in select_query_pages(path, query, top_k) {
+        if let Some(img) = doc.as_ref().and_then(|d| render_page_figure(d, path, p, scale)) {
+            out.push((p, true, img)); // 글 제외된 그림만
+        } else if let Some(img) = render_pdf_page(path, p, scale) {
+            out.push((p, false, img)); // 폴백: 페이지 전체(AI가 crop)
+        }
+    }
+    out
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────
+// 구조적 그림/글 분리: PDF 콘텐츠 스트림에서 '그리기(벡터·이미지)' 연산만 골라
+// 경계 상자를 구하고, 그 영역만 렌더한다. 본문 텍스트(BT…ET)는 제외하므로 글이
+// 섞이지 않은 '그림만'을 얻는다.
+// ─────────────────────────────────────────────────────────────────────────
+
+/// 2×3 아핀 [a,b,c,d,e,f] — x'=a*x+c*y+e, y'=b*x+d*y+f.
+type Mat = [f64; 6];
+
+const IDENTITY: Mat = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
+
+/// `first`를 적용한 뒤 `second`를 적용하는 합성 행렬(점 기준 second(first(p))).
+fn mat_mul(first: Mat, second: Mat) -> Mat {
+    let [a1, b1, c1, d1, e1, f1] = first;
+    let [a2, b2, c2, d2, e2, f2] = second;
+    [
+        a1 * a2 + b1 * c2,
+        a1 * b2 + b1 * d2,
+        c1 * a2 + d1 * c2,
+        c1 * b2 + d1 * d2,
+        e1 * a2 + f1 * c2 + e2,
+        e1 * b2 + f1 * d2 + f2,
+    ]
+}
+
+fn xform(m: Mat, x: f64, y: f64) -> (f64, f64) {
+    (m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5])
+}
+
+fn num(o: &Object) -> Option<f64> {
+    match o {
+        Object::Integer(i) => Some(*i as f64),
+        Object::Real(r) => Some(*r as f64),
+        _ => None,
+    }
+}
+
+/// 누적용 경계 상자(user space). 비어 있으면 None 상태.
+#[derive(Clone, Copy, Default)]
+struct BBox {
+    min_x: f64,
+    min_y: f64,
+    max_x: f64,
+    max_y: f64,
+    set: bool,
+}
+
+impl BBox {
+    fn add(&mut self, x: f64, y: f64) {
+        if !self.set {
+            self.min_x = x;
+            self.max_x = x;
+            self.min_y = y;
+            self.max_y = y;
+            self.set = true;
+        } else {
+            self.min_x = self.min_x.min(x);
+            self.max_x = self.max_x.max(x);
+            self.min_y = self.min_y.min(y);
+            self.max_y = self.max_y.max(y);
+        }
+    }
+    fn w(&self) -> f64 {
+        self.max_x - self.min_x
+    }
+    fn h(&self) -> f64 {
+        self.max_y - self.min_y
+    }
+}
+
+/// CG로 페이지 MediaBox(원점·크기)를 얻는다.
+fn page_media_box(path: &str, page_number: usize) -> Option<(f64, f64, f64, f64)> {
+    unsafe {
+        let bytes = path.as_bytes();
+        let url =
+            CFURLCreateFromFileSystemRepresentation(None, bytes.as_ptr(), bytes.len() as isize, false)?;
+        let doc = CGPDFDocumentCreateWithURL(Some(&url))?;
+        let total = CGPDFDocumentGetNumberOfPages(Some(&doc));
+        if page_number < 1 || page_number > total {
+            return None;
+        }
+        let page = CGPDFDocumentGetPage(Some(&doc), page_number)?;
+        let m = CGPDFPageGetBoxRect(Some(&page), CGPDFBox::MediaBox);
+        Some((m.origin.x, m.origin.y, m.size.width, m.size.height))
+    }
+}
+
+/// 페이지의 '그림' 경계 상자(user space)를 콘텐츠 스트림에서 계산한다. 텍스트는 제외.
+/// 그림(벡터/이미지)이 없으면 None.
+fn page_graphics_bbox(doc: &Document, page_id: lopdf::ObjectId, mw: f64, mh: f64) -> Option<(f64, f64, f64, f64)> {
+    let content = doc.get_and_decode_page_content(page_id).ok()?;
+    bbox_from_operations(&content, mw, mh)
+}
+
+/// 페이지 전체 면적 대비 배경/괘선으로 보이는 도형은 제외하고 그림 경계 상자를 구한다.
+fn bbox_from_operations(content: &Content, mw: f64, mh: f64) -> Option<(f64, f64, f64, f64)> {
+    let page_area = (mw * mh).max(1.0);
+    let mut ctm: Mat = IDENTITY;
+    let mut stack: Vec<Mat> = Vec::new();
+    let mut path = BBox::default(); // 현재 구성 중인 경로의 device(user) 좌표 범위
+    let mut fig = BBox::default(); // 누적 그림 경계
+    let mut in_text = false;
+
+    // 현재 경로를 칠할 때(또는 이미지) 호출 — 배경/괘선이면 건너뛴다.
+    let commit = |b: &BBox, fig: &mut BBox| {
+        if !b.set {
+            return;
+        }
+        let (bw, bh) = (b.w(), b.h());
+        // 페이지 대부분을 덮는 도형 = 배경 → 제외.
+        if bw * bh > page_area * 0.8 {
+            return;
+        }
+        // 얇고 넓은(가로 괘선) / 얇고 긴(세로 괘선) 선 = 머리글·구분선 → 제외.
+        if (bh < 3.0 && bw > mw * 0.6) || (bw < 3.0 && bh > mh * 0.6) {
+            return;
+        }
+        fig.add(b.min_x, b.min_y);
+        fig.add(b.max_x, b.max_y);
+    };
+
+    for op in &content.operations {
+        let operands = &op.operands;
+        match op.operator.as_str() {
+            "BT" => in_text = true,
+            "ET" => in_text = false,
+            _ if in_text => {} // 텍스트 영역 내부 연산은 그림 경계에 넣지 않는다.
+            "q" => stack.push(ctm),
+            "Q" => {
+                if let Some(m) = stack.pop() {
+                    ctm = m;
+                }
+            }
+            "cm" if operands.len() == 6 => {
+                let m: Mat = [
+                    num(&operands[0])?,
+                    num(&operands[1])?,
+                    num(&operands[2])?,
+                    num(&operands[3])?,
+                    num(&operands[4])?,
+                    num(&operands[5])?,
+                ];
+                ctm = mat_mul(m, ctm);
+            }
+            "m" | "l" if operands.len() == 2 => {
+                let (x, y) = (num(&operands[0])?, num(&operands[1])?);
+                let (dx, dy) = xform(ctm, x, y);
+                path.add(dx, dy);
+            }
+            "c" if operands.len() == 6 => {
+                for k in [(0, 1), (2, 3), (4, 5)] {
+                    let (dx, dy) = xform(ctm, num(&operands[k.0])?, num(&operands[k.1])?);
+                    path.add(dx, dy);
+                }
+            }
+            "v" | "y" if operands.len() == 4 => {
+                for k in [(0, 1), (2, 3)] {
+                    let (dx, dy) = xform(ctm, num(&operands[k.0])?, num(&operands[k.1])?);
+                    path.add(dx, dy);
+                }
+            }
+            "re" if operands.len() == 4 => {
+                let (x, y, w, h) = (
+                    num(&operands[0])?,
+                    num(&operands[1])?,
+                    num(&operands[2])?,
+                    num(&operands[3])?,
+                );
+                for (px, py) in [(x, y), (x + w, y), (x, y + h), (x + w, y + h)] {
+                    let (dx, dy) = xform(ctm, px, py);
+                    path.add(dx, dy);
+                }
+            }
+            // 칠하기/긋기 → 현재 경로를 그림 경계에 반영하고 경로 리셋.
+            "S" | "s" | "f" | "F" | "f*" | "B" | "B*" | "b" | "b*" => {
+                commit(&path, &mut fig);
+                path = BBox::default();
+            }
+            // 경로만 끝내고 칠하지 않음(클립 등) → 반영 없이 리셋.
+            "n" => path = BBox::default(),
+            // 이미지/폼 XObject 배치 → 단위 사각형을 CTM으로 변환한 영역을 그림으로 간주.
+            "Do" => {
+                let mut b = BBox::default();
+                for (px, py) in [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (1.0, 1.0)] {
+                    let (dx, dy) = xform(ctm, px, py);
+                    b.add(dx, dy);
+                }
+                commit(&b, &mut fig);
+            }
+            _ => {}
+        }
+    }
+
+    if fig.set && fig.w() > 4.0 && fig.h() > 4.0 {
+        Some((fig.min_x, fig.min_y, fig.max_x, fig.max_y))
+    } else {
+        None
+    }
+}
+
+/// 페이지를 렌더한 뒤 '그림' 영역만 잘라 반환한다(텍스트 제외). 그림이 없으면 None.
+pub fn render_page_figure(doc: &Document, path: &str, page_number: usize, scale: f64) -> Option<RgbaImage> {
+    let (ox, oy, mw, mh) = page_media_box(path, page_number)?;
+    let pages = doc.get_pages();
+    let page_id = *pages.get(&(page_number as u32))?;
+    let (ux0, uy0, ux1, uy1) = page_graphics_bbox(doc, page_id, mw, mh)?;
+    let full = render_pdf_page(path, page_number, scale)?;
+    let pw = full.width() as f64;
+    let ph = full.height() as f64;
+    let pad = 10.0;
+    // user space → 픽셀(상단 기준). y는 위가 큰 값이므로 뒤집어 매핑.
+    let x0 = (((ux0 - ox) * scale) - pad).clamp(0.0, pw);
+    let x1 = (((ux1 - ox) * scale) + pad).clamp(0.0, pw);
+    let yt = (((oy + mh - uy1) * scale) - pad).clamp(0.0, ph);
+    let yb = (((oy + mh - uy0) * scale) + pad).clamp(0.0, ph);
+    let cw = (x1 - x0).max(1.0) as u32;
+    let ch = (yb - yt).max(1.0) as u32;
+    Some(image::imageops::crop_imm(&full, x0 as u32, yt as u32, cw, ch).to_image())
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mat_mul_and_xform_compose_in_order() {
+        // 먼저 2배 확대, 그 다음 (10,5) 평행이동.
+        let scale: Mat = [2.0, 0.0, 0.0, 2.0, 0.0, 0.0];
+        let translate: Mat = [1.0, 0.0, 0.0, 1.0, 10.0, 5.0];
+        let m = mat_mul(scale, translate);
+        // 점 (3,4) → 확대 (6,8) → 이동 (16,13).
+        let (x, y) = xform(m, 3.0, 4.0);
+        assert!((x - 16.0).abs() < 1e-9);
+        assert!((y - 13.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn bbox_excludes_text_and_background_keeps_figure() {
+        use lopdf::content::Operation;
+        // 배경 사각형(페이지 거의 전체) + 텍스트 + 작은 도형(그림).
+        let ops = vec![
+            // 배경: 페이지 전체 채움 → 제외돼야 함.
+            Operation::new("re", vec![0.into(), 0.into(), 600.into(), 800.into()]),
+            Operation::new("f", vec![]),
+            // 텍스트 영역(좌표가 있어도 그림 경계에 안 들어가야 함).
+            Operation::new("BT", vec![]),
+            Operation::new("m", vec![10.into(), 700.into()]),
+            Operation::new("ET", vec![]),
+            // 작은 도형(그림): (100,100)~(250,300).
+            Operation::new("re", vec![100.into(), 100.into(), 150.into(), 200.into()]),
+            Operation::new("f", vec![]),
+        ];
+        let content = Content { operations: ops };
+        let bbox = bbox_from_operations(&content, 600.0, 800.0).unwrap();
+        assert!((bbox.0 - 100.0).abs() < 1.0);
+        assert!((bbox.1 - 100.0).abs() < 1.0);
+        assert!((bbox.2 - 250.0).abs() < 1.0);
+        assert!((bbox.3 - 300.0).abs() < 1.0);
+    }
 
     #[test]
     fn explicit_pages_parses_korean_and_english() {
@@ -270,6 +552,27 @@ mod tests {
             let out = format!("/tmp/qpage_{}.png", p);
             img.save(&out).unwrap();
             println!("  page {} {}x{} → {}", p, img.width(), img.height(), out);
+        }
+    }
+
+    /// [실험] 구조적 분리 — 그림 영역만 잘라 /tmp/figure_N.png 로 쓴다(글 제외 확인용).
+    #[test]
+    #[ignore]
+    fn experiment_render_figures() {
+        let path = std::env::var("HOP_PDF").unwrap();
+        let q = std::env::var("HOP_QUERY").unwrap_or_else(|_| "사업비 사용원칙 그림".to_string());
+        let figs = render_query_figures(&path, &q, 2.0, 4);
+        for (p, figure_only, img) in &figs {
+            let out = format!("/tmp/figure_{}.png", p);
+            img.save(&out).unwrap();
+            println!(
+                "  page {} figure_only={} {}x{} → {}",
+                p,
+                figure_only,
+                img.width(),
+                img.height(),
+                out
+            );
         }
     }
 }

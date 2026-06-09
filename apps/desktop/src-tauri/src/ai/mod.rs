@@ -356,18 +356,21 @@ fn render_figure_pages_blocking(path: &str, query: &str) -> Result<String, Strin
     if !path.to_lowercase().ends_with(".pdf") {
         return Err("PDF 파일만 지원합니다.".to_string());
     }
-    let pages = pdf_render::render_query_pages(path, query, 1.6, 4);
+    // 구조적 분리: 가능하면 그림 영역만(텍스트 제외) 잘라 보낸다. figure_only=true면
+    // 이미 그림만이라 crop이 거의 필요 없다. 못 잡은 페이지는 전체 렌더(폴백).
+    let pages = pdf_render::render_query_figures(path, query, 2.0, 4);
     let mut items = Vec::new();
-    for (page, img) in pages {
+    for (page, figure_only, img) in pages {
         let mut png = Vec::new();
         if image::DynamicImage::ImageRgba8(img)
             .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
             .is_ok()
         {
             items.push(format!(
-                "{{\"dataBase64\":{},\"mime\":\"image/png\",\"page\":{}}}",
+                "{{\"dataBase64\":{},\"mime\":\"image/png\",\"page\":{},\"figureOnly\":{}}}",
                 serde_json::to_string(&STANDARD.encode(&png)).unwrap_or_default(),
-                page
+                page,
+                figure_only
             ));
         }
     }

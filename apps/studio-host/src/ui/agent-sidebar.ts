@@ -698,16 +698,21 @@ export class AgentSidebar {
     const pdfs = attachments.filter((a) => a.path && /\.pdf$/i.test(a.path));
     const out: { input: AiImageInput; label: string }[] = [];
     for (const a of pdfs) {
-      // 요청과 관련된 PDF 페이지를 통째로 렌더(벡터/블렌드 그래프 포함). AI가 crop으로
-      // 그림 영역만 잘라낸다. 페이지 렌더가 안 되면(비macOS 등) 내장 이미지 추출로 폴백.
+      // 요청과 관련된 PDF 페이지에서 '그림 영역만'(텍스트 제외) 잘라 받는다(구조적 분리).
+      // figureOnly=true면 이미 그림만이라 crop 불필요. 못 잡은 페이지는 전체 렌더 폴백 →
+      // 그 경우만 AI가 crop으로 도표 영역을 잘라낸다.
       try {
         if (typeof this.deps.bridge.aiRenderPdfFigurePages === 'function') {
           const pages = await this.deps.bridge.aiRenderPdfFigurePages(a.path!, prompt);
           for (const p of pages) {
             if (p.dataBase64) {
+              const where = p.page ? `${p.page}쪽` : '';
+              const label = p.figureOnly
+                ? `PDF '${a.name}' ${where} 그림만 추출됨(텍스트 제외) — crop 없이 그대로 넣기`
+                : `PDF '${a.name}' ${where} 페이지 렌더 — 페이지 전체 금지, crop으로 그림(도표) 영역만 잘라 넣기`;
               out.push({
                 input: { mimeType: p.mime || 'image/png', dataBase64: p.dataBase64 },
-                label: `PDF '${a.name}' ${p.page ? `${p.page}쪽` : ''} 렌더 — 페이지 전체 금지, crop으로 그림(도표) 영역만 잘라 넣기`,
+                label,
               });
             }
           }
