@@ -364,6 +364,9 @@ fn system_prompt() -> String {
      시작해야 하면 payload.page_break를 true로 설정하세요. \
      표를 새로 만들려면 본문 문단 ID에 INSERT_AFTER 하고 payload.type=\"table\", \
      payload.table_data에 rows, cols, matrix(행×열 문자열 2차원 배열)를 채우세요. \
+     원본/첨부 표를 옮길 때는 모든 열과 모든 값을 빠짐없이 포함하세요 — '증액가능여부', \
+     '전용가능여부'처럼 ○/× 값이 든 열이나 어떤 열도 임의로 생략·축약하지 마세요. \
+     cols는 원본 표의 실제 열 개수와 같아야 합니다. \
      예: 예산 표는 첫 행을 머리글로 두고 matrix에 값을 넣습니다. \
      머리글이 여러 열을 덮거나 같은 값이 세로로 이어지면 table_data.merges에 \
      {start_row,start_col,end_row,end_col}(0-기준, 끝 포함) 영역을 넣어 셀을 병합하세요. \
