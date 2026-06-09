@@ -399,6 +399,79 @@
   line-height: 1;
   padding: 0;
 }
+/* 모드 토글(편집/질문) + 빠른 작업 칩 */
+.hop-ai-quickbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.hop-ai-mode-toggle {
+  display: inline-flex;
+  border: 1px solid #d0d4da;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.hop-ai-mode-btn {
+  border: none;
+  background: #fff;
+  color: #555;
+  font-size: 12px;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+.hop-ai-mode-btn + .hop-ai-mode-btn {
+  border-left: 1px solid #d0d4da;
+}
+.hop-ai-mode-active {
+  background: #2563eb;
+  color: #fff;
+}
+.hop-ai-quick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.hop-ai-quick-chip {
+  border: 1px solid #d9dde3;
+  background: #eef0f3;
+  color: #333;
+  font-size: 11px;
+  border-radius: 12px;
+  padding: 2px 9px;
+  cursor: pointer;
+}
+.hop-ai-quick-chip:hover {
+  background: #e3e7ee;
+}
+/* 변형(대안) 제안 버튼 */
+.hop-ai-variations {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 6px 0;
+}
+.hop-ai-variations-label {
+  font-size: 11px;
+  color: #888;
+}
+.hop-ai-variation {
+  text-align: left;
+  border: 1px solid #d9dde3;
+  background: #fff;
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-size: 12px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+.hop-ai-variation:hover {
+  background: #f0f3f8;
+}
+.hop-ai-variation-active {
+  border-color: #2563eb;
+  background: #eaf1ff;
+}
 .hop-ai-prompt {
   width: 100%;
   box-sizing: border-box;

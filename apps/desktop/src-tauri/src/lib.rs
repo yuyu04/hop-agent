@@ -1,3 +1,6 @@
+// action_script_schema()의 큰 json! 매크로 전개를 위해 재귀 한도를 올린다.
+#![recursion_limit = "256"]
+
 mod ai;
 mod app_quit;
 mod commands;

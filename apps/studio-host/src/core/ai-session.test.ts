@@ -42,6 +42,14 @@ describe('AiSessionMachine', () => {
     expect(machine.state).toBe('IDLE');
   });
 
+  it('complete() ends an edit-less answer (REQUESTING→IDLE) and is a no-op otherwise', () => {
+    const machine = new AiSessionMachine();
+    expect(machine.complete()).toBe(false); // IDLE에서는 무효
+    machine.startRequest();
+    expect(machine.complete()).toBe(true);
+    expect(machine.state).toBe('IDLE');
+  });
+
   it('ignores accept/onReady from invalid states', () => {
     const machine = new AiSessionMachine();
     expect(machine.accept()).toBe(false);

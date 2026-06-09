@@ -140,6 +140,36 @@ async function initialize(): Promise<void> {
           getCanvasView: () => canvasView,
           scrollContent,
           scrollContainer: container,
+          // 본문에서 드래그한 선택 텍스트를 AI 사이드바에 넘긴다(선택 영역 인식 편집).
+          getSelectedText: () => {
+            const sel = inputHandler?.getSelection();
+            if (!sel) return null;
+            const { start, end } = sel;
+            // 같은 섹션 내 선택만 지원(그 외엔 폴백으로 null).
+            if (start.sectionIndex !== end.sectionIndex) return null;
+            const readPara = (para: number, from: number, count: number): string => {
+              try {
+                return wasm.getTextRange(start.sectionIndex, para, from, count) ?? '';
+              } catch {
+                return '';
+              }
+            };
+            if (start.paragraphIndex === end.paragraphIndex) {
+              const count = end.charOffset - start.charOffset;
+              if (count <= 0) return null;
+              const text = readPara(start.paragraphIndex, start.charOffset, count).trim();
+              return text || null;
+            }
+            const parts: string[] = [];
+            for (let p = start.paragraphIndex; p <= end.paragraphIndex; p++) {
+              const from = p === start.paragraphIndex ? start.charOffset : 0;
+              // 끝 문단만 endOffset까지, 중간 문단은 넉넉히 읽고(엔진이 길이로 클램프) 잘라낸다.
+              const count = p === end.paragraphIndex ? end.charOffset - from : 100000;
+              if (count > 0) parts.push(readPara(p, from, count));
+            }
+            const text = parts.join('\n').trim();
+            return text || null;
+          },
         });
       }
     }

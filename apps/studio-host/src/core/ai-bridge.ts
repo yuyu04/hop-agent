@@ -37,6 +37,8 @@ export interface EditPayload {
   crop?: { x: number; y: number; w: number; h: number };
   /** INSERT 시 참이면 새 페이지에서 시작(본문 문단에만 적용). */
   page_break?: boolean;
+  /** 다시쓰기 대안들(2~3개). 사용자가 여러 변형을 원할 때. text는 추천안(보통 첫 번째). */
+  variations?: string[];
   table_data?: {
     rows: number;
     cols: number;

@@ -54,6 +54,13 @@ export class AiSessionMachine {
     if (this.current === 'REQUESTING') this.current = 'IDLE';
   }
 
+  /** 편집 없는 응답(질문/요약 모드) 완료 → IDLE. REQUESTING에서만 유효. */
+  complete(): boolean {
+    if (this.current !== 'REQUESTING') return false;
+    this.current = 'IDLE';
+    return true;
+  }
+
   /** 요청 취소 → IDLE(REQUESTING) 또는 롤백(DIFF_PENDING). */
   cancel(): void {
     if (this.current === 'REQUESTING') {

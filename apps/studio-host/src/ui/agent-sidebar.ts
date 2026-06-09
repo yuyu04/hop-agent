@@ -13,6 +13,7 @@ import {
   listenAiEvents,
   parseActionScript,
   type ActionScript,
+  type Edit,
   type AiEditFailed,
   type AiEditReady,
   type AiEventUnsubscribe,
@@ -64,6 +65,8 @@ export interface AgentSidebarDeps {
   getCanvasView(): CanvasViewLike | null;
   scrollContent: HTMLElement;
   scrollContainer: HTMLElement;
+  /** 에디터에서 현재 선택된 텍스트(없으면 null). 선택 영역 인식 편집용. */
+  getSelectedText?(): string | null;
 }
 
 /** 커스텀 OpenAI 호환 엔드포인트(Groq/OpenRouter/Together/LM Studio/게이트웨이). 스펙 5.3장. */
@@ -189,6 +192,16 @@ export class AgentSidebar {
   private logs: string[] = [];
   /** '로그 보기'로 연 별도 로그 창(있으면 실시간 갱신). */
   private logWindow: Window | null = null;
+  /** 작업 모드: 'edit'=문서 편집, 'ask'=편집 없이 질문/요약 답변. */
+  private mode: 'edit' | 'ask' = 'edit';
+  /** 전송 시점에 고정한 모드(응답 처리에서 사용 — this.mode가 그새 바뀌어도 안전). */
+  private requestMode: 'edit' | 'ask' = 'edit';
+  private readonly modeEditBtn: HTMLButtonElement;
+  private readonly modeAskBtn: HTMLButtonElement;
+  private readonly quickActions: HTMLElement;
+  /** 변형 제안 상태(대안 버튼들 + 대상 edit + 컨테이너). 변형을 고를 때 다시 적용한다. */
+  private variationState: { edit: Edit; btns: HTMLButtonElement[]; container: HTMLElement } | null =
+    null;
   private readonly keyRow: HTMLElement;
   private readonly keyInput: HTMLInputElement;
   private readonly keyStatus: HTMLElement;
@@ -237,6 +250,9 @@ export class AgentSidebar {
     this.settingsModal = built.settingsModal;
     this.menu = built.menu;
     this.logPanel = built.logPanel;
+    this.modeEditBtn = built.modeEditBtn;
+    this.modeAskBtn = built.modeAskBtn;
+    this.quickActions = built.quickActions;
     this.keyRow = built.keyRow;
     this.keyInput = built.keyInput;
     this.keyStatus = built.keyStatus;
@@ -264,6 +280,13 @@ export class AgentSidebar {
     this.sensitiveCheckbox.addEventListener('change', () => void this.onSensitivityToggle());
     this.presetSelect.addEventListener('change', () => this.applyPreset());
     this.promptInput.addEventListener('keydown', (event) => this.onPromptKeydown(event as KeyboardEvent));
+    this.modeEditBtn.addEventListener('click', () => this.setMode('edit'));
+    this.modeAskBtn.addEventListener('click', () => this.setMode('ask'));
+    // 빠른 작업 칩 — data-action으로 위임 처리.
+    this.quickActions.addEventListener('click', (event) => {
+      const target = (event.target as HTMLElement).closest('[data-action]') as HTMLElement | null;
+      if (target?.dataset.action) void this.runQuickAction(target.dataset.action);
+    });
     this.panel.addEventListener('paste', (event) => void this.onPaste(event as ClipboardEvent));
     // 드래그&드롭으로 이미지·텍스트 문서 첨부.
     this.panel.addEventListener('dragover', (event) => this.onDragOver(event as DragEvent));
@@ -485,6 +508,38 @@ export class AgentSidebar {
     this.panel.classList.toggle('hop-ai-empty', !this.activeConv.hasMessages);
   }
 
+  /** 작업 모드 전환(편집/질문). 질문 모드는 문서를 수정하지 않고 답변만 한다. */
+  private setMode(mode: 'edit' | 'ask'): void {
+    this.mode = mode;
+    this.modeEditBtn.classList.toggle('hop-ai-mode-active', mode === 'edit');
+    this.modeAskBtn.classList.toggle('hop-ai-mode-active', mode === 'ask');
+    this.promptInput.placeholder =
+      mode === 'ask'
+        ? '문서에 대해 물어보세요 (예: 이 문서 핵심만 요약해줘) — 편집하지 않습니다'
+        : '무엇을 바꿀까요?  (예: 표의 총 사업비를 10억으로)';
+  }
+
+  /** 빠른 작업 칩 — 프리셋 지시를 채워 바로 전송한다. 선택 영역이 있으면 그 부분이 대상. */
+  private async runQuickAction(action: string): Promise<void> {
+    const presets: Record<string, { mode: 'edit' | 'ask'; text: string }> = {
+      concise: { mode: 'edit', text: '선택한 부분(선택이 없으면 현재 문단)을 의미는 유지하되 더 간결하게 다듬어줘.' },
+      formal: { mode: 'edit', text: '선택한 부분(선택이 없으면 현재 문단)을 더 격식 있고 정중한 문어체로 다듬어줘.' },
+      expand: { mode: 'edit', text: '선택한 부분(선택이 없으면 현재 문단)을 더 자세하고 구체적으로 확장해줘.' },
+      grammar: { mode: 'edit', text: '선택한 부분(선택이 없으면 현재 문단)의 맞춤법·문법·어색한 표현만 교정하고 내용은 그대로 둬.' },
+      variations: {
+        mode: 'edit',
+        text: '선택한 부분(선택이 없으면 현재 문단)을 다시 써줘. 한 edit의 payload.variations에 서로 다른 표현의 대안을 2~3개 넣고, payload.text에는 추천안(첫 번째)을 넣어줘.',
+      },
+      summarize: { mode: 'ask', text: '이 문서(선택 영역이 있으면 그 부분)의 핵심을 요약해줘.' },
+    };
+    const preset = presets[action];
+    if (!preset) return;
+    this.setMode(preset.mode);
+    const existing = this.promptInput.value.trim();
+    this.promptInput.value = existing ? `${existing}\n${preset.text}` : preset.text;
+    await this.send();
+  }
+
   private async send(): Promise<void> {
     const prompt = this.promptInput.value.trim();
     if (!prompt) {
@@ -574,7 +629,20 @@ export class AgentSidebar {
         return;
       }
     }
-    const effectivePrompt = `${docText ? `${docText}\n\n` : ''}${imageManifest}${prompt}`;
+    // 전송 시점의 모드를 고정(응답 처리에서 사용).
+    this.requestMode = this.mode;
+    // 본문에서 드래그한 선택 텍스트가 있으면 그 부분만 대상으로 삼게 한다(선택 영역 인식).
+    const selectedText = this.deps.getSelectedText?.()?.trim() ?? '';
+    const selPrefix = selectedText
+      ? `[사용자가 선택한 텍스트]\n«${selectedText}»\n위 선택 영역만 대상으로 작업하고, 그 텍스트가 포함된 문단을 REPLACE하세요. 선택 밖 내용은 바꾸지 마세요.\n\n`
+      : '';
+    const askPrefix =
+      this.requestMode === 'ask'
+        ? '다음은 편집 요청이 아니라 질문입니다. 문서를 절대 수정하지 말고(edits는 반드시 빈 배열 []) message에만 한국어로 답하거나 요약하세요.\n\n'
+        : '';
+    if (selectedText) this.log(`선택 영역 ${selectedText.length}자 포함`);
+    this.log(`모드: ${this.requestMode === 'ask' ? '질문/요약' : '편집'}`);
+    const effectivePrompt = `${askPrefix}${selPrefix}${docText ? `${docText}\n\n` : ''}${imageManifest}${prompt}`;
 
     // 삽입용 이미지 디코드(원본 픽셀 크기) — image_index가 이 배열을 가리킨다.
     this.pendingInsertImages = await buildInsertImages(allImageInputs);
@@ -754,6 +822,18 @@ export class AgentSidebar {
         .map((e) => `${e.command} ${e.target_id} [${e.payload.type ?? 'paragraph'}${e.payload.image_index !== undefined ? ` idx=${e.payload.image_index}` : ''}${e.payload.crop ? ' crop' : ''}]`)
         .join(' / ')}`,
     );
+    // 질문/요약 모드이거나 편집이 없으면, 문서를 건드리지 않고 답변만 표시한다(Copilot의 'Ask').
+    if (this.requestMode === 'ask' || script.edits.length === 0) {
+      this.session.complete();
+      if (this.active) {
+        this.active.msgEl.textContent =
+          script.message?.trim() ||
+          (this.requestMode === 'ask' ? '(응답이 비어 있습니다.)' : '바꿀 내용이 없습니다.');
+      }
+      this.log(`답변 모드: 편집 없음(message ${script.message ? '있음' : '없음'})`);
+      this.setActiveStatus(this.requestMode === 'ask' ? '답변 완료' : '변경 사항이 없습니다.', 'ok');
+      return;
+    }
     if (!this.session.onReady()) return;
     // 이미지 crop 지정(PDF 페이지에서 그림만 잘라내기)을 미리 처리: 잘린 이미지를
     // pendingInsertImages에 추가하고 해당 편집의 image_index를 그쪽으로 바꾼다.
@@ -779,6 +859,7 @@ export class AgentSidebar {
       // 항상 노출해 사용자가 승인/거절 수단을 잃지 않도록 한다.
       this.renderDecisionBar(script, result.changed);
       this.setPreviewEnabled(true);
+      this.renderVariations(script);
       const note = this.skipNote(result);
       const tone = result.applied === 0 && result.skipped.length ? 'warn' : 'info';
       this.setActiveStatus(`미리 적용 ${result.applied}건${note} — 승인 또는 거절하세요.`, tone);
@@ -1345,6 +1426,53 @@ export class AgentSidebar {
     );
   }
 
+  /**
+   * AI가 변형(variations)을 제시했으면 버블에 대안 버튼들을 그린다. 버튼을 누르면
+   * 스냅샷으로 되돌린 뒤 그 대안으로 다시 적용한다(승인 전까지 자유롭게 전환).
+   */
+  private renderVariations(script: ActionScript): void {
+    const turn = this.active;
+    if (!turn) return;
+    const edit = script.edits.find((e) => (e.payload.variations?.length ?? 0) >= 2);
+    if (!edit?.payload.variations) return;
+    const variations = edit.payload.variations;
+    const container = el('div', 'hop-ai-variations');
+    const label = el('div', 'hop-ai-variations-label');
+    label.textContent = `대안 ${variations.length}개 — 눌러서 적용:`;
+    container.appendChild(label);
+    const btns: HTMLButtonElement[] = [];
+    variations.forEach((text, i) => {
+      const b = el('button', 'hop-ai-variation') as HTMLButtonElement;
+      const preview = text.length > 70 ? `${text.slice(0, 70)}…` : text;
+      b.textContent = `${i + 1}. ${preview}`;
+      if (text === edit.payload.text) b.classList.add('hop-ai-variation-active');
+      b.addEventListener('click', () => this.pickVariation(i));
+      btns.push(b);
+      container.appendChild(b);
+    });
+    this.variationState = { edit, btns, container };
+    turn.decisionEl.before(container);
+  }
+
+  /** 변형 대안 선택 → 스냅샷 시점으로 되돌린 뒤 그 텍스트로 재적용. */
+  private pickVariation(index: number): void {
+    const state = this.variationState;
+    const script = this.pendingScript;
+    if (!state || !script || !this.snapshot) return;
+    const text = state.edit.payload.variations?.[index];
+    if (text === undefined) return;
+    this.reloadSnapshot();
+    state.edit.payload.text = text;
+    clearInlineDiff(this.deps.scrollContent);
+    const result = applyActionScript(this.deps.bridge, script, this.pendingInsertImages);
+    this.reflowAndRender();
+    this.applied = result;
+    this.renderDiff(script);
+    this.renderDecisionBar(script, result.changed);
+    state.btns.forEach((b, i) => b.classList.toggle('hop-ai-variation-active', i === index));
+    this.setActiveStatus(`대안 ${index + 1} 적용 — 승인 또는 거절하세요.`, 'info');
+  }
+
   /** export/load를 지원하면 현재 문서를 스냅샷으로 잡는다. 반환: 스냅샷 성공 여부. */
   private snapshotDocument(): boolean {
     const b = this.deps.bridge;
@@ -1357,6 +1485,19 @@ export class AgentSidebar {
     } catch {
       this.snapshot = null;
       return false;
+    }
+  }
+
+  /** 스냅샷 바이트를 다시 로드한다(스냅샷·미리보기는 유지 — 변형 전환용). */
+  private reloadSnapshot(): void {
+    const b = this.deps.bridge;
+    if (this.snapshot && b.loadDocument) {
+      try {
+        b.loadDocument(this.snapshot.bytes, this.snapshot.fileName);
+        this.reflowAndRender();
+      } catch {
+        /* 복원 실패는 무시 */
+      }
     }
   }
 
@@ -1389,6 +1530,9 @@ export class AgentSidebar {
   private clearPreview(): void {
     this.pendingScript = null;
     clearInlineDiff(this.deps.scrollContent);
+    // 변형 대안 버튼 정리.
+    this.variationState?.container.remove();
+    this.variationState = null;
     if (this.active) {
       this.active.bodyEl.replaceChildren();
       this.setPreviewEnabledFor(this.active, false);
@@ -1570,6 +1714,9 @@ interface PanelParts {
   tabBar: HTMLElement;
   threadsWrap: HTMLElement;
   promptInput: HTMLTextAreaElement;
+  modeEditBtn: HTMLButtonElement;
+  modeAskBtn: HTMLButtonElement;
+  quickActions: HTMLElement;
   providerSelect: HTMLSelectElement;
   modelSelect: HTMLSelectElement;
   modelInput: HTMLInputElement;
@@ -1677,6 +1824,32 @@ function buildPanel(): PanelParts {
 
   // 컴포저(하단 입력)
   const chipsArea = el('div', 'hop-ai-chips');
+
+  // 모드 토글(편집/질문) + 빠른 작업 칩.
+  const modeEditBtn = btn('hop-ai-mode-btn hop-ai-mode-active', '편집');
+  modeEditBtn.title = '문서를 편집합니다';
+  const modeAskBtn = btn('hop-ai-mode-btn', '질문');
+  modeAskBtn.title = '편집하지 않고 질문·요약에 답합니다';
+  const modeToggle = el('div', 'hop-ai-mode-toggle');
+  modeToggle.append(modeEditBtn, modeAskBtn);
+
+  const quickActions = el('div', 'hop-ai-quick');
+  const QUICK_ACTIONS: { action: string; label: string }[] = [
+    { action: 'concise', label: '간결하게' },
+    { action: 'formal', label: '격식있게' },
+    { action: 'expand', label: '길게' },
+    { action: 'grammar', label: '문법 교정' },
+    { action: 'variations', label: '변형 제안' },
+    { action: 'summarize', label: '요약' },
+  ];
+  for (const q of QUICK_ACTIONS) {
+    const chip = btn('hop-ai-quick-chip', q.label);
+    chip.dataset.action = q.action;
+    quickActions.appendChild(chip);
+  }
+  const quickbar = el('div', 'hop-ai-quickbar');
+  quickbar.append(modeToggle, quickActions);
+
   const promptInput = document.createElement('textarea');
   promptInput.className = 'hop-ai-prompt';
   promptInput.rows = 3;
@@ -1713,7 +1886,7 @@ function buildPanel(): PanelParts {
 
   const statusArea = el('div', 'hop-ai-status');
   const composer = el('div', 'hop-ai-composer');
-  composer.append(chipsArea, promptInput, composerBar, statusArea, imageInput, docInput);
+  composer.append(chipsArea, quickbar, promptInput, composerBar, statusArea, imageInput, docInput);
 
   // 컴포저는 본문 영역에 두고, 빈 대화면 상단/대화 시작 시 하단으로 CSS order로 이동.
   const body = el('div', 'hop-ai-body');
@@ -1733,6 +1906,9 @@ function buildPanel(): PanelParts {
     tabBar,
     threadsWrap,
     promptInput,
+    modeEditBtn,
+    modeAskBtn,
+    quickActions,
     providerSelect,
     modelSelect,
     modelInput,

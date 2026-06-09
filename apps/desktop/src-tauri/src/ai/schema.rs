@@ -75,6 +75,10 @@ pub struct EditPayload {
     /// INSERT 시 참이면 새 페이지에서 시작(본문 문단에만 적용).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub page_break: Option<bool>,
+    /// 다시쓰기 대안들(선택, 2~3개). 사용자가 여러 변형을 요청할 때 채운다.
+    /// text에는 추천안(보통 variations[0])을 넣고, UI에서 다른 안을 고를 수 있다.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub variations: Vec<String>,
 }
 
 /// 단일 편집 항목.
@@ -197,6 +201,11 @@ pub fn action_script_schema() -> Value {
                                 "page_break": {
                                     "type": "boolean",
                                     "description": "참이면 삽입한 문단을 새 페이지에서 시작한다(INSERT에만 유효)."
+                                },
+                                "variations": {
+                                    "type": "array",
+                                    "description": "다시쓰기 대안 2~3개(선택). 사용자가 여러 안을 원할 때만 채운다. text에는 추천안(보통 첫 번째)을 넣는다.",
+                                    "items": { "type": "string" }
                                 },
                                 "table_data": {
                                     "type": "object",
@@ -335,6 +344,23 @@ mod tests {
         )
         .unwrap();
         assert!(collect_violations(&script, &whitelist(&["sec[0].p[0]"])).is_empty());
+    }
+
+    #[test]
+    fn parses_variations_and_round_trips() {
+        let raw = r#"{"edits":[
+            {"command":"REPLACE","target_id":"sec[0].p[1]",
+             "payload":{"type":"paragraph","text":"안 1","variations":["안 1","안 2","안 3"]}}
+        ]}"#;
+        let script = parse_action_script(raw).unwrap();
+        assert_eq!(script.edits[0].payload.variations, vec!["안 1", "안 2", "안 3"]);
+        // 재직렬화 시 프런트로 그대로 전달되어야 한다.
+        let json = serde_json::to_string(&script).unwrap();
+        assert!(json.contains("variations"));
+        // 빈 variations는 직렬화에서 생략된다.
+        let raw2 = r#"{"edits":[{"command":"DELETE","target_id":"sec[0].p[0]","payload":{}}]}"#;
+        let s2 = parse_action_script(raw2).unwrap();
+        assert!(!serde_json::to_string(&s2).unwrap().contains("variations"));
     }
 
     #[test]
