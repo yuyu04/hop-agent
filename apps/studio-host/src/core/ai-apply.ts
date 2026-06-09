@@ -83,6 +83,26 @@ export interface WasmEditing {
     charOffset: number,
     count: number,
   ): string;
+  // 열 폭 조절용(선택). 표 생성 후 긴 텍스트 열을 넓혀 표가 세로로 덜 늘어나게 한다.
+  // WasmBridge가 제공하지만 일부(테스트용) 브리지엔 없을 수 있어 optional.
+  getTableProperties?(
+    sec: number,
+    parentPara: number,
+    controlIdx: number,
+  ): { tableWidth?: number };
+  getTableCellBboxes?(
+    sec: number,
+    parentPara: number,
+    controlIdx: number,
+    pageHint?: number,
+  ): Array<{ cellIdx: number; col: number; colSpan: number }>;
+  setCellProperties?(
+    sec: number,
+    parentPara: number,
+    controlIdx: number,
+    cellIdx: number,
+    props: { width?: number },
+  ): { ok: boolean };
 }
 
 export interface ApplySkip {
@@ -369,6 +389,42 @@ function createTableAt(wasm: WasmEditing, sec: number, para: number, edit: Edit)
     } catch {
       /* 잘못된 병합 범위는 무시(표 자체는 유지) */
     }
+  }
+  // 열 폭 가중치 적용(병합 후) — 긴 텍스트 열을 넓혀 표가 세로로 덜 늘어나게 한다.
+  applyColumnWeights(wasm, sec, result.paraIdx, result.controlIdx, data.col_weights, cols);
+}
+
+/**
+ * col_weights(열별 상대 폭)를 실제 셀 폭(HWPUNIT)으로 환산해 적용한다. 표 전체 폭은
+ * 유지한 채 가중치 비율로 열을 재분배하고, 병합 셀은 덮는 열들의 가중치 합을 쓴다.
+ * 폭 조절 API가 없는 브리지(일부 테스트용)에서는 조용히 건너뛴다.
+ */
+function applyColumnWeights(
+  wasm: WasmEditing,
+  sec: number,
+  para: number,
+  ctrl: number,
+  weights: number[] | undefined,
+  cols: number,
+): void {
+  if (!weights || weights.length !== cols) return;
+  const total = weights.reduce((a, b) => a + Math.max(0, b), 0);
+  if (total <= 0) return;
+  if (!wasm.getTableProperties || !wasm.getTableCellBboxes || !wasm.setCellProperties) return;
+  try {
+    const tableWidth = wasm.getTableProperties(sec, para, ctrl).tableWidth ?? 0;
+    if (tableWidth <= 0) return;
+    const cells = wasm.getTableCellBboxes(sec, para, ctrl);
+    for (const c of cells) {
+      const span = Math.max(1, c.colSpan);
+      let w = 0;
+      for (let j = c.col; j < c.col + span && j < cols; j += 1) w += Math.max(0, weights[j]);
+      if (w <= 0) continue;
+      const width = Math.round((tableWidth * w) / total);
+      if (width > 0) wasm.setCellProperties(sec, para, ctrl, c.cellIdx, { width });
+    }
+  } catch {
+    /* 폭 조절 실패는 무시(표 내용·구조는 이미 정상) */
   }
 }
 

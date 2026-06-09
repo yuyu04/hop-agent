@@ -39,6 +39,8 @@ export interface EditPayload {
     matrix: string[][];
     /** 병합할 셀 영역(0-기준, 끝 포함). */
     merges?: { start_row: number; start_col: number; end_row: number; end_col: number }[];
+    /** 열별 상대 폭 가중치(길이=cols). 긴 텍스트 열은 크게, 짧은 열은 작게. */
+    col_weights?: number[];
   };
 }
 

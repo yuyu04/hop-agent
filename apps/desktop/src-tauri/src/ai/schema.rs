@@ -27,6 +27,11 @@ pub struct TableData {
     /// 병합할 셀 영역들(선택). 헤더 병합·세로 병합 등에 쓴다.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub merges: Vec<MergeSpec>,
+    /// 열별 상대 폭 가중치(선택, 길이=cols). 긴 텍스트 열은 크게, ○/× 같은 짧은
+    /// 열은 작게 지정하면 표가 세로로 덜 늘어나 여러 쪽으로 쪼개지는 것을 줄인다.
+    /// 예: [3,3,2,2,8] → 마지막(비고) 열이 가장 넓다.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub col_weights: Vec<u32>,
 }
 
 /// 표 셀 병합 영역(0-기준 행/열 범위, 끝 포함).
@@ -176,6 +181,11 @@ pub fn action_script_schema() -> Value {
                                                     "end_col": { "type": "integer" }
                                                 }
                                             }
+                                        },
+                                        "col_weights": {
+                                            "type": "array",
+                                            "description": "열별 상대 폭 가중치(길이=cols). 긴 설명/비고 열은 크게(예 8), ○/× 같은 짧은 열은 작게(예 2) 두어 표가 세로로 덜 늘어나게 한다.",
+                                            "items": { "type": "integer" }
                                         }
                                     }
                                 }

@@ -38,6 +38,20 @@ class FakeWasm implements WasmEditing {
     this.calls.push(`mergeTableCells(${s},${pp},${ci},${sr},${sc},${er},${ec})`);
     return { ok: true, cellCount: 1 };
   }
+  tableWidth = 0;
+  bboxes: Array<{ cellIdx: number; col: number; colSpan: number }> = [];
+  getTableProperties(s: number, pp: number, ci: number) {
+    this.calls.push(`getTableProperties(${s},${pp},${ci})`);
+    return { tableWidth: this.tableWidth };
+  }
+  getTableCellBboxes(s: number, pp: number, ci: number) {
+    this.calls.push(`getTableCellBboxes(${s},${pp},${ci})`);
+    return this.bboxes;
+  }
+  setCellProperties(s: number, pp: number, ci: number, cell: number, props: { width?: number }) {
+    this.calls.push(`setCellProperties(${s},${pp},${ci},${cell},w=${props.width})`);
+    return { ok: true };
+  }
   getCellParagraphLength(s: number, pp: number, ci: number, ce: number, cp: number): number {
     this.calls.push(`getCellParagraphLength(${s},${pp},${ci},${ce},${cp})`);
     return this.lengths[`${s}.${pp}.${ci}.${ce}.${cp}`] ?? 0;
@@ -155,6 +169,44 @@ describe('applyActionScript', () => {
     expect(result.applied).toBe(0);
     expect(result.skipped[0].reason).toContain('표 셀 안에는 표를');
     expect(wasm.calls).toEqual([]);
+  });
+
+  it('applies col_weights as proportional cell widths after creating a table', () => {
+    const wasm = new FakeWasm();
+    wasm.lengths['0.4'] = 0;
+    wasm.tableWidth = 10000;
+    wasm.bboxes = [
+      { cellIdx: 0, col: 0, colSpan: 1 },
+      { cellIdx: 1, col: 1, colSpan: 1 },
+      { cellIdx: 2, col: 0, colSpan: 1 },
+      { cellIdx: 3, col: 1, colSpan: 1 },
+    ];
+    applyActionScript(
+      wasm,
+      script([
+        {
+          command: 'INSERT_AFTER',
+          target_id: 'sec[0].p[4]',
+          payload: {
+            type: 'table',
+            table_data: {
+              rows: 2,
+              cols: 2,
+              matrix: [
+                ['a', 'b'],
+                ['c', 'd'],
+              ],
+              col_weights: [1, 4], // 폭 합 5 → 좁은 열 2000, 넓은 열 8000.
+            },
+          },
+        },
+      ]),
+    );
+    // 표는 split 후 para 5에 생성된다(result.paraIdx=5).
+    expect(wasm.calls).toContain('setCellProperties(0,5,0,0,w=2000)');
+    expect(wasm.calls).toContain('setCellProperties(0,5,0,1,w=8000)');
+    expect(wasm.calls).toContain('setCellProperties(0,5,0,2,w=2000)');
+    expect(wasm.calls).toContain('setCellProperties(0,5,0,3,w=8000)');
   });
 
   it('merges cells after filling when table_data.merges is given', () => {
