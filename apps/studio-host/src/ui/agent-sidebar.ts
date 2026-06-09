@@ -2037,26 +2037,52 @@ function cropImageForInsert(
       try {
         const iw = img.naturalWidth;
         const ih = img.naturalHeight;
-        // 비율 → 픽셀, 경계 클램프.
-        const sx = Math.max(0, Math.min(iw, Math.round(crop.x * iw)));
-        const sy = Math.max(0, Math.min(ih, Math.round(crop.y * ih)));
-        const sw = Math.max(1, Math.min(iw - sx, Math.round(crop.w * iw)));
-        const sh = Math.max(1, Math.min(ih - sy, Math.round(crop.h * ih)));
-        const canvas = document.createElement('canvas');
-        canvas.width = sw;
-        canvas.height = sh;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) {
+        // AI가 보고 정한 crop은 픽셀 단위로 정확하지 않아 그림을 살짝 잘라먹는다.
+        // 페이지의 일정 여백(M)만큼 확장한 '작업 창'을 만든 뒤, 그 안에서 비(非)백색
+        // 내용 경계로 스냅한다 → 그림이 잘리지 않으면서 배경 여백은 제거된다.
+        const M = 0.07;
+        const x0 = Math.max(0, crop.x - M);
+        const y0 = Math.max(0, crop.y - M);
+        const x1 = Math.min(1, crop.x + crop.w + M);
+        const y1 = Math.min(1, crop.y + crop.h + M);
+        const sx = Math.round(x0 * iw);
+        const sy = Math.round(y0 * ih);
+        const sw = Math.max(1, Math.min(iw - sx, Math.round((x1 - x0) * iw)));
+        const sh = Math.max(1, Math.min(ih - sy, Math.round((y1 - y0) * ih)));
+        const work = document.createElement('canvas');
+        work.width = sw;
+        work.height = sh;
+        const wctx = work.getContext('2d', { willReadFrequently: true });
+        if (!wctx) {
           resolve(null);
           return;
         }
-        ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
-        const b64 = (canvas.toDataURL('image/png').split(',')[1] ?? '');
+        wctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+
+        // 작업 창 안 내용 경계 상자로 스냅(여백 8px). 전부 백색이면 작업 창을 그대로.
+        let canvas: HTMLCanvasElement = work;
+        const box = contentBoundingBox(wctx, sw, sh);
+        if (box) {
+          const pad = 8;
+          const bx = Math.max(0, box.minX - pad);
+          const by = Math.max(0, box.minY - pad);
+          const bw = Math.min(sw - bx, box.maxX - box.minX + 1 + pad * 2);
+          const bh = Math.min(sh - by, box.maxY - box.minY + 1 + pad * 2);
+          const out = document.createElement('canvas');
+          out.width = bw;
+          out.height = bh;
+          const octx = out.getContext('2d');
+          if (octx) {
+            octx.drawImage(work, bx, by, bw, bh, 0, 0, bw, bh);
+            canvas = out;
+          }
+        }
+        const b64 = canvas.toDataURL('image/png').split(',')[1] ?? '';
         resolve({
           bytes: bytesFromBase64(b64),
           extension: 'png',
-          naturalWidthPx: sw,
-          naturalHeightPx: sh,
+          naturalWidthPx: canvas.width,
+          naturalHeightPx: canvas.height,
         });
       } catch {
         resolve(null);
@@ -2065,6 +2091,36 @@ function cropImageForInsert(
     img.onerror = () => resolve(null);
     img.src = `data:${mime};base64,${base64FromBytes(src.bytes)}`;
   });
+}
+
+/**
+ * 캔버스에서 비(非)백색 픽셀의 경계 상자를 찾는다. 모두 (거의) 백색이면 null.
+ * PDF 페이지 렌더에서 그림 영역을 배경 여백과 분리하는 데 쓴다.
+ */
+function contentBoundingBox(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+): { minX: number; minY: number; maxX: number; maxY: number } | null {
+  const { data } = ctx.getImageData(0, 0, w, h);
+  const THRESH = 245; // 한 채널이라도 이 값 미만이면 '내용'(연한 파스텔 박스도 포함).
+  let minX = w;
+  let minY = h;
+  let maxX = -1;
+  let maxY = -1;
+  for (let y = 0; y < h; y++) {
+    let rowBase = y * w * 4;
+    for (let x = 0; x < w; x++, rowBase += 4) {
+      if (data[rowBase + 3] < 16) continue; // 투명 픽셀 무시
+      if (data[rowBase] < THRESH || data[rowBase + 1] < THRESH || data[rowBase + 2] < THRESH) {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+  return maxX < 0 ? null : { minX, minY, maxX, maxY };
 }
 
 /** data URL → 캔버스 → PNG 바이트. 캔버스를 못 쓰는 환경에선 null. */
