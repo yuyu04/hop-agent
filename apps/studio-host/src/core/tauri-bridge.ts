@@ -133,6 +133,12 @@ export interface AiBridgeApi {
     path: string,
     query: string,
   ): Promise<{ dataBase64: string; mime: string; page?: number; figureOnly?: boolean }[]>;
+  /** 글쓰기 스킬 목록(문서 유형별 작성 지침 .md). */
+  aiListSkills(): Promise<
+    { id: string; name: string; description: string; triggers: string[]; body: string }[]
+  >;
+  /** 스킬 폴더를 OS 파일 탐색기로 연다(사용자가 .md 추가/편집). */
+  aiOpenSkillsDir(): Promise<void>;
   /** 진행 중인 요청을 취소한다(스펙 7장). */
   aiCancelRequest(requestId: string): Promise<void>;
   /** provider API 키를 OS 보안 저장소에 저장한다(스펙 6장). */
@@ -384,6 +390,23 @@ export class TauriBridge extends WasmBridge implements DesktopBridgeApi, AiBridg
       page?: number;
       figureOnly?: boolean;
     }[];
+  }
+
+  async aiListSkills(): Promise<
+    { id: string; name: string; description: string; triggers: string[]; body: string }[]
+  > {
+    const json = await this.invoke<string>('ai_list_skills');
+    return JSON.parse(json) as {
+      id: string;
+      name: string;
+      description: string;
+      triggers: string[];
+      body: string;
+    }[];
+  }
+
+  async aiOpenSkillsDir(): Promise<void> {
+    await this.invoke<void>('ai_open_skills_dir');
   }
 
   async aiCancelRequest(requestId: string): Promise<void> {

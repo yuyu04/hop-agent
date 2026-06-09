@@ -211,6 +211,9 @@ export class AgentSidebar {
   private readonly modeEditBtn: HTMLButtonElement;
   private readonly modeAskBtn: HTMLButtonElement;
   private readonly quickActions: HTMLElement;
+  private readonly skillSelect: HTMLSelectElement;
+  /** 로드된 글쓰기 스킬 목록(문서 유형별 작성 지침). */
+  private skills: { id: string; name: string; description: string; triggers: string[]; body: string }[] = [];
   /** 변형 제안 상태(대안 버튼들 + 대상 edit + 컨테이너). 변형을 고를 때 다시 적용한다. */
   private variationState: { edit: Edit; btns: HTMLButtonElement[]; container: HTMLElement } | null =
     null;
@@ -266,6 +269,7 @@ export class AgentSidebar {
     this.modeEditBtn = built.modeEditBtn;
     this.modeAskBtn = built.modeAskBtn;
     this.quickActions = built.quickActions;
+    this.skillSelect = built.skillSelect;
     this.keyRow = built.keyRow;
     this.keyInput = built.keyInput;
     this.keyStatus = built.keyStatus;
@@ -326,6 +330,45 @@ export class AgentSidebar {
     void this.subscribe();
     void this.subscribeNativeDragDrop();
     void this.refreshKeyState();
+    void this.loadSkills();
+  }
+
+  /** 글쓰기 스킬을 불러와 드롭다운을 채운다(자동/없음 + 각 스킬). */
+  private async loadSkills(): Promise<void> {
+    try {
+      if (typeof this.deps.bridge.aiListSkills === 'function') {
+        this.skills = await this.deps.bridge.aiListSkills();
+      }
+    } catch {
+      this.skills = [];
+    }
+    const prev = this.skillSelect.value;
+    this.skillSelect.replaceChildren();
+    this.skillSelect.appendChild(option('auto', '스킬: 자동'));
+    this.skillSelect.appendChild(option('none', '스킬: 없음'));
+    for (const s of this.skills) this.skillSelect.appendChild(option(`id:${s.id}`, `스킬: ${s.name}`));
+    this.skillSelect.value = prev || 'auto';
+  }
+
+  /**
+   * 이번 요청에 적용할 스킬 본문을 고른다. 드롭다운이 특정 스킬이면 그것, '없음'이면 null,
+   * '자동'이면 프롬프트에 트리거 키워드가 가장 많이 맞는 스킬을 고른다.
+   */
+  private selectedSkillBody(prompt: string): { name: string; body: string } | null {
+    const v = this.skillSelect?.value ?? 'auto';
+    if (v === 'none') return null;
+    if (v.startsWith('id:')) {
+      const s = this.skills.find((x) => x.id === v.slice(3));
+      return s ? { name: s.name, body: s.body } : null;
+    }
+    const p = prompt.toLowerCase();
+    let best: { name: string; body: string; score: number } | null = null;
+    for (const s of this.skills) {
+      let score = 0;
+      for (const t of s.triggers) if (t && p.includes(t.toLowerCase())) score += 1;
+      if (score > 0 && (!best || score > best.score)) best = { name: s.name, body: s.body, score };
+    }
+    return best ? { name: best.name, body: best.body } : null;
   }
 
   private async subscribe(): Promise<void> {
@@ -784,7 +827,13 @@ export class AgentSidebar {
         : '';
     if (selectedText) this.log(`선택 영역 ${selectedText.length}자 포함`);
     this.log(`모드: ${this.requestMode === 'ask' ? '질문/요약' : '편집'}`);
-    const effectivePrompt = `${askPrefix}${selPrefix}${docText ? `${docText}\n\n` : ''}${imageManifest}${prompt}`;
+    // 글쓰기 스킬 본문을 배경 지침으로 맨 앞에 주입(자동 선택 또는 수동 지정).
+    const skill = this.selectedSkillBody(prompt);
+    const skillPrefix = skill
+      ? `[작성 스킬: ${skill.name}]\n${skill.body}\n\n---\n\n`
+      : '';
+    if (skill) this.log(`스킬 적용: ${skill.name}`);
+    const effectivePrompt = `${skillPrefix}${askPrefix}${selPrefix}${docText ? `${docText}\n\n` : ''}${imageManifest}${prompt}`;
 
     // 삽입용 이미지 디코드(원본 픽셀 크기) — image_index가 이 배열을 가리킨다.
     this.pendingInsertImages = await buildInsertImages(allImageInputs);
@@ -1335,6 +1384,13 @@ export class AgentSidebar {
       this.openLogWindow();
     });
     this.menu.appendChild(logItem);
+    const skillItem = el('button', 'hop-ai-menu-item') as HTMLButtonElement;
+    skillItem.textContent = '✍ 스킬 폴더 열기';
+    skillItem.addEventListener('click', () => {
+      this.toggleMenu(false);
+      void this.deps.bridge.aiOpenSkillsDir?.().then(() => this.loadSkills());
+    });
+    this.menu.appendChild(skillItem);
     const settings = el('button', 'hop-ai-menu-item') as HTMLButtonElement;
     settings.textContent = '⚙ Agent 설정';
     settings.addEventListener('click', () => {
@@ -1868,6 +1924,7 @@ interface PanelParts {
   modeEditBtn: HTMLButtonElement;
   modeAskBtn: HTMLButtonElement;
   quickActions: HTMLElement;
+  skillSelect: HTMLSelectElement;
   providerSelect: HTMLSelectElement;
   modelSelect: HTMLSelectElement;
   modelInput: HTMLInputElement;
@@ -2006,7 +2063,13 @@ function buildPanel(): PanelParts {
     quickActions.appendChild(chip);
   }
   const quickbar = el('div', 'hop-ai-quickbar');
-  quickbar.append(modeToggle, quickActions);
+  // 글쓰기 스킬 선택(자동/없음/<스킬들>). 런타임에 옵션 채움.
+  const skillSelect = document.createElement('select');
+  skillSelect.className = 'hop-ai-skill-select';
+  skillSelect.title = '글쓰기 스킬 — 문서 유형별 작성 지침';
+  skillSelect.appendChild(option('auto', '스킬: 자동'));
+
+  quickbar.append(modeToggle, skillSelect, quickActions);
 
   const promptInput = document.createElement('textarea');
   promptInput.className = 'hop-ai-prompt';
@@ -2069,6 +2132,7 @@ function buildPanel(): PanelParts {
     modeEditBtn,
     modeAskBtn,
     quickActions,
+    skillSelect,
     providerSelect,
     modelSelect,
     modelInput,
