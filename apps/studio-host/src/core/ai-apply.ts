@@ -400,7 +400,31 @@ function createTableAt(wasm: WasmEditing, sec: number, para: number, edit: Edit)
     }
   }
   // 정렬 보정 + 열 폭 가중치(병합 후). 셀 좌표를 한 번만 조회해 둘 다 처리한다.
-  styleTableCells(wasm, sec, result.paraIdx, result.controlIdx, data.col_weights, cols);
+  // col_weights를 AI가 주지 않으면 내용 길이로 자동 산정 → 긴 설명 열이 표 가로폭을
+  // 채우도록 넓어지고 짧은 열(○/×)은 좁아진다(좁은 칸에 글자가 끼는 것 방지).
+  const weights =
+    data.col_weights && data.col_weights.length === cols
+      ? data.col_weights
+      : autoColWeights(matrix, cols);
+  styleTableCells(wasm, sec, result.paraIdx, result.controlIdx, weights, cols);
+}
+
+/**
+ * matrix 내용 길이로 열별 상대 폭을 자동 산정한다(AI가 col_weights를 안 줄 때).
+ * 각 열의 (헤더 포함) 가장 긴 줄 길이를 2~24로 클램프 → 긴 텍스트 열은 넓게, ○/× 같은
+ * 짧은 열은 좁게. 헤더가 긴 열(예 '증액가능여부')은 그만큼 최소 폭을 확보한다.
+ */
+function autoColWeights(matrix: string[][], cols: number): number[] {
+  const weights: number[] = [];
+  for (let c = 0; c < cols; c += 1) {
+    let longest = 1;
+    for (const row of matrix) {
+      const text = row?.[c] ?? '';
+      for (const line of text.split('\n')) longest = Math.max(longest, line.length);
+    }
+    weights.push(Math.max(2, Math.min(24, longest)));
+  }
+  return weights;
 }
 
 /**

@@ -155,8 +155,9 @@ describe('applyActionScript', () => {
       'insertTextInCell(0,5,0,1,0,0,"금액")',
       'insertTextInCell(0,5,0,2,0,0,"총액")',
       'insertTextInCell(0,5,0,3,0,0,"10억")',
-      // 생성 후 셀 정렬/폭 보정을 위해 셀 좌표를 조회한다(빈 목록이면 추가 호출 없음).
+      // 생성 후 셀 정렬/폭 보정을 위해 셀 좌표·표 폭을 조회한다(빈 목록이면 추가 호출 없음).
       'getTableCellBboxes(0,5,0)',
+      'getTableProperties(0,5,0)',
     ]);
   });
 
@@ -213,6 +214,42 @@ describe('applyActionScript', () => {
     expect(wasm.calls).toContain('setCellProperties(0,5,0,1,w=8000)');
     expect(wasm.calls).toContain('setCellProperties(0,5,0,2,w=2000)');
     expect(wasm.calls).toContain('setCellProperties(0,5,0,3,w=8000)');
+  });
+
+  it('auto-sizes columns by content when col_weights is absent (long column widest)', () => {
+    const wasm = new FakeWasm();
+    wasm.lengths['0.4'] = 0;
+    wasm.tableWidth = 14000;
+    wasm.bboxes = [
+      { cellIdx: 0, col: 0, row: 0, colSpan: 1 },
+      { cellIdx: 1, col: 1, row: 0, colSpan: 1 },
+      { cellIdx: 2, col: 0, row: 1, colSpan: 1 },
+      { cellIdx: 3, col: 1, row: 1, colSpan: 1 },
+    ];
+    applyActionScript(
+      wasm,
+      script([
+        {
+          command: 'INSERT_AFTER',
+          target_id: 'sec[0].p[4]',
+          payload: {
+            type: 'table',
+            table_data: {
+              rows: 2,
+              cols: 2,
+              // col_weights 없음 → 내용 길이로 자동: c0 max("구분"=2)→2, c1 max(12자)→12. 합 14.
+              matrix: [
+                ['구분', '아주아주아주긴설명텍스트'],
+                ['a', 'b'],
+              ],
+            },
+          },
+        },
+      ]),
+    );
+    // tableWidth 14000 × (2/14)=2000, (12/14)=12000.
+    expect(wasm.calls).toContain('setCellProperties(0,5,0,0,w=2000)');
+    expect(wasm.calls).toContain('setCellProperties(0,5,0,1,w=12000)');
   });
 
   it('aligns header cells center and body cells left (overrides inherited distribute)', () => {
