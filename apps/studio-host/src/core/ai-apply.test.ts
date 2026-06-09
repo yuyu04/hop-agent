@@ -56,6 +56,10 @@ class FakeWasm implements WasmEditing {
     this.calls.push(`applyParaFormatInCell(${s},${pp},${ci},${cell},${cp},${json})`);
     return '';
   }
+  setTableProperties(s: number, pp: number, ci: number, props: { pageBreak?: number }) {
+    this.calls.push(`setTableProperties(${s},${pp},${ci},pageBreak=${props.pageBreak})`);
+    return { ok: true };
+  }
   getCellParagraphLength(s: number, pp: number, ci: number, ce: number, cp: number): number {
     this.calls.push(`getCellParagraphLength(${s},${pp},${ci},${ce},${cp})`);
     return this.lengths[`${s}.${pp}.${ci}.${ce}.${cp}`] ?? 0;
@@ -151,6 +155,7 @@ describe('applyActionScript', () => {
       'getParagraphLength(0,4)',
       'splitParagraph(0,4,2)',
       'createTable(0,5,0,2,2)',
+      'setTableProperties(0,5,0,pageBreak=1)',
       'insertTextInCell(0,5,0,0,0,0,"구분")',
       'insertTextInCell(0,5,0,1,0,0,"금액")',
       'insertTextInCell(0,5,0,2,0,0,"총액")',

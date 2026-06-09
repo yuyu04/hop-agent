@@ -112,6 +112,13 @@ export interface WasmEditing {
     cellParaIdx: number,
     propsJson: string,
   ): string;
+  /** 표 속성(쪽 나눔 등). pageBreak: 0=없음, 1=셀 단위, 2=행 단위. */
+  setTableProperties?(
+    sec: number,
+    parentPara: number,
+    controlIdx: number,
+    props: { pageBreak?: number },
+  ): { ok: boolean };
 }
 
 export interface ApplySkip {
@@ -367,6 +374,13 @@ function createTableAt(wasm: WasmEditing, sec: number, para: number, edit: Edit)
   const cols = data.cols;
   const result = wasm.createTable(sec, para, 0, rows, cols);
   if (!result.ok) throw new Error('표 생성에 실패했습니다.');
+  // 페이지보다 큰 셀/행이 다음 쪽으로 흘러가도록 '셀 단위 나눔'으로 둔다. 기본값(없음)이면
+  // 페이지 경계에 걸친 긴 셀(예: 긴 비고)이 잘려 보인다.
+  try {
+    wasm.setTableProperties?.(sec, result.paraIdx, result.controlIdx, { pageBreak: 1 });
+  } catch {
+    /* 표 속성 설정 실패는 무시(표 내용은 정상) */
+  }
   const matrix = data.matrix ?? [];
   // 병합에 가려지는 셀(대표=좌상단 셀 제외)은 채우지 않는다. rhwp의 merge_cells는
   // 가려진 셀의 비어있지 않은 문단을 대표 셀로 합치므로, 여기서 같은 텍스트를 넣으면
