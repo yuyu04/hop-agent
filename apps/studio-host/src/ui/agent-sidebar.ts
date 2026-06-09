@@ -723,8 +723,9 @@ export class AgentSidebar {
       // 항상 노출해 사용자가 승인/거절 수단을 잃지 않도록 한다.
       this.renderDecisionBar(script, result.changed);
       this.setPreviewEnabled(true);
-      const skippedNote = result.skipped.length ? `, 건너뜀 ${result.skipped.length}건` : '';
-      this.setActiveStatus(`미리 적용 ${result.applied}건${skippedNote} — 승인 또는 거절하세요.`);
+      const note = this.skipNote(result);
+      const tone = result.applied === 0 && result.skipped.length ? 'warn' : 'info';
+      this.setActiveStatus(`미리 적용 ${result.applied}건${note} — 승인 또는 거절하세요.`, tone);
     } else {
       this.renderInlineDiff(script);
       this.setPreviewEnabled(true);
@@ -750,9 +751,10 @@ export class AgentSidebar {
       this.applied = null;
       this.clearPreview();
       this.deps.bridge.markDocumentDirty?.();
-      const note = result && result.skipped.length ? `, 건너뜀 ${result.skipped.length}건` : '';
+      const note = result ? this.skipNote(result) : '';
       const count = result?.applied ?? 0;
-      this.setActiveStatus(`적용 완료: ${count}건${note}.`, 'ok', active);
+      const tone = count === 0 ? 'warn' : 'ok';
+      this.setActiveStatus(`적용 완료: ${count}건${note}`, tone, active);
       return;
     }
 
@@ -767,8 +769,7 @@ export class AgentSidebar {
     }
     this.reflowAndRender();
     this.deps.bridge.markDocumentDirty?.();
-    const skippedNote = result.skipped.length ? `, 건너뜀 ${result.skipped.length}건` : '';
-    this.setActiveStatus(`적용 완료: ${result.applied}건${skippedNote}.`, 'ok', active);
+    this.setActiveStatus(`적용 완료: ${result.applied}건${this.skipNote(result)}`, 'ok', active);
   }
 
   private reject(): void {
@@ -1349,6 +1350,12 @@ export class AgentSidebar {
     this.cancelBtn.classList.toggle('hop-ai-hidden', !active);
   }
 
+  /** 건너뜀 건수 + 첫 사유를 사람이 읽을 수 있게 만든다(빈 문자열이면 건너뜀 없음). */
+  private skipNote(result: ApplyResult): string {
+    if (!result.skipped.length) return '';
+    return ` · 건너뜀 ${result.skipped.length}건: ${result.skipped[0].reason}`;
+  }
+
   /** 전역(컴포저) 상태줄 — 가드/안내용. */
   private setStatus(message: string, tone: 'info' | 'ok' | 'warn' | 'error' = 'info'): void {
     this.statusArea.textContent = message;
@@ -1654,12 +1661,14 @@ function mimeForImage(name: string): string {
   return 'image/png';
 }
 
-/** 이미지 입력(base64+MIME, 첨부+URL 순서)을 삽입용 ImageForInsert[]로 디코드한다. */
+/**
+ * 이미지 입력(base64+MIME, 첨부+URL 순서)을 삽입용 ImageForInsert[]로 디코드한다.
+ * AI에 보낸 비전 목록과 1:1로 정렬돼야 image_index가 어긋나지 않으므로 절대 드롭하지 않는다.
+ */
 async function buildInsertImages(inputs: AiImageInput[]): Promise<ImageForInsert[]> {
   const out: ImageForInsert[] = [];
   for (const input of inputs) {
-    const normalized = await normalizeForInsert(input.mimeType, input.dataBase64);
-    if (normalized) out.push(normalized);
+    out.push(await normalizeForInsert(input.mimeType, input.dataBase64));
   }
   return out;
 }
@@ -1669,22 +1678,23 @@ async function buildInsertImages(inputs: AiImageInput[]): Promise<ImageForInsert
  * 디코드해 PNG로 재인코딩한다(HWP는 webp를 못 넣어 안 보이는 문제 해결). 원본 픽셀
  * 크기도 함께 잰다.
  */
-async function normalizeForInsert(mime: string, base64: string): Promise<ImageForInsert | null> {
+async function normalizeForInsert(mime: string, base64: string): Promise<ImageForInsert> {
   const ext = extensionFromMime(mime);
   // png/jpg는 그대로(재인코딩으로 인한 용량 증가 방지).
   if (ext === 'png' || ext === 'jpg') {
     const dims = await imageDimensions(mime, base64);
-    if (dims.width === 0 || dims.height === 0) return null;
     return {
       bytes: bytesFromBase64(base64),
       extension: ext,
-      naturalWidthPx: dims.width,
-      naturalHeightPx: dims.height,
+      // 디코드 실패 시에도 드롭하지 않는다(인덱스 정렬 유지). 크기는 기본값으로.
+      naturalWidthPx: dims.width || 800,
+      naturalHeightPx: dims.height || 600,
     };
   }
-  // 그 외(webp/gif/bmp 등) → 캔버스로 PNG 변환.
+  // 그 외(webp/gif/bmp 등) → 캔버스로 PNG 변환. 실패하면 원본 바이트로 폴백(드롭 금지).
   const png = await reencodeToPng(mime, base64);
-  return png;
+  if (png) return png;
+  return { bytes: bytesFromBase64(base64), extension: ext, naturalWidthPx: 800, naturalHeightPx: 600 };
 }
 
 /** 이미지의 지정 영역(0~1 비율)을 잘라 PNG ImageForInsert로 반환한다(캔버스). */
