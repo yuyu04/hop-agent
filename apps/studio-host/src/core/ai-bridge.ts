@@ -28,9 +28,11 @@ export interface DocumentContext {
 export type EditCommand = 'INSERT_BEFORE' | 'INSERT_AFTER' | 'REPLACE' | 'DELETE';
 
 export interface EditPayload {
-  type?: 'paragraph' | 'table';
+  type?: 'paragraph' | 'table' | 'image';
   text?: string;
   style?: string;
+  /** type="image"일 때 삽입할 첨부 이미지의 0-기준 인덱스(첨부 순서). */
+  image_index?: number;
   /** INSERT 시 참이면 새 페이지에서 시작(본문 문단에만 적용). */
   page_break?: boolean;
   table_data?: {

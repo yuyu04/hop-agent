@@ -53,6 +53,9 @@ pub struct EditPayload {
     pub text: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub style: Option<String>,
+    /// type="image"일 때 삽입할 첨부 이미지의 0-기준 인덱스.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_index: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub table_data: Option<TableData>,
     /// INSERT 시 참이면 새 페이지에서 시작(본문 문단에만 적용).
@@ -153,9 +156,13 @@ pub fn action_script_schema() -> Value {
                         "payload": {
                             "type": "object",
                             "properties": {
-                                "type": { "type": "string", "enum": ["paragraph", "table"] },
+                                "type": { "type": "string", "enum": ["paragraph", "table", "image"] },
                                 "text": { "type": "string" },
                                 "style": { "type": "string" },
+                                "image_index": {
+                                    "type": "integer",
+                                    "description": "type=\"image\"일 때 삽입할 첨부 이미지의 0-기준 인덱스(첨부된 순서)."
+                                },
                                 "page_break": {
                                     "type": "boolean",
                                     "description": "참이면 삽입한 문단을 새 페이지에서 시작한다(INSERT에만 유효)."

@@ -26,6 +26,7 @@ import {
   parseParagraphTarget,
   type ApplyResult,
   type ChangedPara,
+  type ImageForInsert,
   type WasmEditing,
 } from '@/core/ai-apply';
 import { buildDiffModel, type DiffItem } from '@/core/ai-diff';
@@ -202,6 +203,8 @@ export class AgentSidebar {
   private requestId: string | null = null;
   private context: DocumentContext | null = null;
   private pendingScript: ActionScript | null = null;
+  /** 이번 요청에 첨부된 이미지(삽입용, 첨부 순서). image_index가 이 배열을 가리킨다. */
+  private pendingInsertImages: ImageForInsert[] = [];
   /** 낙관적 적용 전 문서 스냅샷(거절/롤백 시 복원). */
   private snapshot: { bytes: Uint8Array; fileName: string } | null = null;
   /** 낙관적 적용 결과(승인 메시지용). */
@@ -544,6 +547,9 @@ export class AgentSidebar {
     }
     const effectivePrompt = docText ? `${docText}\n\n${prompt}` : prompt;
 
+    // 삽입용 이미지(첨부 순서) 디코드 — image_index가 이 배열을 가리킨다.
+    this.pendingInsertImages = await buildInsertImages(attachments);
+
     this.appendUserTurn(prompt, attachments);
     this.active = this.appendAssistantTurn();
     this.promptInput.value = '';
@@ -620,7 +626,7 @@ export class AgentSidebar {
     // 스냅샷 가능(데스크톱)하면 승인 전 "미리 적용"해 문서에 바로 반영하고, 거절 시
     // 스냅샷으로 되돌린다(Cursor/변경내용추적 방식). 불가하면 가상 미리보기로 폴백.
     if (this.snapshotDocument()) {
-      const result = applyActionScript(this.deps.bridge, script);
+      const result = applyActionScript(this.deps.bridge, script, this.pendingInsertImages);
       this.reflowAndRender();
       this.applied = result;
       // 페이지 위 인라인 표시(변경 위치 좌표를 잡을 수 있을 때만 뜬다 — 표 삽입 등은
@@ -663,7 +669,7 @@ export class AgentSidebar {
 
     // 폴백(가상 미리보기) 경로 — 승인 시점에 적용.
     if (!this.pendingScript || !this.session.accept()) return;
-    const result = applyActionScript(this.deps.bridge, this.pendingScript);
+    const result = applyActionScript(this.deps.bridge, this.pendingScript, this.pendingInsertImages);
     this.clearPreview();
     if (result.applied === 0) {
       const reason = result.skipped[0]?.reason ?? '적용할 수 있는 편집이 없습니다.';
@@ -1541,6 +1547,53 @@ function mimeForImage(name: string): string {
   if (ext === 'webp') return 'image/webp';
   if (ext === 'bmp') return 'image/bmp';
   return 'image/png';
+}
+
+/** 첨부 이미지(첨부 순서)를 삽입용 ImageForInsert[]로 디코드한다. image_index가 이 순서를 가리킨다. */
+async function buildInsertImages(attachments: Attachment[]): Promise<ImageForInsert[]> {
+  const imgs = attachments.filter((a) => a.kind === 'image' && a.dataBase64);
+  const out: ImageForInsert[] = [];
+  for (const a of imgs) {
+    const mime = a.mime ?? 'image/png';
+    const dims = await imageDimensions(mime, a.dataBase64!);
+    out.push({
+      bytes: bytesFromBase64(a.dataBase64!),
+      extension: extensionFromMime(mime),
+      naturalWidthPx: dims.width,
+      naturalHeightPx: dims.height,
+    });
+  }
+  return out;
+}
+
+/** data URL로 이미지를 로드해 원본 픽셀 크기를 잰다(실패 시 0). */
+function imageDimensions(mime: string, base64: string): Promise<{ width: number; height: number }> {
+  return new Promise((resolve) => {
+    if (typeof Image === 'undefined') {
+      resolve({ width: 0, height: 0 });
+      return;
+    }
+    const img = new Image();
+    img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
+    img.onerror = () => resolve({ width: 0, height: 0 });
+    img.src = `data:${mime};base64,${base64}`;
+  });
+}
+
+function bytesFromBase64(base64: string): Uint8Array {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+/** MIME → rhwp insertPicture용 확장자(점 없이). */
+function extensionFromMime(mime: string): string {
+  if (mime.includes('jpeg') || mime.includes('jpg')) return 'jpg';
+  if (mime.includes('gif')) return 'gif';
+  if (mime.includes('bmp')) return 'bmp';
+  if (mime.includes('webp')) return 'webp';
+  return 'png';
 }
 
 /** 바이트 배열을 base64로(큰 이미지에서 호출 스택 폭주를 피하려 청크 처리). */

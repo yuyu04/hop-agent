@@ -60,6 +60,23 @@ class FakeWasm implements WasmEditing {
     this.calls.push(`setTableProperties(${s},${pp},${ci},pageBreak=${props.pageBreak})`);
     return { ok: true };
   }
+  insertPicture(
+    s: number,
+    pp: number,
+    co: number,
+    data: Uint8Array,
+    w: number,
+    h: number,
+    nw: number,
+    nh: number,
+    ext: string,
+    desc?: string,
+  ) {
+    this.calls.push(
+      `insertPicture(${s},${pp},${co},len=${data.length},${w}x${h},nat=${nw}x${nh},${ext},"${desc ?? ''}")`,
+    );
+    return { ok: true, paraIdx: pp, controlIdx: 0 };
+  }
   getCellParagraphLength(s: number, pp: number, ci: number, ce: number, cp: number): number {
     this.calls.push(`getCellParagraphLength(${s},${pp},${ci},${ce},${cp})`);
     return this.lengths[`${s}.${pp}.${ci}.${ce}.${cp}`] ?? 0;
@@ -179,7 +196,7 @@ describe('applyActionScript', () => {
       ]),
     );
     expect(result.applied).toBe(0);
-    expect(result.skipped[0].reason).toContain('표 셀 안에는 표를');
+    expect(result.skipped[0].reason).toContain('표 셀 안에는 표');
     expect(wasm.calls).toEqual([]);
   });
 
@@ -290,6 +307,50 @@ describe('applyActionScript', () => {
     expect(wasm.calls).toContain('applyParaFormatInCell(0,5,0,1,0,{"alignment":"center"})');
     expect(wasm.calls).toContain('applyParaFormatInCell(0,5,0,2,0,{"alignment":"left"})');
     expect(wasm.calls).toContain('applyParaFormatInCell(0,5,0,3,0,{"alignment":"left"})');
+  });
+
+  it('INSERT_AFTER with an image payload splits then inserts the attached image (scaled to width)', () => {
+    const wasm = new FakeWasm();
+    wasm.lengths['0.4'] = 2;
+    const images = [
+      { bytes: new Uint8Array([1, 2, 3]), extension: 'png', naturalWidthPx: 600, naturalHeightPx: 400 },
+    ];
+    const result = applyActionScript(
+      wasm,
+      script([
+        {
+          command: 'INSERT_AFTER',
+          target_id: 'sec[0].p[4]',
+          payload: { type: 'image', image_index: 0, text: '그래프' },
+        },
+      ]),
+      images,
+    );
+    expect(result.applied).toBe(1);
+    // 600px*75=45000 > 42000(상한) → 42000x28000으로 축소. 원본 픽셀은 보존.
+    expect(wasm.calls).toEqual([
+      'getParagraphLength(0,4)',
+      'splitParagraph(0,4,2)',
+      'insertPicture(0,5,0,len=3,42000x28000,nat=600x400,png,"그래프")',
+    ]);
+  });
+
+  it('skips an image edit whose image_index has no attached image', () => {
+    const wasm = new FakeWasm();
+    wasm.lengths['0.4'] = 0;
+    const result = applyActionScript(
+      wasm,
+      script([
+        {
+          command: 'INSERT_AFTER',
+          target_id: 'sec[0].p[4]',
+          payload: { type: 'image', image_index: 2 },
+        },
+      ]),
+      [], // 첨부 이미지 없음
+    );
+    expect(result.applied).toBe(0);
+    expect(result.skipped[0].reason).toContain('첨부 이미지');
   });
 
   it('merges cells after filling when table_data.merges is given', () => {

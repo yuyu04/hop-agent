@@ -119,6 +119,28 @@ export interface WasmEditing {
     controlIdx: number,
     props: { pageBreak?: number },
   ): { ok: boolean };
+  /** 그림(이미지) 삽입. width/height는 표시 크기(HWPUNIT), natural*는 원본 픽셀. */
+  insertPicture?(
+    sec: number,
+    paraIdx: number,
+    charOffset: number,
+    imageData: Uint8Array,
+    width: number,
+    height: number,
+    naturalWidthPx: number,
+    naturalHeightPx: number,
+    extension: string,
+    description?: string,
+  ): { ok: boolean; paraIdx: number; controlIdx: number };
+}
+
+/** 문서에 삽입할 이미지(첨부에서 디코드해 호출 측이 제공). */
+export interface ImageForInsert {
+  bytes: Uint8Array;
+  /** 확장자(png/jpg/gif/bmp 등, 점 없이). */
+  extension: string;
+  naturalWidthPx: number;
+  naturalHeightPx: number;
 }
 
 export interface ApplySkip {
@@ -201,15 +223,19 @@ function locatedPara(item: LocatedEdit): number {
  * 다중 편집은 문단 인덱스가 큰 것부터(내림차순) 적용해, 앞선 편집의 문단
  * 삽입/삭제가 뒤따르는 `target_id`의 인덱스를 어긋나게 만들지 않도록 한다.
  */
-export function applyActionScript(wasm: WasmEditing, script: ActionScript): ApplyResult {
+export function applyActionScript(
+  wasm: WasmEditing,
+  script: ActionScript,
+  images: ImageForInsert[] = [],
+): ApplyResult {
   const located: LocatedEdit[] = [];
   const skipped: ApplySkip[] = [];
 
   script.edits.forEach((edit, order) => {
     // INSERT/REPLACE는 새 텍스트가 반드시 있어야 한다. text가 비면 적용 시 원문이
     // 빈 문단으로 지워지므로(조용한 내용 손실), 적용하지 않고 건너뛴다.
-    // 표 생성(payload.type="table")은 text가 없어도 되므로 예외다.
-    const needsText = edit.command !== 'DELETE' && !isTableEdit(edit);
+    // 표 생성(type="table")·이미지 삽입(type="image")은 text가 없어도 되므로 예외다.
+    const needsText = edit.command !== 'DELETE' && !isTableEdit(edit) && !isImageEdit(edit);
     if (needsText && (edit.payload.text ?? '') === '') {
       skipped.push({
         targetId: edit.target_id,
@@ -220,11 +246,11 @@ export function applyActionScript(wasm: WasmEditing, script: ActionScript): Appl
 
     const cell = parseCellTarget(edit.target_id);
     if (cell) {
-      // 표 셀 안에는 표를 만들 수 없다(셀은 페이지로 늘어나지 않음). 본문에 만들어야 한다.
-      if (isTableEdit(edit)) {
+      // 표 셀 안에는 표/이미지를 넣지 않는다(셀은 페이지로 늘어나지 않음). 본문에 넣는다.
+      if (isTableEdit(edit) || isImageEdit(edit)) {
         skipped.push({
           targetId: edit.target_id,
-          reason: '표 셀 안에는 표를 만들 수 없습니다. 표 바깥 본문 문단에 INSERT 하세요.',
+          reason: '표 셀 안에는 표·이미지를 넣을 수 없습니다. 표 바깥 본문 문단에 INSERT 하세요.',
         });
         return;
       }
@@ -263,7 +289,7 @@ export function applyActionScript(wasm: WasmEditing, script: ActionScript): Appl
       if (item.kind === 'cell') {
         applyOneCell(wasm, item.edit, item.cell);
       } else {
-        applyOne(wasm, item);
+        applyOne(wasm, item, images);
         const { sec, para, edit } = item;
         if (edit.command === 'INSERT_AFTER') {
           shiftFrom(sec, para + 1);
@@ -287,6 +313,7 @@ export function applyActionScript(wasm: WasmEditing, script: ActionScript): Appl
 function applyOne(
   wasm: WasmEditing,
   { edit, sec, para }: { edit: Edit; sec: number; para: number },
+  images: ImageForInsert[],
 ): void {
   const text = edit.payload.text ?? '';
   const pageBreak = edit.payload.page_break === true;
@@ -296,6 +323,8 @@ function applyOne(
       wasm.splitParagraph(sec, para, length);
       if (isTableEdit(edit)) {
         createTableAt(wasm, sec, para + 1, edit);
+      } else if (isImageEdit(edit)) {
+        insertImageAt(wasm, sec, para + 1, edit, images);
       } else {
         wasm.insertText(sec, para + 1, 0, text);
       }
@@ -308,6 +337,8 @@ function applyOne(
       wasm.splitParagraph(sec, para, 0);
       if (isTableEdit(edit)) {
         createTableAt(wasm, sec, para, edit);
+      } else if (isImageEdit(edit)) {
+        insertImageAt(wasm, sec, para, edit, images);
       } else {
         wasm.insertText(sec, para, 0, text);
       }
@@ -345,6 +376,42 @@ function isTableEdit(edit: Edit): boolean {
     edit.payload.table_data.rows > 0 &&
     edit.payload.table_data.cols > 0
   );
+}
+
+/** INSERT로 이미지를 넣는 편집인지(payload.type="image" + image_index). */
+function isImageEdit(edit: Edit): boolean {
+  return (
+    (edit.command === 'INSERT_AFTER' || edit.command === 'INSERT_BEFORE') &&
+    edit.payload.type === 'image' &&
+    typeof edit.payload.image_index === 'number'
+  );
+}
+
+/** `sec[para]`(분할로 생긴 빈 문단)에 첨부 이미지를 그림으로 삽입한다. */
+function insertImageAt(
+  wasm: WasmEditing,
+  sec: number,
+  para: number,
+  edit: Edit,
+  images: ImageForInsert[],
+): void {
+  const idx = edit.payload.image_index ?? -1;
+  const img = images[idx];
+  if (!img) throw new Error(`첨부 이미지 #${idx}를 찾을 수 없습니다.`);
+  if (!wasm.insertPicture) throw new Error('이미지 삽입을 지원하지 않는 환경입니다.');
+
+  // 원본 픽셀 → HWPUNIT(96dpi 기준 1px = 75 HWPUNIT), 본문 폭(~148mm)으로 상한.
+  const PX_TO_HU = 7200 / 96;
+  const MAX_W = 42000; // ≈ A4 본문 가로폭
+  const natW = Math.max(1, img.naturalWidthPx);
+  const natH = Math.max(1, img.naturalHeightPx);
+  let w = Math.round(natW * PX_TO_HU);
+  let h = Math.round(natH * PX_TO_HU);
+  if (w > MAX_W) {
+    h = Math.round((h * MAX_W) / w);
+    w = MAX_W;
+  }
+  wasm.insertPicture(sec, para, 0, img.bytes, w, h, natW, natH, img.extension, edit.payload.text ?? '');
 }
 
 /**
