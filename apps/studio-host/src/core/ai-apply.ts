@@ -95,7 +95,7 @@ export interface WasmEditing {
     parentPara: number,
     controlIdx: number,
     pageHint?: number,
-  ): Array<{ cellIdx: number; col: number; colSpan: number }>;
+  ): Array<{ cellIdx: number; col: number; row: number; colSpan: number }>;
   setCellProperties?(
     sec: number,
     parentPara: number,
@@ -103,6 +103,15 @@ export interface WasmEditing {
     cellIdx: number,
     props: { width?: number },
   ): { ok: boolean };
+  /** 셀 문단 서식 적용(정렬 등). propsJson 예: `{"alignment":"left"}`. */
+  applyParaFormatInCell?(
+    sec: number,
+    parentPara: number,
+    controlIdx: number,
+    cellIdx: number,
+    cellParaIdx: number,
+    propsJson: string,
+  ): string;
 }
 
 export interface ApplySkip {
@@ -390,16 +399,19 @@ function createTableAt(wasm: WasmEditing, sec: number, para: number, edit: Edit)
       /* 잘못된 병합 범위는 무시(표 자체는 유지) */
     }
   }
-  // 열 폭 가중치 적용(병합 후) — 긴 텍스트 열을 넓혀 표가 세로로 덜 늘어나게 한다.
-  applyColumnWeights(wasm, sec, result.paraIdx, result.controlIdx, data.col_weights, cols);
+  // 정렬 보정 + 열 폭 가중치(병합 후). 셀 좌표를 한 번만 조회해 둘 다 처리한다.
+  styleTableCells(wasm, sec, result.paraIdx, result.controlIdx, data.col_weights, cols);
 }
 
 /**
- * col_weights(열별 상대 폭)를 실제 셀 폭(HWPUNIT)으로 환산해 적용한다. 표 전체 폭은
- * 유지한 채 가중치 비율로 열을 재분배하고, 병합 셀은 덮는 열들의 가중치 합을 쓴다.
- * 폭 조절 API가 없는 브리지(일부 테스트용)에서는 조용히 건너뛴다.
+ * 생성된 표의 셀 정렬을 바로잡고(헤더=가운데, 본문=왼쪽) col_weights가 있으면 열 폭을
+ * 재분배한다.
+ *
+ * 정렬 보정 이유: 새 셀 문단은 표를 삽입한 본문 문단의 para_shape를 상속한다. 양식 문서는
+ * 라벨을 '배분 정렬(distribute)'로 두는 경우가 많아, 상속하면 셀의 짧은 글자가 칸 너비만큼
+ * 벌어져("세목별   사용   용도") 보인다. 표 셀은 명시적으로 왼쪽/가운데 정렬로 덮는다.
  */
-function applyColumnWeights(
+function styleTableCells(
   wasm: WasmEditing,
   sec: number,
   para: number,
@@ -407,14 +419,33 @@ function applyColumnWeights(
   weights: number[] | undefined,
   cols: number,
 ): void {
+  if (!wasm.getTableCellBboxes) return;
+  let cells: Array<{ cellIdx: number; col: number; row: number; colSpan: number }>;
+  try {
+    cells = wasm.getTableCellBboxes(sec, para, ctrl);
+  } catch {
+    return; // 좌표 조회 실패 — 내용·구조는 이미 정상이므로 무시.
+  }
+
+  // 1) 정렬: 헤더(0행) 가운데, 나머지 왼쪽. 상속된 배분/양쪽 정렬을 덮는다.
+  if (wasm.applyParaFormatInCell) {
+    for (const c of cells) {
+      const alignment = c.row === 0 ? 'center' : 'left';
+      try {
+        wasm.applyParaFormatInCell(sec, para, ctrl, c.cellIdx, 0, JSON.stringify({ alignment }));
+      } catch {
+        /* 셀 정렬 실패는 무시 */
+      }
+    }
+  }
+
+  // 2) 열 폭 가중치 — 표 전체 폭을 유지한 채 가중치 비율로 재분배(병합 셀은 덮는 열 합).
   if (!weights || weights.length !== cols) return;
   const total = weights.reduce((a, b) => a + Math.max(0, b), 0);
-  if (total <= 0) return;
-  if (!wasm.getTableProperties || !wasm.getTableCellBboxes || !wasm.setCellProperties) return;
+  if (total <= 0 || !wasm.getTableProperties || !wasm.setCellProperties) return;
   try {
     const tableWidth = wasm.getTableProperties(sec, para, ctrl).tableWidth ?? 0;
     if (tableWidth <= 0) return;
-    const cells = wasm.getTableCellBboxes(sec, para, ctrl);
     for (const c of cells) {
       const span = Math.max(1, c.colSpan);
       let w = 0;

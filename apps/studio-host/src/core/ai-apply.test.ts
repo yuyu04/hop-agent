@@ -39,7 +39,7 @@ class FakeWasm implements WasmEditing {
     return { ok: true, cellCount: 1 };
   }
   tableWidth = 0;
-  bboxes: Array<{ cellIdx: number; col: number; colSpan: number }> = [];
+  bboxes: Array<{ cellIdx: number; col: number; row: number; colSpan: number }> = [];
   getTableProperties(s: number, pp: number, ci: number) {
     this.calls.push(`getTableProperties(${s},${pp},${ci})`);
     return { tableWidth: this.tableWidth };
@@ -51,6 +51,10 @@ class FakeWasm implements WasmEditing {
   setCellProperties(s: number, pp: number, ci: number, cell: number, props: { width?: number }) {
     this.calls.push(`setCellProperties(${s},${pp},${ci},${cell},w=${props.width})`);
     return { ok: true };
+  }
+  applyParaFormatInCell(s: number, pp: number, ci: number, cell: number, cp: number, json: string) {
+    this.calls.push(`applyParaFormatInCell(${s},${pp},${ci},${cell},${cp},${json})`);
+    return '';
   }
   getCellParagraphLength(s: number, pp: number, ci: number, ce: number, cp: number): number {
     this.calls.push(`getCellParagraphLength(${s},${pp},${ci},${ce},${cp})`);
@@ -151,6 +155,8 @@ describe('applyActionScript', () => {
       'insertTextInCell(0,5,0,1,0,0,"금액")',
       'insertTextInCell(0,5,0,2,0,0,"총액")',
       'insertTextInCell(0,5,0,3,0,0,"10억")',
+      // 생성 후 셀 정렬/폭 보정을 위해 셀 좌표를 조회한다(빈 목록이면 추가 호출 없음).
+      'getTableCellBboxes(0,5,0)',
     ]);
   });
 
@@ -176,10 +182,10 @@ describe('applyActionScript', () => {
     wasm.lengths['0.4'] = 0;
     wasm.tableWidth = 10000;
     wasm.bboxes = [
-      { cellIdx: 0, col: 0, colSpan: 1 },
-      { cellIdx: 1, col: 1, colSpan: 1 },
-      { cellIdx: 2, col: 0, colSpan: 1 },
-      { cellIdx: 3, col: 1, colSpan: 1 },
+      { cellIdx: 0, col: 0, row: 0, colSpan: 1 },
+      { cellIdx: 1, col: 1, row: 0, colSpan: 1 },
+      { cellIdx: 2, col: 0, row: 1, colSpan: 1 },
+      { cellIdx: 3, col: 1, row: 1, colSpan: 1 },
     ];
     applyActionScript(
       wasm,
@@ -207,6 +213,41 @@ describe('applyActionScript', () => {
     expect(wasm.calls).toContain('setCellProperties(0,5,0,1,w=8000)');
     expect(wasm.calls).toContain('setCellProperties(0,5,0,2,w=2000)');
     expect(wasm.calls).toContain('setCellProperties(0,5,0,3,w=8000)');
+  });
+
+  it('aligns header cells center and body cells left (overrides inherited distribute)', () => {
+    const wasm = new FakeWasm();
+    wasm.lengths['0.4'] = 0;
+    wasm.bboxes = [
+      { cellIdx: 0, col: 0, row: 0, colSpan: 1 }, // 헤더
+      { cellIdx: 1, col: 1, row: 0, colSpan: 1 }, // 헤더
+      { cellIdx: 2, col: 0, row: 1, colSpan: 1 }, // 본문
+      { cellIdx: 3, col: 1, row: 1, colSpan: 1 }, // 본문
+    ];
+    applyActionScript(
+      wasm,
+      script([
+        {
+          command: 'INSERT_AFTER',
+          target_id: 'sec[0].p[4]',
+          payload: {
+            type: 'table',
+            table_data: {
+              rows: 2,
+              cols: 2,
+              matrix: [
+                ['머리글', '세목별 사용 용도'],
+                ['a', 'b'],
+              ],
+            },
+          },
+        },
+      ]),
+    );
+    expect(wasm.calls).toContain('applyParaFormatInCell(0,5,0,0,0,{"alignment":"center"})');
+    expect(wasm.calls).toContain('applyParaFormatInCell(0,5,0,1,0,{"alignment":"center"})');
+    expect(wasm.calls).toContain('applyParaFormatInCell(0,5,0,2,0,{"alignment":"left"})');
+    expect(wasm.calls).toContain('applyParaFormatInCell(0,5,0,3,0,{"alignment":"left"})');
   });
 
   it('merges cells after filling when table_data.merges is given', () => {
