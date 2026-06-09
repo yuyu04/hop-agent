@@ -639,7 +639,7 @@ export class AgentSidebar {
             if (p.dataBase64) {
               out.push({
                 input: { mimeType: p.mime || 'image/png', dataBase64: p.dataBase64 },
-                label: `PDF '${a.name}' ${p.page ? `${p.page}쪽` : ''} 렌더(그림이면 crop으로 영역만 잘라 넣기)`,
+                label: `PDF '${a.name}' ${p.page ? `${p.page}쪽` : ''} 렌더 — 페이지 전체 금지, crop으로 그림(도표) 영역만 잘라 넣기`,
               });
             }
           }
