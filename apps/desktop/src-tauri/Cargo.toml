@@ -51,3 +51,5 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png"]
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSDocumentController"] }
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSURL"] }
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std", "CFURL", "CFBase", "CFCGTypes"] }
+objc2-core-graphics = { version = "0.3.2", default-features = false, features = ["std", "CGPDFDocument", "CGPDFPage", "CGContext", "CGBitmapContext", "CGColorSpace", "CGImage", "CGDataProvider"] }

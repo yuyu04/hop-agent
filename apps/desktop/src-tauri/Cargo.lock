@@ -2008,6 +2008,8 @@ dependencies = [
  "keyring",
  "lopdf",
  "objc2-app-kit",
+ "objc2-core-foundation",
+ "objc2-core-graphics",
  "objc2-foundation",
  "open",
  "pdf-extract",

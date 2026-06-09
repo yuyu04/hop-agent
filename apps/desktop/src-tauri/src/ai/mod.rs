@@ -8,6 +8,8 @@
 pub mod adapters;
 pub mod docx;
 pub mod pdf_images;
+#[cfg(target_os = "macos")]
+pub mod pdf_render;
 pub mod provider;
 pub mod schema;
 pub mod secrets;
@@ -323,6 +325,47 @@ fn extract_pdf_images_blocking(path: &str) -> Result<String, String> {
     Ok(format!("[{}]", items.join(",")))
 }
 
+/// PDF에서 쿼리(요청)와 관련 있는 페이지들을 렌더해 base64 PNG 목록(JSON)으로 반환한다.
+/// 벡터/블렌드 그래프는 개별 추출이 안 되므로, 페이지를 통째로 렌더해 AI가 그림 영역을
+/// 직접 잘라내도록 한다(crop). macOS 전용(Quartz). 반환: `[{"dataBase64","mime"}]`.
+#[tauri::command]
+pub async fn ai_render_pdf_figure_pages(path: String, query: String) -> Result<String, String> {
+    #[cfg(target_os = "macos")]
+    {
+        tauri::async_runtime::spawn_blocking(move || render_figure_pages_blocking(&path, &query))
+            .await
+            .map_err(|e| format!("PDF 페이지 렌더 태스크 실패: {}", e))?
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (path, query);
+        Ok("[]".to_string())
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn render_figure_pages_blocking(path: &str, query: &str) -> Result<String, String> {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    if !path.to_lowercase().ends_with(".pdf") {
+        return Err("PDF 파일만 지원합니다.".to_string());
+    }
+    let pages = pdf_render::render_query_pages(path, query, 1.6, 4);
+    let mut items = Vec::new();
+    for (_p, img) in pages {
+        let mut png = Vec::new();
+        if image::DynamicImage::ImageRgba8(img)
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .is_ok()
+        {
+            items.push(format!(
+                "{{\"dataBase64\":{},\"mime\":\"image/png\"}}",
+                serde_json::to_string(&STANDARD.encode(&png)).unwrap_or_default()
+            ));
+        }
+    }
+    Ok(format!("[{}]", items.join(",")))
+}
+
 /// 앞 `max`자만 남기고 잘라낸 뒤 안내 꼬리표를 붙인다.
 fn truncate_chars(text: String, max: usize) -> String {
     if text.chars().count() <= max {
@@ -480,8 +523,12 @@ fn system_prompt() -> String {
      payload.type=\"image\", image_index=N(첨부된 이미지의 0-기준 순서: 첫 이미지=0)으로 \
      지정하세요. 이미지는 표 셀이 아니라 표 바깥 본문 문단에 넣어야 합니다. \
      payload.text에 간단한 설명(대체 텍스트)을 넣을 수 있습니다. \
-     첨부 PDF에서 추출된 그림이 있으면 그것들도 같은 image_index 목록(첨부 이미지 뒤에 이어짐)에 \
-     포함되므로, 요청한 그림에 해당하는 image_index를 골라 넣으세요. \
+     첨부 PDF의 그림은 'PDF 페이지를 통째로 렌더한 이미지'로 제공될 수 있습니다(같은 \
+     image_index 목록에 포함). 이 경우 원하는 그림(그래프·도표)이 있는 페이지의 image_index를 \
+     고르고, payload.crop에 그 그림만 감싸는 영역을 0~1 비율로 지정하세요 \
+     (예: crop={\"x\":0.1,\"y\":0.25,\"w\":0.8,\"h\":0.4} — 페이지 왼쪽10%/위25% 지점부터 \
+     폭80%/높이40%). 페이지 전체가 아니라 그림 영역만 정확히 감싸세요. 일반 첨부/URL 이미지를 \
+     통째로 넣을 때는 crop을 생략하세요. \
      설명 문장이나 Markdown 없이 JSON만 반환하세요."
         .to_string()
 }

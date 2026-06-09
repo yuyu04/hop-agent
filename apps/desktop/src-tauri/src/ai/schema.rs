@@ -34,6 +34,17 @@ pub struct TableData {
     pub col_weights: Vec<u32>,
 }
 
+/// 이미지 크롭 영역(0~1 비율).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct CropSpec {
+    pub x: f64,
+    pub y: f64,
+    pub w: f64,
+    pub h: f64,
+}
+
+impl Eq for CropSpec {}
+
 /// 표 셀 병합 영역(0-기준 행/열 범위, 끝 포함).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MergeSpec {
@@ -56,6 +67,9 @@ pub struct EditPayload {
     /// type="image"일 때 삽입할 첨부 이미지의 0-기준 인덱스.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image_index: Option<u32>,
+    /// 이미지에서 잘라낼 영역(0~1 비율). PDF 페이지 렌더에서 그림만 잘라낼 때 쓴다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub crop: Option<CropSpec>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub table_data: Option<TableData>,
     /// INSERT 시 참이면 새 페이지에서 시작(본문 문단에만 적용).
@@ -162,6 +176,16 @@ pub fn action_script_schema() -> Value {
                                 "image_index": {
                                     "type": "integer",
                                     "description": "type=\"image\"일 때 삽입할 첨부 이미지의 0-기준 인덱스(첨부된 순서)."
+                                },
+                                "crop": {
+                                    "type": "object",
+                                    "description": "이미지에서 잘라낼 영역(0~1 비율, 좌상단 기준). PDF 페이지 렌더에서 원하는 그림만 잘라낼 때 지정. 그림 전체면 생략.",
+                                    "properties": {
+                                        "x": { "type": "number" },
+                                        "y": { "type": "number" },
+                                        "w": { "type": "number" },
+                                        "h": { "type": "number" }
+                                    }
                                 },
                                 "page_break": {
                                     "type": "boolean",

@@ -33,6 +33,8 @@ export interface EditPayload {
   style?: string;
   /** type="image"일 때 삽입할 첨부 이미지의 0-기준 인덱스(첨부 순서). */
   image_index?: number;
+  /** 이미지에서 잘라낼 영역(0~1 비율). PDF 페이지에서 그림만 잘라낼 때. */
+  crop?: { x: number; y: number; w: number; h: number };
   /** INSERT 시 참이면 새 페이지에서 시작(본문 문단에만 적용). */
   page_break?: boolean;
   table_data?: {

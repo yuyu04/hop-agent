@@ -602,23 +602,53 @@ export class AgentSidebar {
     attachments: Attachment[],
     prompt: string,
   ): Promise<AiImageInput[]> {
-    if (typeof this.deps.bridge.aiExtractPdfImages !== 'function') return [];
     if (!/그림|이미지|그래프|사진|도표|차트|figure|그래픽|graph|image|picture/i.test(prompt)) {
       return [];
     }
     const pdfs = attachments.filter((a) => a.path && /\.pdf$/i.test(a.path));
     const out: AiImageInput[] = [];
     for (const a of pdfs) {
+      // 요청과 관련된 PDF 페이지를 통째로 렌더(벡터/블렌드 그래프 포함). AI가 crop으로
+      // 그림 영역만 잘라낸다. 페이지 렌더가 안 되면(비macOS 등) 내장 이미지 추출로 폴백.
       try {
-        const imgs = await this.deps.bridge.aiExtractPdfImages(a.path!);
-        for (const img of imgs) {
-          if (img.dataBase64) out.push({ mimeType: img.mime || 'image/png', dataBase64: img.dataBase64 });
+        if (typeof this.deps.bridge.aiRenderPdfFigurePages === 'function') {
+          const pages = await this.deps.bridge.aiRenderPdfFigurePages(a.path!, prompt);
+          for (const p of pages) {
+            if (p.dataBase64) out.push({ mimeType: p.mime || 'image/png', dataBase64: p.dataBase64 });
+          }
+          if (pages.length) continue;
+        }
+        if (typeof this.deps.bridge.aiExtractPdfImages === 'function') {
+          const imgs = await this.deps.bridge.aiExtractPdfImages(a.path!);
+          for (const img of imgs) {
+            if (img.dataBase64) out.push({ mimeType: img.mime || 'image/png', dataBase64: img.dataBase64 });
+          }
         }
       } catch {
-        /* 추출 실패한 PDF는 건너뛴다 */
+        /* 렌더/추출 실패한 PDF는 건너뛴다 */
       }
     }
     return out;
+  }
+
+  /**
+   * crop이 지정된 이미지 편집을 미리 처리한다. 지정 영역(0~1 비율)을 잘라 새 이미지를
+   * pendingInsertImages에 추가하고, 편집의 image_index를 그 새 인덱스로 바꾸고 crop을 지운다.
+   * 이후 applyActionScript는 잘린 이미지를 통째로 삽입한다.
+   */
+  private async applyImageCrops(script: ActionScript): Promise<void> {
+    for (const edit of script.edits) {
+      const p = edit.payload;
+      if (p.type !== 'image' || !p.crop || typeof p.image_index !== 'number') continue;
+      const src = this.pendingInsertImages[p.image_index];
+      if (!src) continue;
+      const cropped = await cropImageForInsert(src, p.crop);
+      if (cropped) {
+        this.pendingInsertImages.push(cropped);
+        p.image_index = this.pendingInsertImages.length - 1;
+      }
+      delete p.crop;
+    }
   }
 
   /** 프롬프트의 이미지 URL을 Rust로 다운로드(CORS 우회)해 이미지 입력으로 반환한다. */
@@ -659,7 +689,7 @@ export class AgentSidebar {
     if (!this.active.streamEl.querySelector('.hop-ai-thinking')) this.showThinking(this.active);
   }
 
-  private onReady(ready: AiEditReady): void {
+  private async onReady(ready: AiEditReady): Promise<void> {
     if (ready.requestId !== this.requestId || !this.active) return;
     this.setRequesting(false);
     this.active.streamEl.textContent = '';
@@ -670,6 +700,12 @@ export class AgentSidebar {
       return;
     }
     if (!this.session.onReady()) return;
+    // 이미지 crop 지정(PDF 페이지에서 그림만 잘라내기)을 미리 처리: 잘린 이미지를
+    // pendingInsertImages에 추가하고 해당 편집의 image_index를 그쪽으로 바꾼다.
+    // crop이 없는 일반 편집은 동기 경로를 유지한다.
+    if (script.edits.some((e) => e.payload.type === 'image' && e.payload.crop)) {
+      await this.applyImageCrops(script);
+    }
     this.pendingScript = script;
     this.renderDiff(script);
 
@@ -1630,6 +1666,52 @@ async function normalizeForInsert(mime: string, base64: string): Promise<ImageFo
   // 그 외(webp/gif/bmp 등) → 캔버스로 PNG 변환.
   const png = await reencodeToPng(mime, base64);
   return png;
+}
+
+/** 이미지의 지정 영역(0~1 비율)을 잘라 PNG ImageForInsert로 반환한다(캔버스). */
+function cropImageForInsert(
+  src: ImageForInsert,
+  crop: { x: number; y: number; w: number; h: number },
+): Promise<ImageForInsert | null> {
+  return new Promise((resolve) => {
+    if (typeof Image === 'undefined' || typeof document === 'undefined') {
+      resolve(null);
+      return;
+    }
+    const mime = src.extension === 'jpg' ? 'image/jpeg' : `image/${src.extension}`;
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const iw = img.naturalWidth;
+        const ih = img.naturalHeight;
+        // 비율 → 픽셀, 경계 클램프.
+        const sx = Math.max(0, Math.min(iw, Math.round(crop.x * iw)));
+        const sy = Math.max(0, Math.min(ih, Math.round(crop.y * ih)));
+        const sw = Math.max(1, Math.min(iw - sx, Math.round(crop.w * iw)));
+        const sh = Math.max(1, Math.min(ih - sy, Math.round(crop.h * ih)));
+        const canvas = document.createElement('canvas');
+        canvas.width = sw;
+        canvas.height = sh;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          resolve(null);
+          return;
+        }
+        ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+        const b64 = (canvas.toDataURL('image/png').split(',')[1] ?? '');
+        resolve({
+          bytes: bytesFromBase64(b64),
+          extension: 'png',
+          naturalWidthPx: sw,
+          naturalHeightPx: sh,
+        });
+      } catch {
+        resolve(null);
+      }
+    };
+    img.onerror = () => resolve(null);
+    img.src = `data:${mime};base64,${base64FromBytes(src.bytes)}`;
+  });
 }
 
 /** data URL → 캔버스 → PNG 바이트. 캔버스를 못 쓰는 환경에선 null. */
