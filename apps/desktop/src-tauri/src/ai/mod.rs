@@ -358,15 +358,16 @@ fn render_figure_pages_blocking(path: &str, query: &str) -> Result<String, Strin
     }
     let pages = pdf_render::render_query_pages(path, query, 1.6, 4);
     let mut items = Vec::new();
-    for (_p, img) in pages {
+    for (page, img) in pages {
         let mut png = Vec::new();
         if image::DynamicImage::ImageRgba8(img)
             .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
             .is_ok()
         {
             items.push(format!(
-                "{{\"dataBase64\":{},\"mime\":\"image/png\"}}",
-                serde_json::to_string(&STANDARD.encode(&png)).unwrap_or_default()
+                "{{\"dataBase64\":{},\"mime\":\"image/png\",\"page\":{}}}",
+                serde_json::to_string(&STANDARD.encode(&png)).unwrap_or_default(),
+                page
             ));
         }
     }

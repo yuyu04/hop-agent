@@ -200,6 +200,46 @@
   flex-wrap: wrap;
   gap: 4px;
 }
+/* 디버그 로그 패널 */
+.hop-ai-log {
+  border-bottom: 1px solid #e5e7eb;
+  background: #0b1021;
+  color: #cdd3e0;
+  max-height: 220px;
+  display: flex;
+  flex-direction: column;
+  padding: 6px;
+  gap: 4px;
+}
+.hop-ai-log-text {
+  margin: 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 10.5px;
+  line-height: 1.4;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.hop-ai-log-clear {
+  align-self: flex-end;
+  font-size: 11px;
+  background: #1f2937;
+  color: #cdd3e0;
+  border: 1px solid #374151;
+  border-radius: 4px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+.hop-ai-log-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  opacity: 0.7;
+}
+.hop-ai-log-btn:hover {
+  opacity: 1;
+}
 
 /* "⋯" 드롭다운 메뉴 (최근 대화 + Agent 설정) */
 .hop-ai-menu {

@@ -184,6 +184,9 @@ export class AgentSidebar {
   private readonly settingsPanel: HTMLElement;
   private readonly settingsModal: HTMLElement;
   private readonly menu: HTMLElement;
+  private readonly logPanel: HTMLElement;
+  /** 디버그 로그 버퍼(최근 N줄). */
+  private logs: string[] = [];
   private readonly keyRow: HTMLElement;
   private readonly keyInput: HTMLInputElement;
   private readonly keyStatus: HTMLElement;
@@ -231,6 +234,7 @@ export class AgentSidebar {
     this.settingsPanel = built.settingsPanel;
     this.settingsModal = built.settingsModal;
     this.menu = built.menu;
+    this.logPanel = built.logPanel;
     this.keyRow = built.keyRow;
     this.keyInput = built.keyInput;
     this.keyStatus = built.keyStatus;
@@ -246,6 +250,7 @@ export class AgentSidebar {
     built.toggleBtn.addEventListener('click', () => this.toggle());
     built.newChatBtn.addEventListener('click', () => this.newConversation());
     built.settingsBtn.addEventListener('click', () => this.toggleMenu());
+    built.logBtn.addEventListener('click', () => this.toggleLog());
     built.settingsClose.addEventListener('click', () => this.toggleSettings(false));
     built.attachImageBtn.addEventListener('click', () => this.imageInput.click());
     built.attachDocBtn.addEventListener('click', () => this.docInput.click());
@@ -522,14 +527,28 @@ export class AgentSidebar {
       .map((a) => `[첨부 문서: ${a.name}]\n${a.text ?? ''}`)
       .join('\n\n');
 
-    // 삽입/비전용 이미지 소스: 첨부 이미지 + 프롬프트의 이미지 URL(같은 순서).
-    // image_index가 이 순서를 가리킨다(첨부 먼저, URL 다음).
-    const attachImageInputs: AiImageInput[] = attachments
-      .filter((a) => a.kind === 'image' && a.dataBase64)
-      .map((a) => ({ mimeType: a.mime ?? 'image/png', dataBase64: a.dataBase64! }));
-    const urlImageInputs = await this.fetchPromptImageUrls(prompt);
-    const pdfImageInputs = await this.fetchPdfAttachmentImages(attachments, prompt);
-    const allImageInputs = [...attachImageInputs, ...urlImageInputs, ...pdfImageInputs];
+    // 삽입/비전용 이미지 소스(라벨 포함): 첨부 이미지 → 프롬프트 URL → PDF 렌더 페이지.
+    // 이 순서가 image_index가 되며, 아래에서 프롬프트에 인덱스 목록(매니페스트)을 넣어
+    // AI가 정확한 image_index를 쓰게 한다.
+    const labeled: { input: AiImageInput; label: string }[] = [];
+    for (const a of attachments.filter((a) => a.kind === 'image' && a.dataBase64)) {
+      labeled.push({
+        input: { mimeType: a.mime ?? 'image/png', dataBase64: a.dataBase64! },
+        label: `첨부 이미지: ${a.name}`,
+      });
+    }
+    labeled.push(...(await this.fetchPromptImageUrls(prompt)));
+    labeled.push(...(await this.fetchPdfAttachmentImages(attachments, prompt)));
+    const allImageInputs = labeled.map((l) => l.input);
+    this.log(`요청: provider=${provider}, 이미지 ${labeled.length}개`);
+    if (labeled.length) {
+      this.log(`이미지 인덱스:\n${labeled.map((l, i) => `  [${i}] ${l.label}`).join('\n')}`);
+    }
+    const imageManifest = labeled.length
+      ? `사용 가능한 이미지 목록(각 줄의 번호가 image_index):\n${labeled
+          .map((l, i) => `[${i}] ${l.label}`)
+          .join('\n')}\n이 번호를 image_index로 사용하세요. 페이지 번호와 헷갈리지 마세요.\n\n`
+      : '';
 
     // claude-cli는 로컬 파일을 직접 읽으므로 이미지·PDF는 base64 대신 경로로 넘긴다.
     let images: AiImageInput[] = [];
@@ -554,7 +573,7 @@ export class AgentSidebar {
         return;
       }
     }
-    const effectivePrompt = docText ? `${docText}\n\n${prompt}` : prompt;
+    const effectivePrompt = `${docText ? `${docText}\n\n` : ''}${imageManifest}${prompt}`;
 
     // 삽입용 이미지 디코드(원본 픽셀 크기) — image_index가 이 배열을 가리킨다.
     this.pendingInsertImages = await buildInsertImages(allImageInputs);
@@ -603,12 +622,12 @@ export class AgentSidebar {
   private async fetchPdfAttachmentImages(
     attachments: Attachment[],
     prompt: string,
-  ): Promise<AiImageInput[]> {
+  ): Promise<{ input: AiImageInput; label: string }[]> {
     if (!/그림|이미지|그래프|사진|도표|차트|figure|그래픽|graph|image|picture/i.test(prompt)) {
       return [];
     }
     const pdfs = attachments.filter((a) => a.path && /\.pdf$/i.test(a.path));
-    const out: AiImageInput[] = [];
+    const out: { input: AiImageInput; label: string }[] = [];
     for (const a of pdfs) {
       // 요청과 관련된 PDF 페이지를 통째로 렌더(벡터/블렌드 그래프 포함). AI가 crop으로
       // 그림 영역만 잘라낸다. 페이지 렌더가 안 되면(비macOS 등) 내장 이미지 추출로 폴백.
@@ -616,14 +635,24 @@ export class AgentSidebar {
         if (typeof this.deps.bridge.aiRenderPdfFigurePages === 'function') {
           const pages = await this.deps.bridge.aiRenderPdfFigurePages(a.path!, prompt);
           for (const p of pages) {
-            if (p.dataBase64) out.push({ mimeType: p.mime || 'image/png', dataBase64: p.dataBase64 });
+            if (p.dataBase64) {
+              out.push({
+                input: { mimeType: p.mime || 'image/png', dataBase64: p.dataBase64 },
+                label: `PDF '${a.name}' ${p.page ? `${p.page}쪽` : ''} 렌더(그림이면 crop으로 영역만 잘라 넣기)`,
+              });
+            }
           }
           if (pages.length) continue;
         }
         if (typeof this.deps.bridge.aiExtractPdfImages === 'function') {
           const imgs = await this.deps.bridge.aiExtractPdfImages(a.path!);
           for (const img of imgs) {
-            if (img.dataBase64) out.push({ mimeType: img.mime || 'image/png', dataBase64: img.dataBase64 });
+            if (img.dataBase64) {
+              out.push({
+                input: { mimeType: img.mime || 'image/png', dataBase64: img.dataBase64 },
+                label: `PDF '${a.name}' 내장 이미지`,
+              });
+            }
           }
         }
       } catch {
@@ -653,15 +682,17 @@ export class AgentSidebar {
     }
   }
 
-  /** 프롬프트의 이미지 URL을 Rust로 다운로드(CORS 우회)해 이미지 입력으로 반환한다. */
-  private async fetchPromptImageUrls(prompt: string): Promise<AiImageInput[]> {
+  /** 프롬프트의 이미지 URL을 Rust로 다운로드(CORS 우회)해 라벨과 함께 반환한다. */
+  private async fetchPromptImageUrls(prompt: string): Promise<{ input: AiImageInput; label: string }[]> {
     if (typeof this.deps.bridge.aiFetchImage !== 'function') return [];
     const urls = Array.from(new Set(prompt.match(URL_PATTERN) ?? []));
-    const out: AiImageInput[] = [];
+    const out: { input: AiImageInput; label: string }[] = [];
     for (const url of urls) {
       try {
         const { dataBase64, mime } = await this.deps.bridge.aiFetchImage(url);
-        if (dataBase64) out.push({ mimeType: mime || 'image/png', dataBase64 });
+        if (dataBase64) {
+          out.push({ input: { mimeType: mime || 'image/png', dataBase64 }, label: `URL 이미지: ${url}` });
+        }
       } catch {
         /* 이미지가 아니거나 다운로드 실패한 URL은 건너뛴다 */
       }
@@ -697,10 +728,16 @@ export class AgentSidebar {
     this.active.streamEl.textContent = '';
     const script = parseActionScript(ready.actionScriptJson);
     if (!script) {
+      this.log(`응답 파싱 실패. 원문 일부: ${ready.actionScriptJson.slice(0, 300)}`);
       this.session.onFailed();
       this.setActiveStatus(interpretAiFailure('PARSE_ERROR'), 'error');
       return;
     }
+    this.log(
+      `응답: 편집 ${script.edits.length}건. ${script.edits
+        .map((e) => `${e.command} ${e.target_id} [${e.payload.type ?? 'paragraph'}${e.payload.image_index !== undefined ? ` idx=${e.payload.image_index}` : ''}${e.payload.crop ? ' crop' : ''}]`)
+        .join(' / ')}`,
+    );
     if (!this.session.onReady()) return;
     // 이미지 crop 지정(PDF 페이지에서 그림만 잘라내기)을 미리 처리: 잘린 이미지를
     // pendingInsertImages에 추가하고 해당 편집의 image_index를 그쪽으로 바꾼다.
@@ -716,6 +753,9 @@ export class AgentSidebar {
     // 스냅샷으로 되돌린다(Cursor/변경내용추적 방식). 불가하면 가상 미리보기로 폴백.
     if (this.snapshotDocument()) {
       const result = applyActionScript(this.deps.bridge, script, this.pendingInsertImages);
+      this.log(
+        `적용(미리): ${result.applied}건${result.skipped.map((s) => `\n  건너뜀 ${s.targetId}: ${s.reason}`).join('')}`,
+      );
       this.reflowAndRender();
       this.applied = result;
       // 페이지 위 인라인 표시(변경 위치 좌표를 잡을 수 있을 때만 뜬다 — 표 삽입 등은
@@ -1350,6 +1390,35 @@ export class AgentSidebar {
     this.cancelBtn.classList.toggle('hop-ai-hidden', !active);
   }
 
+  /** 디버그 로그 한 줄 추가(시간 + 메시지). 최근 300줄만 유지. 콘솔에도 남긴다. */
+  private log(msg: string): void {
+    const time = new Date().toLocaleTimeString();
+    this.logs.push(`[${time}] ${msg}`);
+    if (this.logs.length > 300) this.logs.shift();
+    // eslint-disable-next-line no-console
+    console.log('[hop-ai]', msg);
+    if (!this.logPanel.classList.contains('hop-ai-hidden')) this.renderLog();
+  }
+
+  private renderLog(): void {
+    this.logPanel.replaceChildren();
+    const pre = el('pre', 'hop-ai-log-text');
+    pre.textContent = this.logs.join('\n') || '(로그 없음)';
+    const clearBtn = el('button', 'hop-ai-log-clear') as HTMLButtonElement;
+    clearBtn.textContent = '로그 지우기';
+    clearBtn.addEventListener('click', () => {
+      this.logs = [];
+      this.renderLog();
+    });
+    this.logPanel.append(clearBtn, pre);
+    pre.scrollTop = pre.scrollHeight;
+  }
+
+  private toggleLog(): void {
+    const hidden = this.logPanel.classList.toggle('hop-ai-hidden');
+    if (!hidden) this.renderLog();
+  }
+
   /** 건너뜀 건수 + 첫 사유를 사람이 읽을 수 있게 만든다(빈 문자열이면 건너뜀 없음). */
   private skipNote(result: ApplyResult): string {
     if (!result.skipped.length) return '';
@@ -1421,6 +1490,8 @@ interface PanelParts {
   closeBtn: HTMLButtonElement;
   newChatBtn: HTMLButtonElement;
   settingsBtn: HTMLButtonElement;
+  logBtn: HTMLButtonElement;
+  logPanel: HTMLElement;
   menu: HTMLElement;
   settingsModal: HTMLElement;
   settingsClose: HTMLButtonElement;
@@ -1467,9 +1538,16 @@ function buildPanel(): PanelParts {
   const settingsBtn = el('button', 'hop-ai-settings-btn') as HTMLButtonElement;
   settingsBtn.textContent = '⋯';
   settingsBtn.title = '메뉴 (최근 대화 · Agent 설정)';
+  const logBtn = el('button', 'hop-ai-log-btn') as HTMLButtonElement;
+  logBtn.textContent = '🛈';
+  logBtn.title = '로그 보기(디버그)';
   const closeBtn = el('button', 'hop-ai-close') as HTMLButtonElement;
   closeBtn.textContent = '×';
-  header.append(title, newChatBtn, settingsBtn, closeBtn);
+  header.append(title, newChatBtn, logBtn, settingsBtn, closeBtn);
+
+  // 디버그 로그 패널(기본 숨김). 도구 옆 🛈 버튼으로 토글.
+  const logPanel = el('div', 'hop-ai-log');
+  logPanel.classList.add('hop-ai-hidden');
 
   // "⋯" 드롭다운 메뉴(최근 대화 리스트 + Agent 설정). 기본 숨김.
   const menu = el('div', 'hop-ai-menu');
@@ -1571,7 +1649,7 @@ function buildPanel(): PanelParts {
   // 컴포저는 본문 영역에 두고, 빈 대화면 상단/대화 시작 시 하단으로 CSS order로 이동.
   const body = el('div', 'hop-ai-body');
   body.append(threadsWrap, composer);
-  panel.append(header, menu, tabBar, body, settingsModal);
+  panel.append(header, menu, logPanel, tabBar, body, settingsModal);
 
   return {
     panel,
@@ -1579,6 +1657,8 @@ function buildPanel(): PanelParts {
     closeBtn,
     newChatBtn,
     settingsBtn,
+    logBtn,
+    logPanel,
     menu,
     settingsModal,
     settingsClose,
