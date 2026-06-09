@@ -10,6 +10,7 @@ const overrideIds = [
   'core/ai-apply',
   'core/ai-diff',
   'core/ai-session',
+  'core/conversation-store',
   'core/document-files',
   'core/desktop-chrome',
   'core/desktop-events',

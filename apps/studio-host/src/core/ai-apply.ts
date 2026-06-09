@@ -345,7 +345,8 @@ const PARA_STYLES: Record<string, { char?: Record<string, unknown>; para?: Recor
   },
   body: {
     char: { fontSize: 1000 },
-    para: { alignment: 'justify', lineSpacingType: 'Percent', lineSpacing: 160 },
+    // 줄간격 넉넉히 + 문단 사이 약간의 간격 → 빽빽하지 않고 자연스러운 흐름.
+    para: { alignment: 'justify', lineSpacingType: 'Percent', lineSpacing: 180, spacingAfter: 8 },
   },
   caption: {
     char: { fontSize: 900, textColor: '#666666' },

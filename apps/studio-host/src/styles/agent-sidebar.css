@@ -750,6 +750,98 @@
   color: #b00020;
 }
 
+/* 헤더 과거 기록 버튼 */
+.hop-ai-history-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  opacity: 0.7;
+}
+.hop-ai-history-btn:hover {
+  opacity: 1;
+}
+
+/* 과거 대화 기록 드로어 — AI 패널 왼쪽 영역을 덮는다 */
+.hop-ai-history {
+  position: absolute;
+  top: 40px;
+  left: 0;
+  bottom: 0;
+  width: 280px;
+  z-index: 1160;
+  background: #fff;
+  border-right: 1px solid #d0d4da;
+  box-shadow: 4px 0 16px rgba(0, 0, 0, 0.12);
+  overflow-y: auto;
+  padding: 4px;
+}
+.hop-ai-history-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  font-weight: 700;
+  color: #555;
+  padding: 8px 6px 6px;
+}
+.hop-ai-history-close {
+  border: none;
+  background: transparent;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  color: #888;
+}
+.hop-ai-history-empty {
+  font-size: 12px;
+  color: #999;
+  padding: 12px 8px;
+}
+.hop-ai-history-item {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  border-radius: 6px;
+}
+.hop-ai-history-item:hover {
+  background: #f2f4f7;
+}
+.hop-ai-history-main {
+  flex: 1;
+  text-align: left;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  padding: 7px 8px;
+  font: inherit;
+  border-radius: 6px;
+  min-width: 0;
+}
+.hop-ai-history-title {
+  font-size: 13px;
+  color: #222;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hop-ai-history-meta {
+  font-size: 11px;
+  color: #999;
+  margin-top: 2px;
+}
+.hop-ai-history-del {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 12px;
+  opacity: 0.5;
+  padding: 0 6px;
+}
+.hop-ai-history-del:hover {
+  opacity: 1;
+}
+
 .hop-ai-hidden {
   display: none;
 }

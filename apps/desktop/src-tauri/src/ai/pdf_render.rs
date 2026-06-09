@@ -382,7 +382,7 @@ fn collect_graphic_elements(content: &Content, mw: f64, mh: f64) -> Option<Vec<G
     let mut elements: Vec<GraphicEl> = Vec::new();
     let mut in_text = false;
 
-    let mut commit = |b: &BBox, curved: bool, elements: &mut Vec<GraphicEl>| {
+    let commit = |b: &BBox, curved: bool, elements: &mut Vec<GraphicEl>| {
         if !b.set {
             return;
         }

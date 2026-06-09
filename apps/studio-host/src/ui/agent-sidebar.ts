@@ -32,6 +32,13 @@ import {
 } from '@/core/ai-apply';
 import { buildDiffModel, type DiffItem } from '@/core/ai-diff';
 import { AiSessionMachine } from '@/core/ai-session';
+import {
+  deleteConversation,
+  loadConversations,
+  upsertConversation,
+  type StoredConversation,
+  type StoredMessage,
+} from '@/core/conversation-store';
 import { clearInlineDiff, showInlineDiff, type InlineDiffEntry } from '@/ui/ai-inline-diff';
 import type { CursorRect, PageInfo } from '@/core/types';
 
@@ -162,6 +169,10 @@ interface Conversation {
   tab: HTMLElement;
   thread: HTMLElement;
   hasMessages: boolean;
+  title: string;
+  createdAt: number;
+  /** 영속 저장용 대화 기록(사용자 지시 + AI 요약). */
+  messages: StoredMessage[];
 }
 
 export class AgentSidebar {
@@ -188,6 +199,7 @@ export class AgentSidebar {
   private readonly settingsModal: HTMLElement;
   private readonly menu: HTMLElement;
   private readonly logPanel: HTMLElement;
+  private readonly historyPanel: HTMLElement;
   /** 디버그 로그 버퍼(최근 N줄). */
   private logs: string[] = [];
   /** '로그 보기'로 연 별도 로그 창(있으면 실시간 갱신). */
@@ -250,6 +262,7 @@ export class AgentSidebar {
     this.settingsModal = built.settingsModal;
     this.menu = built.menu;
     this.logPanel = built.logPanel;
+    this.historyPanel = built.historyPanel;
     this.modeEditBtn = built.modeEditBtn;
     this.modeAskBtn = built.modeAskBtn;
     this.quickActions = built.quickActions;
@@ -267,6 +280,7 @@ export class AgentSidebar {
     built.closeBtn.addEventListener('click', () => this.toggle(false));
     built.toggleBtn.addEventListener('click', () => this.toggle());
     built.newChatBtn.addEventListener('click', () => this.newConversation());
+    built.historyBtn.addEventListener('click', () => this.toggleHistory());
     built.settingsBtn.addEventListener('click', () => this.toggleMenu());
     built.settingsClose.addEventListener('click', () => this.toggleSettings(false));
     built.attachImageBtn.addEventListener('click', () => this.imageInput.click());
@@ -475,9 +489,135 @@ export class AgentSidebar {
     tab.addEventListener('click', () => this.switchConversation(id));
     this.tabBar.appendChild(tab);
 
-    const conv: Conversation = { id, tab, thread, hasMessages: false };
+    const conv: Conversation = {
+      id,
+      tab,
+      thread,
+      hasMessages: false,
+      title: '새 대화',
+      createdAt: Date.now(),
+      messages: [],
+    };
     this.conversations.push(conv);
     this.switchConversation(id);
+  }
+
+  /** 활성 대화에 메시지를 한 줄 기록하고 영속 저장소에 갱신한다. */
+  private recordMessage(role: 'user' | 'assistant', text: string): void {
+    const conv = this.activeConv;
+    if (!conv || !text.trim()) return;
+    conv.messages.push({ role, text, ts: Date.now() });
+    upsertConversation({
+      id: conv.id,
+      title: conv.title,
+      createdAt: conv.createdAt,
+      updatedAt: Date.now(),
+      messages: conv.messages,
+    });
+  }
+
+  /** 과거 대화 기록 드로어를 토글한다(AI 패널 왼쪽). */
+  private toggleHistory(open?: boolean): void {
+    const show = open ?? this.historyPanel.classList.contains('hop-ai-hidden');
+    if (show) this.renderHistory();
+    this.historyPanel.classList.toggle('hop-ai-hidden', !show);
+  }
+
+  /** 영속 저장된 대화 목록을 그린다(최신순, 삭제 버튼 포함). */
+  private renderHistory(): void {
+    this.historyPanel.replaceChildren();
+    const head = el('div', 'hop-ai-history-head');
+    head.textContent = '과거 대화';
+    const closeBtn = el('button', 'hop-ai-history-close') as HTMLButtonElement;
+    closeBtn.textContent = '×';
+    closeBtn.addEventListener('click', () => this.toggleHistory(false));
+    head.appendChild(closeBtn);
+    this.historyPanel.appendChild(head);
+
+    const stored = loadConversations();
+    if (!stored.length) {
+      const empty = el('div', 'hop-ai-history-empty');
+      empty.textContent = '저장된 대화가 없습니다.';
+      this.historyPanel.appendChild(empty);
+      return;
+    }
+    for (const conv of stored) {
+      const item = el('div', 'hop-ai-history-item');
+      const main = el('button', 'hop-ai-history-main') as HTMLButtonElement;
+      const date = new Date(conv.updatedAt);
+      const when = `${date.getMonth() + 1}/${date.getDate()} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+      const titleEl = el('div', 'hop-ai-history-title');
+      titleEl.textContent = conv.title || '(제목 없음)';
+      const metaEl = el('div', 'hop-ai-history-meta');
+      metaEl.textContent = `${when} · ${conv.messages.length}개 메시지`;
+      main.append(titleEl, metaEl);
+      main.addEventListener('click', () => {
+        this.openStoredConversation(conv);
+        this.toggleHistory(false);
+      });
+      const del = el('button', 'hop-ai-history-del') as HTMLButtonElement;
+      del.textContent = '🗑';
+      del.title = '삭제';
+      del.addEventListener('click', (e) => {
+        e.stopPropagation();
+        deleteConversation(conv.id);
+        this.renderHistory();
+      });
+      item.append(main, del);
+      this.historyPanel.appendChild(item);
+    }
+  }
+
+  /** 저장된 대화를 새 탭으로 열어 메시지를 다시 그린다. 이미 열려 있으면 전환만 한다. */
+  private openStoredConversation(stored: StoredConversation): void {
+    const existing = this.conversations.find((c) => c.id === stored.id);
+    if (existing) {
+      this.switchConversation(stored.id);
+      return;
+    }
+    // 진행 중 미확정 편집 정리.
+    if (this.active) {
+      this.session.cancel();
+      this.clearPreview();
+    }
+    this.requestId = null;
+    this.active = null;
+
+    const thread = el('div', 'hop-ai-thread');
+    thread.classList.add('hop-ai-hidden');
+    this.threadsWrap.appendChild(thread);
+    const tab = el('button', 'hop-ai-tab') as HTMLButtonElement;
+    tab.textContent = stored.title.length > 12 ? `${stored.title.slice(0, 12)}…` : stored.title;
+    tab.addEventListener('click', () => this.switchConversation(stored.id));
+    this.tabBar.appendChild(tab);
+
+    const conv: Conversation = {
+      id: stored.id,
+      tab,
+      thread,
+      hasMessages: true,
+      title: stored.title,
+      createdAt: stored.createdAt,
+      messages: [...stored.messages],
+    };
+    this.conversations.push(conv);
+    this.activeConv = conv;
+    // 저장된 메시지를 정적으로 다시 그린다(과거 기록 보기 — 편집 미리보기는 없음).
+    for (const m of stored.messages) {
+      if (m.role === 'user') this.appendUserTurn(m.text, []);
+      else this.appendAssistantMessageStatic(m.text);
+    }
+    this.switchConversation(stored.id);
+  }
+
+  /** 과거 기록용 정적 AI 메시지 버블(승인/거절·로딩 없이 텍스트만). */
+  private appendAssistantMessageStatic(text: string): void {
+    const bubble = el('div', 'hop-ai-msg hop-ai-msg-assistant');
+    const msgEl = el('div', 'hop-ai-msg-text');
+    msgEl.textContent = text;
+    bubble.appendChild(msgEl);
+    this.thread.appendChild(bubble);
+    this.scrollThreadToEnd();
   }
 
   private switchConversation(id: string): void {
@@ -496,6 +636,8 @@ export class AgentSidebar {
     if (!this.activeConv.hasMessages) {
       this.activeConv.hasMessages = true;
       if (firstUserText) {
+        const title = firstUserText.length > 24 ? `${firstUserText.slice(0, 24)}…` : firstUserText;
+        this.activeConv.title = title;
         this.activeConv.tab.textContent =
           firstUserText.length > 12 ? `${firstUserText.slice(0, 12)}…` : firstUserText;
       }
@@ -648,6 +790,7 @@ export class AgentSidebar {
     this.pendingInsertImages = await buildInsertImages(allImageInputs);
 
     this.appendUserTurn(prompt, attachments);
+    this.recordMessage('user', prompt);
     this.active = this.appendAssistantTurn();
     this.promptInput.value = '';
     this.attachments = [];
@@ -830,11 +973,11 @@ export class AgentSidebar {
     // 질문/요약 모드이거나 편집이 없으면, 문서를 건드리지 않고 답변만 표시한다(Copilot의 'Ask').
     if (this.requestMode === 'ask' || script.edits.length === 0) {
       this.session.complete();
-      if (this.active) {
-        this.active.msgEl.textContent =
-          script.message?.trim() ||
-          (this.requestMode === 'ask' ? '(응답이 비어 있습니다.)' : '바꿀 내용이 없습니다.');
-      }
+      const answer =
+        script.message?.trim() ||
+        (this.requestMode === 'ask' ? '(응답이 비어 있습니다.)' : '바꿀 내용이 없습니다.');
+      if (this.active) this.active.msgEl.textContent = answer;
+      this.recordMessage('assistant', answer);
       this.log(`답변 모드: 편집 없음(message ${script.message ? '있음' : '없음'})`);
       this.setActiveStatus(this.requestMode === 'ask' ? '답변 완료' : '변경 사항이 없습니다.', 'ok');
       return;
@@ -848,6 +991,7 @@ export class AgentSidebar {
     }
     this.pendingScript = script;
     if (this.active && script.message) this.active.msgEl.textContent = script.message;
+    this.recordMessage('assistant', script.message?.trim() || `편집 ${script.edits.length}건을 제안했습니다.`);
     this.renderDiff(script);
 
     // 스냅샷 가능(데스크톱)하면 승인 전 "미리 적용"해 문서에 바로 반영하고, 거절 시
@@ -1711,6 +1855,8 @@ interface PanelParts {
   toggleBtn: HTMLButtonElement;
   closeBtn: HTMLButtonElement;
   newChatBtn: HTMLButtonElement;
+  historyBtn: HTMLButtonElement;
+  historyPanel: HTMLElement;
   settingsBtn: HTMLButtonElement;
   logPanel: HTMLElement;
   menu: HTMLElement;
@@ -1759,12 +1905,19 @@ function buildPanel(): PanelParts {
   const newChatBtn = el('button', 'hop-ai-newchat') as HTMLButtonElement;
   newChatBtn.textContent = '＋';
   newChatBtn.title = '새 대화';
+  const historyBtn = el('button', 'hop-ai-history-btn') as HTMLButtonElement;
+  historyBtn.textContent = '🕘';
+  historyBtn.title = '과거 대화 기록';
   const settingsBtn = el('button', 'hop-ai-settings-btn') as HTMLButtonElement;
   settingsBtn.textContent = '⋯';
   settingsBtn.title = '메뉴 (최근 대화 · 로그 · Agent 설정)';
   const closeBtn = el('button', 'hop-ai-close') as HTMLButtonElement;
   closeBtn.textContent = '×';
-  header.append(title, newChatBtn, settingsBtn, closeBtn);
+  header.append(title, newChatBtn, historyBtn, settingsBtn, closeBtn);
+
+  // 과거 대화 기록 패널(영속 저장된 대화 목록). AI 패널 왼쪽에 드로어로 뜬다. 기본 숨김.
+  const historyPanel = el('div', 'hop-ai-history');
+  historyPanel.classList.add('hop-ai-hidden');
 
   // 디버그 로그 패널(기본 숨김) — 새 창을 못 열 때의 폴백 표시용. 메뉴의 '로그 보기'로 토글.
   const logPanel = el('div', 'hop-ai-log');
@@ -1896,13 +2049,15 @@ function buildPanel(): PanelParts {
   // 컴포저는 본문 영역에 두고, 빈 대화면 상단/대화 시작 시 하단으로 CSS order로 이동.
   const body = el('div', 'hop-ai-body');
   body.append(threadsWrap, composer);
-  panel.append(header, menu, logPanel, tabBar, body, settingsModal);
+  panel.append(header, menu, logPanel, historyPanel, tabBar, body, settingsModal);
 
   return {
     panel,
     toggleBtn,
     closeBtn,
     newChatBtn,
+    historyBtn,
+    historyPanel,
     settingsBtn,
     logPanel,
     menu,
