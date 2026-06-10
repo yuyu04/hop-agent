@@ -530,31 +530,33 @@ export function applyActionScript(
  * 지정하고(title/heading/…), 실제 폰트 크기·정렬·간격은 여기서 일관되게 적용한다.
  * fontSize는 HWPUNIT(1pt=100). 색/크기는 과하지 않게 — 깔끔한 문서 톤.
  */
+// 주의: spacingBefore/After·marginLeft는 rhwp ParaShape에 그대로 쓰이는 HWPUNIT이다
+// (1pt = 100). pt 감각으로 작은 숫자를 넣으면 사실상 0이 되어 문단이 다닥다닥 붙는다.
 const PARA_STYLES: Record<string, { char?: Record<string, unknown>; para?: Record<string, unknown> }> = {
   title: {
     char: { bold: true, fontSize: 1800, textColor: '#1A1A1A' },
-    para: { alignment: 'center', spacingBefore: 4, spacingAfter: 10 },
+    para: { alignment: 'center', spacingBefore: 400, spacingAfter: 1000 }, // 4pt / 10pt
   },
   heading: {
     char: { bold: true, fontSize: 1400, textColor: '#1F3864' },
-    para: { spacingBefore: 12, spacingAfter: 4 },
+    para: { spacingBefore: 1200, spacingAfter: 400 }, // 12pt / 4pt
   },
   subheading: {
     char: { bold: true, fontSize: 1200, textColor: '#2F2F2F' },
-    para: { spacingBefore: 8, spacingAfter: 2 },
+    para: { spacingBefore: 800, spacingAfter: 200 }, // 8pt / 2pt
   },
   body: {
     char: { fontSize: 1000 },
-    // 줄간격 넉넉히 + 문단 사이 약간의 간격 → 빽빽하지 않고 자연스러운 흐름.
-    para: { alignment: 'justify', lineSpacingType: 'Percent', lineSpacing: 180, spacingAfter: 8 },
+    // 줄간격 넉넉히 + 문단 아래 6pt → 빽빽하지 않고 자연스러운 흐름.
+    para: { alignment: 'justify', lineSpacingType: 'Percent', lineSpacing: 180, spacingAfter: 600 },
   },
   caption: {
     char: { fontSize: 900, textColor: '#666666' },
-    para: { alignment: 'center', spacingBefore: 2, spacingAfter: 8 },
+    para: { alignment: 'center', spacingBefore: 200, spacingAfter: 800 }, // 2pt / 8pt
   },
   quote: {
     char: { italic: true, textColor: '#444444' },
-    para: { marginLeft: 24, lineSpacingType: 'Percent', lineSpacing: 160 },
+    para: { marginLeft: 2000, lineSpacingType: 'Percent', lineSpacing: 160 }, // 들여쓰기 20pt
   },
   emphasis: { char: { bold: true } },
 };
@@ -594,7 +596,8 @@ function applyOne(
         insertImageAt(wasm, sec, para + 1, edit, images);
       } else {
         wasm.insertText(sec, para + 1, 0, text);
-        applyParaStyle(wasm, sec, para + 1, text, edit.payload.style);
+        // 새 문단은 style 미지정 시 body 기본 — 미적용 시 문단 간격 0으로 빽빽해진다.
+        applyParaStyle(wasm, sec, para + 1, text, edit.payload.style ?? 'body');
       }
       // 새 문단을 새 페이지에서 시작(긴 새 내용/새 절 추가용).
       if (pageBreak) wasm.insertPageBreak(sec, para + 1, 0);
@@ -609,7 +612,7 @@ function applyOne(
         insertImageAt(wasm, sec, para, edit, images);
       } else {
         wasm.insertText(sec, para, 0, text);
-        applyParaStyle(wasm, sec, para, text, edit.payload.style);
+        applyParaStyle(wasm, sec, para, text, edit.payload.style ?? 'body');
       }
       if (pageBreak) wasm.insertPageBreak(sec, para, 0);
       break;

@@ -1069,3 +1069,53 @@ mod tests {
         assert_eq!(context.content[0].id(), "sec[0].p[5]");
     }
 }
+
+#[cfg(test)]
+mod spacing_probe {
+    /// 단위 계약 고정: applyParaFormat의 spacingBefore/After는 HWPUNIT(1pt=100)로
+    /// 모델에 그대로 쓰인다. ai-apply PARA_STYLES가 pt 감각의 작은 값(예: 8)을 넣으면
+    /// 사실상 0이 되어 문단이 빽빽해진다 — 600(=6pt)은 읽기 시 8px로 보여야 한다.
+    #[test]
+    fn para_spacing_unit_contract_hwpunit() {
+        let mut core = rhwp::DocumentCore::new_empty();
+        core.create_blank_document_native().unwrap();
+        core.insert_text_native(0, 0, 0, "본문 문단").unwrap();
+        core.apply_para_format_native(
+            0,
+            0,
+            r#"{"lineSpacingType":"Percent","lineSpacing":180,"spacingAfter":600,"spacingBefore":1200}"#,
+        )
+        .unwrap();
+        let props = core.get_para_properties_at_native(0, 0).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&props).unwrap();
+        assert_eq!(v["lineSpacing"].as_f64(), Some(180.0));
+        // 600 HWPUNIT = 6pt = 8px(96dpi), 1200 = 12pt = 16px.
+        assert!((v["spacingAfter"].as_f64().unwrap() - 8.0).abs() < 0.5, "{}", props);
+        assert!((v["spacingBefore"].as_f64().unwrap() - 16.0).abs() < 0.5, "{}", props);
+    }
+
+    /// [진단용 임시] HOP_HWP 파일의 문단별 줄간격/문단간격 덤프.
+    #[test]
+    #[ignore]
+    fn dump_para_spacing() {
+        let path = std::env::var("HOP_HWP").unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        let core = crate::state::editable_core_from_bytes(&bytes, "파싱 실패", "변환 실패").unwrap();
+        let n = core.get_paragraph_count_native(0).unwrap();
+        for p in 0..n.min(60) {
+            let len = core.get_paragraph_length_native(0, p).unwrap();
+            let text = core.get_text_range_native(0, p, 0, len.min(28)).unwrap();
+            let props = core.get_para_properties_at_native(0, p).unwrap();
+            let v: serde_json::Value = serde_json::from_str(&props).unwrap_or_default();
+            eprintln!(
+                "p[{:2}] ls={:?}/{:?} before={:?} after={:?} | {}",
+                p,
+                v.get("lineSpacingType"),
+                v.get("lineSpacing"),
+                v.get("spacingBefore"),
+                v.get("spacingAfter"),
+                text.replace('\n', " ")
+            );
+        }
+    }
+}

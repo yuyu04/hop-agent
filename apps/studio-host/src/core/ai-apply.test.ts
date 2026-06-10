@@ -25,6 +25,10 @@ class FakeWasm implements WasmEditing {
     this.calls.push(`applyCharFormat(${sec},${para},${start},${end},${propsJson})`);
     return '';
   }
+  applyParaFormat(sec: number, para: number, propsJson: string): string {
+    this.calls.push(`applyParaFormat(${sec},${para},${propsJson})`);
+    return '';
+  }
   insertText(sec: number, para: number, charOffset: number, text: string): string {
     this.calls.push(`insertText(${sec},${para},${charOffset},"${text}")`);
     return '';
@@ -205,10 +209,13 @@ describe('applyActionScript', () => {
       ]),
     );
     expect(result.applied).toBe(1);
+    // style 미지정 → body 기본: 줄간격 180% + 문단 아래 6pt(600 HWPUNIT)로 빽빽함 방지.
     expect(wasm.calls).toEqual([
       'getParagraphLength(0,1)',
       'splitParagraph(0,1,5)',
       'insertText(0,2,0,"새 문단")',
+      'applyCharFormat(0,2,0,4,{"fontSize":1000})',
+      'applyParaFormat(0,2,{"alignment":"justify","lineSpacingType":"Percent","lineSpacing":180,"spacingAfter":600})',
     ]);
   });
 
@@ -229,6 +236,8 @@ describe('applyActionScript', () => {
       'getParagraphLength(0,4)',
       'splitParagraph(0,4,7)',
       'insertText(0,5,0,"새 절")',
+      'applyCharFormat(0,5,0,3,{"fontSize":1000})',
+      'applyParaFormat(0,5,{"alignment":"justify","lineSpacingType":"Percent","lineSpacing":180,"spacingAfter":600})',
       'insertPageBreak(0,5,0)',
     ]);
   });
@@ -505,7 +514,12 @@ describe('applyActionScript', () => {
       wasm,
       script([{ command: 'INSERT_BEFORE', target_id: 'sec[0].p[0]', payload: { text: 'X' } }]),
     );
-    expect(wasm.calls).toEqual(['splitParagraph(0,0,0)', 'insertText(0,0,0,"X")']);
+    expect(wasm.calls).toEqual([
+      'splitParagraph(0,0,0)',
+      'insertText(0,0,0,"X")',
+      'applyCharFormat(0,0,0,1,{"fontSize":1000})',
+      'applyParaFormat(0,0,{"alignment":"justify","lineSpacingType":"Percent","lineSpacing":180,"spacingAfter":600})',
+    ]);
   });
 
   it('REPLACE clears existing text then inserts', () => {
@@ -547,9 +561,13 @@ describe('applyActionScript', () => {
       'getParagraphLength(0,5)',
       'splitParagraph(0,5,0)',
       'insertText(0,6,0,"B")',
+      'applyCharFormat(0,6,0,1,{"fontSize":1000})',
+      'applyParaFormat(0,6,{"alignment":"justify","lineSpacingType":"Percent","lineSpacing":180,"spacingAfter":600})',
       'getParagraphLength(0,0)',
       'splitParagraph(0,0,0)',
       'insertText(0,1,0,"A")',
+      'applyCharFormat(0,1,0,1,{"fontSize":1000})',
+      'applyParaFormat(0,1,{"alignment":"justify","lineSpacingType":"Percent","lineSpacing":180,"spacingAfter":600})',
     ]);
   });
 
