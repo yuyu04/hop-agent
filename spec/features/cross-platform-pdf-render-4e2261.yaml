@@ -1,18 +1,30 @@
 id: F-4e2261
 slug: cross-platform-pdf-render
 title: "Windows/Linux PDF 페이지 렌더 (pdfium)"
-status: planned
+status: done
 modules:
+  - apps/desktop/src-tauri/src/ai/pdf_pdfium.rs
+  - apps/desktop/src-tauri/src/ai/pdf_pages.rs
   - apps/desktop/src-tauri/src/ai/pdf_render.rs
+  - apps/desktop/src-tauri/src/ai/mod.rs
 acceptance_criteria:
   - id: AC-83b60b
     ears: state
     condition: "While Windows 또는 Linux에서 실행 중일 때"
     text: "The system shall pdfium 기반으로 PDF 페이지를 RGBA로 렌더하여 macOS CoreGraphics 경로와 동일한 결과 형식을 반환한다."
+    notes: "pdf_pdfium.rs — pdfium-render 0.9 동적 로딩(실행 파일 옆→./→시스템 순 탐색). 반환 형식 (page, figure_only, RgbaImage) 동일, 흰 배경 합성. 전체 페이지 렌더(figure_only=false)라 AI가 payload.crop으로 그림을 잘라낸다(기존 풀페이지 폴백과 동일 흐름). 모듈은 전 플랫폼 컴파일(macOS에서 테스트 가능, 런타임은 CG 우선). 실검증: macOS에 libpdfium.dylib을 두고 학술지원 매뉴얼 PDF '사업비 관리 체계' 쿼리 → 페이지 [2,6,10,23] 1077×1474 렌더, 10쪽 플로차트 시각 확인(2026-06-10, experiment_render_with_pdfium). 배포 시 Windows/Linux 번들에 libpdfium.{dll,so} 동봉 필요."
+    test_refs:
+      - apps/desktop/src-tauri/src/ai/pdf_pdfium.rs
   - id: AC-f68a5f
     ears: ubiquitous
     text: "The system shall 기존 render_query_pages 인터페이스(쿼리 토큰 매칭 상위 4페이지)를 플랫폼 무관하게 유지한다."
+    notes: "페이지 선택 로직(explicit_pages/select_query_pages/pages_with_images)을 pdf_render.rs에서 플랫폼 중립 pdf_pages.rs로 추출 — CG 경로와 pdfium 경로가 같은 선택기를 공유한다. ai_render_pdf_figure_pages 커맨드는 단일 blocking 함수에서 cfg로 렌더러만 분기, JSON 인코딩 공통."
+    test_refs:
+      - apps/desktop/src-tauri/src/ai/pdf_pages.rs
   - id: AC-fd63b8
     ears: unwanted
     condition: "If pdfium 라이브러리를 로드할 수 없으면"
     text: "The system shall 빈 목록을 반환하고(현재 비-macOS 동작과 동일) 오류로 세션을 중단하지 않는다."
+    notes: "bind_pdfium 실패 시 빈 Vec 반환(패닉·에러 없음) — missing_pdfium_or_file_falls_back_to_empty 테스트로 고정."
+    test_refs:
+      - apps/desktop/src-tauri/src/ai/pdf_pdfium.rs

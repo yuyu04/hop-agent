@@ -8,6 +8,8 @@
 pub mod adapters;
 pub mod docx;
 pub mod pdf_images;
+pub mod pdf_pages;
+pub mod pdf_pdfium;
 #[cfg(target_os = "macos")]
 pub mod pdf_render;
 pub mod provider;
@@ -350,31 +352,29 @@ fn extract_pdf_images_blocking(path: &str) -> Result<String, String> {
 
 /// PDF에서 쿼리(요청)와 관련 있는 페이지들을 렌더해 base64 PNG 목록(JSON)으로 반환한다.
 /// 벡터/블렌드 그래프는 개별 추출이 안 되므로, 페이지를 통째로 렌더해 AI가 그림 영역을
-/// 직접 잘라내도록 한다(crop). macOS 전용(Quartz). 반환: `[{"dataBase64","mime"}]`.
+/// 직접 잘라내도록 한다(crop). macOS=CoreGraphics(그림 영역 구조적 분리 포함),
+/// 그 외=pdfium 동적 로딩(라이브러리 없으면 빈 목록 — F-4e2261).
+/// 반환: `[{"dataBase64","mime","page","figureOnly"}]`.
 #[tauri::command]
 pub async fn ai_render_pdf_figure_pages(path: String, query: String) -> Result<String, String> {
-    #[cfg(target_os = "macos")]
-    {
-        tauri::async_runtime::spawn_blocking(move || render_figure_pages_blocking(&path, &query))
-            .await
-            .map_err(|e| format!("PDF 페이지 렌더 태스크 실패: {}", e))?
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = (path, query);
-        Ok("[]".to_string())
-    }
+    tauri::async_runtime::spawn_blocking(move || render_figure_pages_blocking(&path, &query))
+        .await
+        .map_err(|e| format!("PDF 페이지 렌더 태스크 실패: {}", e))?
 }
 
-#[cfg(target_os = "macos")]
 fn render_figure_pages_blocking(path: &str, query: &str) -> Result<String, String> {
     use base64::{engine::general_purpose::STANDARD, Engine as _};
     if !path.to_lowercase().ends_with(".pdf") {
         return Err("PDF 파일만 지원합니다.".to_string());
     }
-    // 구조적 분리: 가능하면 그림 영역만(텍스트 제외) 잘라 보낸다. figure_only=true면
-    // 이미 그림만이라 crop이 거의 필요 없다. 못 잡은 페이지는 전체 렌더(폴백).
+    // macOS: 구조적 분리 — 가능하면 그림 영역만(텍스트 제외) 잘라 보낸다(figure_only=true).
+    #[cfg(target_os = "macos")]
     let pages = pdf_render::render_query_figures(path, query, 2.0, 4);
+    // 그 외: pdfium으로 페이지 전체 렌더(AI가 crop으로 그림만 잘라냄). 라이브러리가
+    // 없으면 빈 목록을 반환해 세션을 중단하지 않는다(AC3).
+    #[cfg(not(target_os = "macos"))]
+    let pages = pdf_pdfium::render_query_pages_pdfium(path, query, 2.0, 4);
+
     let mut items = Vec::new();
     for (page, figure_only, img) in pages {
         let mut png = Vec::new();

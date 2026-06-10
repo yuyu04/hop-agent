@@ -41,6 +41,8 @@ pdf-writer = "0.12"
 zip = { version = "8.5", default-features = false, features = ["deflate"] }
 quick-xml = "0.38"
 pdf-extract = "0.9"
+# 비-macOS PDF 페이지 렌더(F-4e2261) — pdfium 동적 로딩(라이브러리 없으면 빈 결과 폴백).
+pdfium-render = "0.9"
 cfb = "0.14"
 flate2 = "1.0"
 base64 = "0.22"
