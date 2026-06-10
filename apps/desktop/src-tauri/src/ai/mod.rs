@@ -7,6 +7,8 @@
 
 pub mod adapters;
 pub mod docx;
+#[cfg(test)]
+mod live_smoke;
 pub mod pdf_images;
 pub mod pdf_pages;
 pub mod pdf_pdfium;
