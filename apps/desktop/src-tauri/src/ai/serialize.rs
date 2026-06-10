@@ -1072,9 +1072,11 @@ mod tests {
 
 #[cfg(test)]
 mod spacing_probe {
-    /// 단위 계약 고정: applyParaFormat의 spacingBefore/After는 HWPUNIT(1pt=100)로
-    /// 모델에 그대로 쓰인다. ai-apply PARA_STYLES가 pt 감각의 작은 값(예: 8)을 넣으면
-    /// 사실상 0이 되어 문단이 빽빽해진다 — 600(=6pt)은 읽기 시 8px로 보여야 한다.
+    /// 단위 계약 고정: applyParaFormat의 spacingBefore/After는 ParaShape에 그대로
+    /// 쓰이는데, HWP 포맷은 간격을 'HWPUNIT의 2배 스케일'로 저장한다(렌더러가 /2).
+    /// 즉 화면의 Npt = 값 N×200. 조회 API(getParaPropertiesAt)는 raw를 px로만 바꿔
+    /// 보여주므로(/2 없음) 600 → 8px로 읽히지만 실제 렌더링은 그 절반(3pt)이다.
+    /// ai-apply PARA_STYLES는 SPACING_PT=200 곱으로 이 계약을 따른다.
     #[test]
     fn para_spacing_unit_contract_hwpunit() {
         let mut core = rhwp::DocumentCore::new_empty();
@@ -1089,7 +1091,7 @@ mod spacing_probe {
         let props = core.get_para_properties_at_native(0, 0).unwrap();
         let v: serde_json::Value = serde_json::from_str(&props).unwrap();
         assert_eq!(v["lineSpacing"].as_f64(), Some(180.0));
-        // 600 HWPUNIT = 6pt = 8px(96dpi), 1200 = 12pt = 16px.
+        // 조회 경로(raw→px): 600 → 8px, 1200 → 16px. 렌더링은 /2라 각각 3pt/6pt.
         assert!((v["spacingAfter"].as_f64().unwrap() - 8.0).abs() < 0.5, "{}", props);
         assert!((v["spacingBefore"].as_f64().unwrap() - 16.0).abs() < 0.5, "{}", props);
     }

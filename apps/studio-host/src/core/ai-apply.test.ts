@@ -265,6 +265,7 @@ describe('applyActionScript', () => {
       'splitParagraph(0,4,2)',
       'createTable(0,5,0,2,2)',
       'setTableProperties(0,5,0,pageBreak=1)',
+      'applyParaFormat(0,5,{"spacingBefore":1600,"spacingAfter":1600})',
       'insertTextInCell(0,5,0,0,0,0,"구분")',
       'insertTextInCell(0,5,0,1,0,0,"금액")',
       'insertTextInCell(0,5,0,2,0,0,"총액")',

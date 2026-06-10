@@ -530,36 +530,41 @@ export function applyActionScript(
  * 지정하고(title/heading/…), 실제 폰트 크기·정렬·간격은 여기서 일관되게 적용한다.
  * fontSize는 HWPUNIT(1pt=100). 색/크기는 과하지 않게 — 깔끔한 문서 톤.
  */
-// 주의: spacingBefore/After·marginLeft는 rhwp ParaShape에 그대로 쓰이는 HWPUNIT이다
-// (1pt = 100). pt 감각으로 작은 숫자를 넣으면 사실상 0이 되어 문단이 다닥다닥 붙는다.
+// 주의: spacingBefore/After·marginLeft는 rhwp ParaShape에 'HWPUNIT의 2배 스케일'로
+// 저장된다(HWP 포맷 자체가 2배 저장 — 렌더러가 /2). 즉 화면의 Npt = 값 N×200.
+// pt 감각의 작은 숫자(8, 12 등)를 넣으면 사실상 0이 되어 문단이 다닥다닥 붙는다.
+const SPACING_PT = 200; // 렌더링 1pt에 해당하는 저장값.
 const PARA_STYLES: Record<string, { char?: Record<string, unknown>; para?: Record<string, unknown> }> = {
   title: {
     char: { bold: true, fontSize: 1800, textColor: '#1A1A1A' },
-    para: { alignment: 'center', spacingBefore: 400, spacingAfter: 1000 }, // 4pt / 10pt
+    para: { alignment: 'center', spacingBefore: 8 * SPACING_PT, spacingAfter: 14 * SPACING_PT },
   },
   heading: {
     char: { bold: true, fontSize: 1400, textColor: '#1F3864' },
-    para: { spacingBefore: 1200, spacingAfter: 400 }, // 12pt / 4pt
+    para: { spacingBefore: 16 * SPACING_PT, spacingAfter: 6 * SPACING_PT },
   },
   subheading: {
     char: { bold: true, fontSize: 1200, textColor: '#2F2F2F' },
-    para: { spacingBefore: 800, spacingAfter: 200 }, // 8pt / 2pt
+    para: { spacingBefore: 12 * SPACING_PT, spacingAfter: 4 * SPACING_PT },
   },
   body: {
     char: { fontSize: 1000 },
-    // 줄간격 넉넉히 + 문단 아래 6pt → 빽빽하지 않고 자연스러운 흐름.
-    para: { alignment: 'justify', lineSpacingType: 'Percent', lineSpacing: 180, spacingAfter: 600 },
+    // 줄간격 넉넉히 + 문단 아래 3pt → 빽빽하지 않고 자연스러운 흐름.
+    para: { alignment: 'justify', lineSpacingType: 'Percent', lineSpacing: 180, spacingAfter: 3 * SPACING_PT },
   },
   caption: {
     char: { fontSize: 900, textColor: '#666666' },
-    para: { alignment: 'center', spacingBefore: 200, spacingAfter: 800 }, // 2pt / 8pt
+    para: { alignment: 'center', spacingBefore: 3 * SPACING_PT, spacingAfter: 8 * SPACING_PT },
   },
   quote: {
     char: { italic: true, textColor: '#444444' },
-    para: { marginLeft: 2000, lineSpacingType: 'Percent', lineSpacing: 160 }, // 들여쓰기 20pt
+    para: { marginLeft: 20 * SPACING_PT, lineSpacingType: 'Percent', lineSpacing: 160 },
   },
   emphasis: { char: { bold: true } },
 };
+
+/** AI가 새로 만든 표가 든 문단의 위/아래 간격(렌더 8pt) — 표가 본문에 붙지 않게. */
+const TABLE_PARA_SPACING = 8 * SPACING_PT;
 
 /** 삽입된 본문 문단(sec,para)의 [0,len)에 semantic 스타일을 적용한다. 미지정·미지원이면 무시. */
 function applyParaStyle(wasm: WasmEditing, sec: number, para: number, text: string, style?: string): void {
@@ -932,6 +937,16 @@ function createTableAt(wasm: WasmEditing, sec: number, para: number, edit: Edit)
     wasm.setTableProperties?.(sec, result.paraIdx, result.controlIdx, { pageBreak: 1 });
   } catch {
     /* 표 속성 설정 실패는 무시(표 내용은 정상) */
+  }
+  // 표가 든 문단에 위/아래 간격을 줘 표가 본문에 다닥다닥 붙지 않게 한다.
+  try {
+    wasm.applyParaFormat?.(
+      sec,
+      result.paraIdx,
+      JSON.stringify({ spacingBefore: TABLE_PARA_SPACING, spacingAfter: TABLE_PARA_SPACING }),
+    );
+  } catch {
+    /* 간격 적용 실패는 무시(표 내용은 정상) */
   }
   const matrix = data.matrix ?? [];
   // 병합에 가려지는 셀(대표=좌상단 셀 제외)은 채우지 않는다. rhwp의 merge_cells는
