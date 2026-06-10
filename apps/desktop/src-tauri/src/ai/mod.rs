@@ -553,6 +553,14 @@ fn system_prompt() -> String {
      (예 2)로 두면 긴 내용이 가로로 펼쳐져 표가 세로로 덜 늘어나고 여러 쪽으로 쪼개지지 \
      않습니다. 예: 5열(비용항목/세목/증액여부/전용여부/세목별 사용 용도 및 제한 내용)이면 \
      머리글 한 줄 + col_weights=[3,3,2,2,10] 로 마지막 긴 열을 가장 넓게. \
+     [부분 서식] 텍스트 내용은 그대로 두고 서식만 바꾸려면 command=REPLACE, \
+     payload.type=\"format\"을 쓰세요. format_target에 그 문단 안에서 서식을 바꿀 정확한 \
+     문자열을 넣고(문단 전체면 생략), char_format에 바꿀 속성만 지정하세요: \
+     {bold, italic, underline, strikethrough, font_size_pt, text_color(\"#RRGGBB\")}. \
+     payload.text는 필요 없습니다. format_target은 그 문단에서 한 번만 나와야 합니다 — \
+     여러 번 나오면 주변 단어를 포함해 더 길게 잡으세요. 사용자가 선택한 텍스트의 서식을 \
+     바꿔 달라고 하면 그 선택 텍스트를 format_target으로 쓰세요(다시 쓰지 말 것). \
+     본문 문단만 지원합니다(표 셀 내부 부분 서식은 아직 불가). \
      [표 구조 편집] 이미 있는 표에 행/열을 추가·삭제하거나 셀을 병합하려면, 그 표 안의 \
      아무 셀 ID를 target_id로 잡고 command=REPLACE, payload.type=\"table_edit\", \
      payload.table_edit={op,...}을 쓰세요. op: insert_row(row,below,texts) / \
@@ -662,6 +670,15 @@ mod tests {
         assert!(prompt.contains("양식/템플릿"));
         assert!(prompt.contains("라벨"));
         assert!(prompt.contains("빈 셀"));
+    }
+
+    #[test]
+    fn system_prompt_guides_run_level_formatting() {
+        let prompt = system_prompt();
+        assert!(prompt.contains("format_target"));
+        assert!(prompt.contains("char_format"));
+        // 선택 영역을 format_target으로 쓰라는 지시(AC-264bfd).
+        assert!(prompt.contains("선택 텍스트를 format_target"));
     }
 
     #[test]

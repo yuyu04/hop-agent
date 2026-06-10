@@ -150,6 +150,8 @@ export interface WasmEditing {
   ): string;
   /** 본문 문단의 글자 서식(굵게·크기·색 등)을 [start,end) 범위에 적용. propsJson은 CharProperties. */
   applyCharFormat?(sec: number, para: number, startOffset: number, endOffset: number, propsJson: string): string;
+  /** 본문 문단의 [start,end) 텍스트를 읽는다(부분 서식의 대상 위치 탐색용). */
+  getTextRange?(sec: number, para: number, startOffset: number, endOffset: number): string;
   /** 본문 문단의 문단 서식(정렬·줄간격·여백 등) 적용. propsJson은 ParaProperties. */
   applyParaFormat?(sec: number, para: number, propsJson: string): string;
   /** 셀 문단의 글자 서식을 [start,end) 범위에 적용(헤더 굵게 등). */
@@ -290,7 +292,8 @@ export function applyActionScript(
       edit.command !== 'DELETE' &&
       !isTableEdit(edit) &&
       !isImageEdit(edit) &&
-      !isTableStructEdit(edit);
+      !isTableStructEdit(edit) &&
+      !isFormatEdit(edit);
     if (needsText && (edit.payload.text ?? '') === '') {
       skipped.push({
         targetId: edit.target_id,
@@ -301,6 +304,14 @@ export function applyActionScript(
 
     const cell = parseCellTarget(edit.target_id);
     if (cell) {
+      // 부분 서식은 본문 문단 전용(셀 텍스트 읽기 API가 없어 대상 탐색 불가).
+      if (isFormatEdit(edit)) {
+        skipped.push({
+          targetId: edit.target_id,
+          reason: '부분 서식(format)은 본문 문단만 지원합니다(표 셀 내부는 아직 불가).',
+        });
+        return;
+      }
       // 표 셀 안에는 표/이미지를 넣지 않는다(셀은 페이지로 늘어나지 않음). 본문에 넣는다.
       if (isTableEdit(edit) || isImageEdit(edit)) {
         skipped.push({
@@ -357,6 +368,10 @@ export function applyActionScript(
       if (item.kind === 'cell') {
         if (isTableStructEdit(item.edit)) applyTableEdit(wasm, item.edit, item.cell);
         else applyOneCell(wasm, item.edit, item.cell);
+      } else if (isFormatEdit(item.edit)) {
+        // 부분 서식 — 텍스트는 그대로, 지정 범위 런에만 글자 서식을 입힌다.
+        applyFormatEdit(wasm, item.edit, item.sec, item.para);
+        changed.push({ sec: item.sec, para: item.para });
       } else {
         applyOne(wasm, item, images);
         const { sec, para, edit } = item;
@@ -514,6 +529,74 @@ function isImageEdit(edit: Edit): boolean {
 /** 기존 표 구조 편집(행/열 추가·삭제, 셀 병합 — F-7a3dbe). target은 그 표의 셀 ID. */
 function isTableStructEdit(edit: Edit): boolean {
   return edit.payload.type === 'table_edit' && !!edit.payload.table_edit;
+}
+
+/** 런 단위 부분 서식(F-04a91c) — 텍스트는 그대로 두고 글자 서식만 바꾼다. */
+function isFormatEdit(edit: Edit): boolean {
+  return edit.payload.type === 'format' && !!edit.payload.char_format;
+}
+
+/** 표시용 — 앞 30자만, 길면 말줄임표. */
+function preview(text: string): string {
+  return text.length > 30 ? `${text.slice(0, 30)}…` : text;
+}
+
+/** 문자 배열에서 부분 문자열(문자 배열)의 시작 인덱스를 찾는다(없으면 -1). */
+function indexOfChars(haystack: string[], needle: string[], from = 0): number {
+  outer: for (let i = from; i + needle.length <= haystack.length; i += 1) {
+    for (let j = 0; j < needle.length; j += 1) {
+      if (haystack[i + j] !== needle[j]) continue outer;
+    }
+    return i;
+  }
+  return -1;
+}
+
+/**
+ * 본문 문단의 [format_target] 범위(생략 시 문단 전체)에 글자 서식을 적용한다.
+ * rhwp 오프셋은 문자 단위라 Array.from으로 센다. 대상이 없거나 문단에 여러 번
+ * 나타나면 오류를 던져 skipped(사유)로 보고되게 한다(AC4 — 모호하면 적용 금지).
+ */
+function applyFormatEdit(wasm: WasmEditing, edit: Edit, sec: number, para: number): void {
+  if (!wasm.applyCharFormat || !wasm.getTextRange) {
+    throw new Error('이 환경에서는 부분 서식 편집을 지원하지 않습니다.');
+  }
+  const spec = edit.payload.char_format!;
+  const length = wasm.getParagraphLength(sec, para);
+  const target = (edit.payload.format_target ?? '').trim();
+  let start = 0;
+  let end = length;
+  if (target) {
+    const chars = Array.from(wasm.getTextRange(sec, para, 0, length));
+    const needle = Array.from(target);
+    const first = indexOfChars(chars, needle);
+    if (first < 0) {
+      throw new Error(`문단에서 대상 문자열을 찾지 못했습니다: "${preview(target)}"`);
+    }
+    if (indexOfChars(chars, needle, first + 1) >= 0) {
+      throw new Error(
+        `대상 문자열이 문단에 여러 번 나타나 적용하지 않았습니다(더 길게 지정하세요): "${preview(target)}"`,
+      );
+    }
+    start = first;
+    end = first + needle.length;
+  }
+  if (end <= start) {
+    throw new Error('서식을 적용할 텍스트가 없습니다(빈 문단).');
+  }
+  const props: Record<string, unknown> = {};
+  if (spec.bold !== undefined) props.bold = spec.bold;
+  if (spec.italic !== undefined) props.italic = spec.italic;
+  if (spec.underline !== undefined) props.underline = spec.underline;
+  if (spec.strikethrough !== undefined) props.strikethrough = spec.strikethrough;
+  if (typeof spec.font_size_pt === 'number' && spec.font_size_pt > 0) {
+    props.fontSize = Math.round(spec.font_size_pt * 100); // pt → HWPUNIT
+  }
+  if (spec.text_color) props.textColor = spec.text_color;
+  if (!Object.keys(props).length) {
+    throw new Error('char_format에 적용할 속성이 없습니다.');
+  }
+  wasm.applyCharFormat(sec, para, start, end, JSON.stringify(props));
 }
 
 /**

@@ -5,10 +5,25 @@ import type { ActionScript } from './ai-bridge';
 class FakeWasm implements WasmEditing {
   calls: string[] = [];
   lengths: Record<string, number> = {};
+  /** 본문 문단 텍스트(getTextRange용). 키: `${sec}.${para}`. 설정 시 lengths도 채워진다. */
+  paraTexts: Record<string, string> = {};
+
+  setParaText(sec: number, para: number, text: string): void {
+    this.paraTexts[`${sec}.${para}`] = text;
+    this.lengths[`${sec}.${para}`] = Array.from(text).length;
+  }
 
   getParagraphLength(sec: number, para: number): number {
     this.calls.push(`getParagraphLength(${sec},${para})`);
     return this.lengths[`${sec}.${para}`] ?? 0;
+  }
+  getTextRange(sec: number, para: number, start: number, end: number): string {
+    this.calls.push(`getTextRange(${sec},${para},${start},${end})`);
+    return Array.from(this.paraTexts[`${sec}.${para}`] ?? '').slice(start, end).join('');
+  }
+  applyCharFormat(sec: number, para: number, start: number, end: number, propsJson: string): string {
+    this.calls.push(`applyCharFormat(${sec},${para},${start},${end},${propsJson})`);
+    return '';
   }
   insertText(sec: number, para: number, charOffset: number, text: string): string {
     this.calls.push(`insertText(${sec},${para},${charOffset},"${text}")`);
@@ -757,6 +772,97 @@ describe('applyActionScript', () => {
     );
     expect(result.applied).toBe(0);
     expect(result.skipped[0].reason).toContain('셀 ID');
+    expect(wasm.calls).toEqual([]);
+  });
+
+  // ── 런 단위 부분 서식 (F-04a91c) ────────────────────────────
+
+  it('format edit applies char format to the unique target range without touching text', () => {
+    const wasm = new FakeWasm();
+    wasm.setParaText(0, 1, '올해의 핵심 성과는 매출 증가다.');
+    const result = applyActionScript(
+      wasm,
+      script([
+        {
+          command: 'REPLACE',
+          target_id: 'sec[0].p[1]',
+          payload: {
+            type: 'format',
+            format_target: '핵심 성과',
+            char_format: { bold: true, text_color: '#C00000' },
+          },
+        },
+      ]),
+    );
+    expect(result.applied).toBe(1);
+    // "올해의 " = 4자 → [4, 9). 텍스트 변경 프리미티브는 호출되지 않는다.
+    expect(wasm.calls).toEqual([
+      'getParagraphLength(0,1)',
+      'getTextRange(0,1,0,18)',
+      'applyCharFormat(0,1,4,9,{"bold":true,"textColor":"#C00000"})',
+    ]);
+    expect(result.changed).toEqual([{ sec: 0, para: 1 }]);
+  });
+
+  it('format edit without format_target styles the whole paragraph (font size pt→HWPUNIT)', () => {
+    const wasm = new FakeWasm();
+    wasm.setParaText(0, 0, '제목 문단');
+    applyActionScript(
+      wasm,
+      script([
+        {
+          command: 'REPLACE',
+          target_id: 'sec[0].p[0]',
+          payload: { type: 'format', char_format: { font_size_pt: 14, underline: true } },
+        },
+      ]),
+    );
+    expect(wasm.calls).toEqual([
+      'getParagraphLength(0,0)',
+      'applyCharFormat(0,0,0,5,{"underline":true,"fontSize":1400})',
+    ]);
+  });
+
+  it('format edit is skipped when the target is missing or ambiguous (AC4)', () => {
+    const wasm = new FakeWasm();
+    wasm.setParaText(0, 0, '성과와 성과가 반복된다');
+    const result = applyActionScript(
+      wasm,
+      script([
+        {
+          command: 'REPLACE',
+          target_id: 'sec[0].p[0]',
+          payload: { type: 'format', format_target: '성과', char_format: { bold: true } },
+        },
+        {
+          command: 'REPLACE',
+          target_id: 'sec[0].p[0]',
+          payload: { type: 'format', format_target: '없는 문구', char_format: { bold: true } },
+        },
+      ]),
+    );
+    expect(result.applied).toBe(0);
+    expect(result.skipped).toHaveLength(2);
+    const reasons = result.skipped.map((s) => s.reason).join(' / ');
+    expect(reasons).toContain('여러 번');
+    expect(reasons).toContain('찾지 못했습니다');
+    expect(wasm.calls.filter((c) => c.startsWith('applyCharFormat'))).toEqual([]);
+  });
+
+  it('format edit on a table cell target is rejected (body paragraphs only)', () => {
+    const wasm = new FakeWasm();
+    const result = applyActionScript(
+      wasm,
+      script([
+        {
+          command: 'REPLACE',
+          target_id: 'sec[0].p[2].tbl[0].cell[1].p[0]',
+          payload: { type: 'format', format_target: '값', char_format: { bold: true } },
+        },
+      ]),
+    );
+    expect(result.applied).toBe(0);
+    expect(result.skipped[0].reason).toContain('본문 문단만');
     expect(wasm.calls).toEqual([]);
   });
 

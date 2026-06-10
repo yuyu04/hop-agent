@@ -59,6 +59,25 @@ pub struct TableEditSpec {
     pub texts: Vec<String>,
 }
 
+/// 런 단위 부분 서식 스펙(payload.type="format"). 텍스트 내용은 바꾸지 않는다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CharFormatSpec {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bold: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub italic: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub underline: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strikethrough: Option<bool>,
+    /// 글자 크기(pt). 적용 시 HWPUNIT(pt×100)으로 변환된다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font_size_pt: Option<u32>,
+    /// 글자 색 "#RRGGBB".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_color: Option<String>,
+}
+
 /// 이미지 크롭 영역(0~1 비율).
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct CropSpec {
@@ -100,6 +119,12 @@ pub struct EditPayload {
     /// type="table_edit"일 때: 기존 표의 구조 편집(행/열 추가·삭제, 셀 병합).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub table_edit: Option<TableEditSpec>,
+    /// type="format"일 때: 문단 안에서 서식을 바꿀 정확한 문자열(생략=문단 전체).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub format_target: Option<String>,
+    /// type="format"일 때: 적용할 글자 서식(바꿀 속성만 지정).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub char_format: Option<CharFormatSpec>,
     /// INSERT 시 참이면 새 페이지에서 시작(본문 문단에만 적용).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub page_break: Option<bool>,
@@ -214,7 +239,7 @@ pub fn action_script_schema() -> Value {
                         "payload": {
                             "type": "object",
                             "properties": {
-                                "type": { "type": "string", "enum": ["paragraph", "table", "image", "table_edit"] },
+                                "type": { "type": "string", "enum": ["paragraph", "table", "image", "table_edit", "format"] },
                                 "text": { "type": "string" },
                                 "style": {
                                     "type": "string",
@@ -247,6 +272,22 @@ pub fn action_script_schema() -> Value {
                                 "reason": {
                                     "type": "string",
                                     "description": "교정 패스에서만: 이 편집이 고치는 이슈를 '분류: 설명' 형식 한국어 한 문장으로(분류는 맞춤법/문법/어색한 표현/일관성 중 하나). 일반 편집에서는 생략."
+                                },
+                                "format_target": {
+                                    "type": "string",
+                                    "description": "type=\"format\"일 때: 그 문단 안에서 서식을 바꿀 정확한 문자열. 문단 전체면 생략. 문단 내에서 유일해야 한다(여러 번 나오면 적용되지 않음)."
+                                },
+                                "char_format": {
+                                    "type": "object",
+                                    "description": "type=\"format\"일 때: 적용할 글자 서식(바꿀 속성만). 텍스트 내용은 바뀌지 않는다(command=REPLACE, payload.text 불필요).",
+                                    "properties": {
+                                        "bold": { "type": "boolean" },
+                                        "italic": { "type": "boolean" },
+                                        "underline": { "type": "boolean" },
+                                        "strikethrough": { "type": "boolean" },
+                                        "font_size_pt": { "type": "integer", "description": "글자 크기(pt)" },
+                                        "text_color": { "type": "string", "description": "글자 색 #RRGGBB" }
+                                    }
                                 },
                                 "table_edit": {
                                     "type": "object",
@@ -469,6 +510,23 @@ mod tests {
         ]}"#;
         let s2 = parse_action_script(raw2).unwrap();
         assert!(serde_json::to_string(&s2).unwrap().contains("merge_cells"));
+    }
+
+    #[test]
+    fn parses_char_format_and_round_trips() {
+        // 부분 서식 payload(format_target+char_format)는 재직렬화에서 살아남아야 한다.
+        let raw = r##"{"edits":[
+            {"command":"REPLACE","target_id":"sec[0].p[1]",
+             "payload":{"type":"format","format_target":"핵심 성과",
+                        "char_format":{"bold":true,"text_color":"#C00000","font_size_pt":14}}}
+        ]}"##;
+        let script = parse_action_script(raw).unwrap();
+        assert_eq!(script.edits[0].payload.format_target.as_deref(), Some("핵심 성과"));
+        let spec = script.edits[0].payload.char_format.as_ref().unwrap();
+        assert_eq!(spec.bold, Some(true));
+        assert_eq!(spec.font_size_pt, Some(14));
+        let json = serde_json::to_string(&script).unwrap();
+        assert!(json.contains("char_format") && json.contains("format_target"));
     }
 
     #[test]

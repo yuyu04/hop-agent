@@ -30,7 +30,7 @@ export interface DocumentContext {
 export type EditCommand = 'INSERT_BEFORE' | 'INSERT_AFTER' | 'REPLACE' | 'DELETE';
 
 export interface EditPayload {
-  type?: 'paragraph' | 'table' | 'image' | 'table_edit';
+  type?: 'paragraph' | 'table' | 'image' | 'table_edit' | 'format';
   text?: string;
   style?: string;
   /** type="image"일 때 삽입할 첨부 이미지의 0-기준 인덱스(첨부 순서). */
@@ -51,6 +51,19 @@ export interface EditPayload {
     merges?: { start_row: number; start_col: number; end_row: number; end_col: number }[];
     /** 열별 상대 폭 가중치(길이=cols). 긴 텍스트 열은 크게, 짧은 열은 작게. */
     col_weights?: number[];
+  };
+  /** type="format"일 때: 문단 안에서 서식을 바꿀 정확한 문자열(생략=문단 전체, 문단 내 유일해야 함). */
+  format_target?: string;
+  /** type="format"일 때: 적용할 글자 서식(바꿀 속성만). 텍스트 내용은 바뀌지 않는다. */
+  char_format?: {
+    bold?: boolean;
+    italic?: boolean;
+    underline?: boolean;
+    strikethrough?: boolean;
+    /** 글자 크기(pt). 적용 시 HWPUNIT(pt×100)으로 변환. */
+    font_size_pt?: number;
+    /** 글자 색 #RRGGBB. */
+    text_color?: string;
   };
   /** type="table_edit"일 때: 기존 표의 구조 편집(행/열 추가·삭제, 셀 병합). target_id는 그 표의 셀 ID. */
   table_edit?: {

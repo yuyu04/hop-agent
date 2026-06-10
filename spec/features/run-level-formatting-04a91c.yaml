@@ -1,23 +1,37 @@
 id: F-04a91c
 slug: run-level-formatting
 title: "런 단위 부분 서식 편집 (\"이 단어만 굵게\")"
-status: planned
+status: done
 modules:
   - apps/desktop/src-tauri/src/ai/schema.rs
+  - apps/desktop/src-tauri/src/ai/mod.rs
   - apps/studio-host/src/core/ai-apply.ts
 acceptance_criteria:
   - id: AC-b94144
     ears: event
     condition: "When AI가 문단 내 부분 문자열 범위에 대한 서식 액션(굵게/색/밑줄/크기)을 반환하면"
     text: "The system shall 해당 범위의 런에만 applyCharFormat을 적용하고 문단 나머지 텍스트의 서식은 보존한다."
+    notes: "payload.type='format' + format_target(문단 내 정확한 문자열) + char_format{bold,italic,underline,strikethrough,font_size_pt,text_color}. getTextRange로 문단 텍스트를 읽어 문자 단위 오프셋 탐색 → applyCharFormat(sec,para,start,end). 본문 문단 전용(셀 텍스트 읽기 API 부재 → 셀 target은 안내와 함께 거부)."
+    test_refs:
+      - apps/studio-host/src/core/ai-apply.test.ts
   - id: AC-67e1de
     ears: ubiquitous
     text: "The system shall 서식 전용 액션을 텍스트 변경 없이 수행할 수 있게 한다 (REPLACE 없이 style-only)."
+    notes: "command=REPLACE를 쓰되 payload.text 불요(needsText 예외) — insertText/deleteText가 전혀 호출되지 않음을 테스트로 고정. format_target 생략 시 문단 전체에 적용."
+    test_refs:
+      - apps/studio-host/src/core/ai-apply.test.ts
+      - apps/desktop/src-tauri/src/ai/schema.rs
   - id: AC-264bfd
     ears: event
     condition: "When 사용자가 텍스트를 드래그 선택하고 서식 변경을 요청하면"
     text: "The system shall 선택 영역을 대상 범위로 사용하여 서식을 적용한다."
+    notes: "LLM 유도: 선택 텍스트는 프롬프트에 [사용자가 선택한 텍스트]로 들어가고, system_prompt가 '선택 텍스트의 서식 변경 요청이면 그 텍스트를 format_target으로(다시 쓰지 말 것)' 지시."
+    test_refs:
+      - apps/desktop/src-tauri/src/ai/mod.rs
   - id: AC-57d574
     ears: unwanted
     condition: "If 대상 문자열이 문단에서 유일하게 매칭되지 않으면"
     text: "The system shall 적용을 건너뛰고 사유를 메시지로 알린다."
+    notes: "0회 매칭('찾지 못했습니다')·2회 이상 매칭('여러 번 나타나… 더 길게 지정') 모두 skipped{reason}으로 보고, applyCharFormat은 호출되지 않는다."
+    test_refs:
+      - apps/studio-host/src/core/ai-apply.test.ts
