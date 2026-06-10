@@ -195,6 +195,44 @@
   color: #2563eb;
   text-decoration: underline;
 }
+/* 말풍선 인라인 편집(Cursor식) — 말풍선이 입력창으로 바뀐다 */
+.hop-ai-msg-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+.hop-ai-msg-editbox {
+  font: inherit;
+  font-size: 13px;
+  border: 1px solid #2563eb;
+  border-radius: 10px;
+  padding: 8px 10px;
+  resize: vertical;
+  min-height: 48px;
+  background: #fff;
+  color: #1f2328;
+}
+.hop-ai-msg-edit-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+.hop-ai-msg-edit-send,
+.hop-ai-msg-edit-cancel {
+  font-size: 12px;
+  border-radius: 6px;
+  padding: 4px 12px;
+  cursor: pointer;
+  border: 1px solid #c9ccd2;
+  background: #fff;
+}
+.hop-ai-msg-edit-send {
+  background: #2563eb;
+  border-color: #2563eb;
+  color: #fff;
+}
+
 .hop-ai-msg-chips {
   display: flex;
   flex-wrap: wrap;
@@ -822,12 +860,18 @@
   box-shadow: 0 0 0 1px rgba(26, 127, 55, 0.25);
 }
 .hop-ai-inline-bar {
-  z-index: 901;
+  /* 문서 뷰 상단 고정(fixed, body 직속) — 패널·툴바 위에 떠야 하므로 충분히 높게. */
+  z-index: 1300;
   display: flex;
   align-items: center;
   gap: 6px;
-  justify-content: flex-end;
+  justify-content: center;
   pointer-events: auto;
+  background: #fff;
+  border: 1px solid #c9ccd2;
+  border-radius: 20px;
+  padding: 5px 10px;
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.18);
 }
 .hop-ai-inline-label {
   font-size: 11px;

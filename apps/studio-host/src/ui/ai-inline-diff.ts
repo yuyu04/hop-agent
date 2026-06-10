@@ -35,6 +35,10 @@ export interface InlineDiffDeps {
 
 export function clearInlineDiff(scrollContent: HTMLElement): void {
   scrollContent.querySelectorAll(`[${ATTR}]`).forEach((node) => node.remove());
+  // 승인/거절 바는 뷰포트 고정(fixed)이라 body에 붙는다 — 함께 정리한다.
+  if (typeof document !== 'undefined') {
+    document.body?.querySelectorAll?.(`[${ATTR}]`)?.forEach?.((node) => node.remove());
+  }
 }
 
 /**
@@ -100,13 +104,27 @@ export function showInlineDiff(
     deps.scrollContent.appendChild(card);
   }
 
-  // 변경 영역 상단에 떠 있는 승인/거절 바(대상 위치 기준, 좁게).
+  // 승인/거절 바 — 변경 위치가 아니라 '문서 뷰 상단'에 고정한다. 변경이 여러
+  // 페이지에 걸쳐도, 어디로 스크롤하든 항상 보이는 자리에서 승인/거절할 수 있다.
+  // 조상 transform의 영향을 받지 않도록 body에 fixed로 붙인다(clearInlineDiff가 정리).
   const bar = document.createElement('div');
   bar.setAttribute(ATTR, 'bar');
   bar.className = 'hop-ai-inline-bar';
-  bar.style.position = 'absolute';
-  bar.style.left = `${barLeft}px`;
-  bar.style.top = `${Math.max(0, minTop - 30)}px`;
+  const containerRect =
+    typeof deps.scrollContainer.getBoundingClientRect === 'function'
+      ? deps.scrollContainer.getBoundingClientRect()
+      : null;
+  if (containerRect && containerRect.width > 0) {
+    bar.style.position = 'fixed';
+    bar.style.left = `${containerRect.left + containerRect.width / 2}px`;
+    bar.style.transform = 'translateX(-50%)';
+    bar.style.top = `${containerRect.top + 10}px`;
+  } else {
+    // 좌표를 못 구하는 환경(테스트 등) — 변경 위치 위 폴백.
+    bar.style.position = 'absolute';
+    bar.style.left = `${barLeft}px`;
+    bar.style.top = `${Math.max(0, minTop - 30)}px`;
+  }
 
   const label = document.createElement('span');
   label.className = 'hop-ai-inline-label';
@@ -124,7 +142,7 @@ export function showInlineDiff(
   reject.addEventListener('click', () => callbacks.onReject());
 
   bar.append(label, accept, reject);
-  deps.scrollContent.appendChild(bar);
+  document.body.appendChild(bar);
 
   deps.scrollContainer.scrollTo({ top: Math.max(0, minTop - 60), behavior: 'smooth' });
   return entries.length;

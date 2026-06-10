@@ -66,9 +66,13 @@ describe('ai-inline-diff', () => {
   let scrollContent: FakeElement;
   let scrollContainer: FakeElement;
 
+  let body: FakeElement;
+
   beforeEach(() => {
+    body = new FakeElement('body');
     (globalThis as Record<string, unknown>).document = {
       createElement: (tag: string) => new FakeElement(tag),
+      body,
     };
     scrollContent = new FakeElement('div');
     scrollContainer = new FakeElement('div');
@@ -97,29 +101,31 @@ describe('ai-inline-diff', () => {
     const count = showInlineDiff(deps(), entries, { onAccept, onReject });
     expect(count).toBe(2);
 
-    // 카드 2개 + 바 1개.
-    expect(scrollContent.querySelectorAll('[data-hop-ai-inline]').length).toBe(3);
+    // 카드 2개는 본문 좌표에, 승인/거절 바는 뷰포트 고정용으로 body에 붙는다.
+    expect(scrollContent.querySelectorAll('[data-hop-ai-inline]').length).toBe(2);
     expect(scrollContent.find('hop-ai-inline-before')?.textContent).toBe('525,000,000');
     expect(scrollContent.find('hop-ai-inline-after')?.textContent).toBe('1,000,000,000');
 
-    const bar = scrollContent.find('hop-ai-inline-bar')!;
-    // 바는 가장 위(top=80) 변경 위로 배치된다.
+    const bar = body.find('hop-ai-inline-bar')!;
+    // 컨테이너 좌표를 못 구하는 환경(테스트)은 변경 위치 위 폴백(top=80-30).
     expect(bar.style.top).toBe(`${80 - 30}px`);
-    expect(scrollContent.find('hop-ai-inline-label')?.textContent).toBe('AI 제안 2건');
+    expect(body.find('hop-ai-inline-label')?.textContent).toBe('AI 제안 2건');
 
-    scrollContent.find('hop-ai-inline-accept')!.click();
+    body.find('hop-ai-inline-accept')!.click();
     expect(onAccept).toHaveBeenCalledOnce();
-    scrollContent.find('hop-ai-inline-reject')!.click();
+    body.find('hop-ai-inline-reject')!.click();
     expect(onReject).toHaveBeenCalledOnce();
   });
 
   it('clears previous overlay on re-render and via clearInlineDiff', () => {
     showInlineDiff(deps(), entries, { onAccept: vi.fn(), onReject: vi.fn() });
     showInlineDiff(deps(), entries, { onAccept: vi.fn(), onReject: vi.fn() });
-    // 재렌더 시 누적되지 않는다(카드2 + 바1).
-    expect(scrollContent.querySelectorAll('[data-hop-ai-inline]').length).toBe(3);
+    // 재렌더 시 누적되지 않는다(본문 카드 2 + body 바 1).
+    expect(scrollContent.querySelectorAll('[data-hop-ai-inline]').length).toBe(2);
+    expect(body.querySelectorAll('[data-hop-ai-inline]').length).toBe(1);
 
     clearInlineDiff(scrollContent as unknown as HTMLElement);
     expect(scrollContent.querySelectorAll('[data-hop-ai-inline]').length).toBe(0);
+    expect(body.querySelectorAll('[data-hop-ai-inline]').length).toBe(0);
   });
 });

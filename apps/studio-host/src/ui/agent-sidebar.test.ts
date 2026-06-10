@@ -473,12 +473,12 @@ describe('AgentSidebar', () => {
 
     // 페이지 위 인라인 바가 뜨더라도, 버블 내 승인/거절은 항상 노출된다(인라인 바가
     // 안 뜨는 표 삽입 등에서도 승인 수단을 잃지 않도록).
-    expect(scrollContent.querySelector('.hop-ai-inline-bar')).not.toBeNull();
+    expect(doc.body.querySelector('.hop-ai-inline-bar')).not.toBeNull();
     expect(scrollContent.querySelector('.hop-ai-inline-after')?.textContent).toBe('1,000,000,000');
     expect(find('hop-ai-decision').classList.contains('hop-ai-hidden')).toBe(false);
 
     // 인라인 바의 승인이 실제 적용(by-path)로 이어진다.
-    scrollContent.querySelector('.hop-ai-inline-accept')!.click();
+    doc.body.querySelector('.hop-ai-inline-accept')!.click();
     expect(bridge.insertTextInCellByPath).toHaveBeenCalled();
   });
 
@@ -573,8 +573,8 @@ describe('AgentSidebar', () => {
     // 새/바뀐 줄에 초록 변경 표시줄이 그려진다.
     expect(scrollContent.querySelector('.hop-ai-inline-changebar')).not.toBeNull();
 
-    // 거절 → 스냅샷으로 복원(loadDocument 호출).
-    scrollContent.querySelector('.hop-ai-inline-reject')!.click();
+    // 거절 → 스냅샷으로 복원(loadDocument 호출). 바는 뷰포트 고정이라 body에 있다.
+    doc.body.querySelector('.hop-ai-inline-reject')!.click();
     expect(loadDocument).toHaveBeenCalledWith(snapshotBytes, 'doc.hwp');
   });
 
@@ -819,6 +819,50 @@ describe('AgentSidebar', () => {
     const lastMsg = msg[msg.length - 1];
     expect(lastMsg?.textContent).toContain('차트를 만들지 못했습니다');
     expect(lastMsg?.textContent).toContain('10억');
+  });
+
+  it('edits a past message in place and restarts the conversation from that line', async () => {
+    build();
+    await flush();
+    await selectProvider('ollama');
+    // 1차 대화.
+    find('hop-ai-prompt').value = '첫 지시';
+    find('hop-ai-send').click();
+    await flush();
+    captured!.onEditReady?.({
+      requestId: 'req-1',
+      actionScriptJson: '{"edits":[],"message":"답1"}',
+    });
+    // 2차 대화.
+    find('hop-ai-prompt').value = '둘째 지시';
+    find('hop-ai-send').click();
+    await flush();
+    captured!.onEditReady?.({
+      requestId: 'req-1',
+      actionScriptJson: '{"edits":[],"message":"답2"}',
+    });
+    expect(doc.body.querySelectorAll('.hop-ai-msg').length).toBe(4);
+
+    // 첫 사용자 말풍선의 ✎ 수정 → 말풍선이 그 자리에서 입력창으로 바뀐다(Cursor식).
+    doc.body.querySelectorAll('.hop-ai-msg-edit')[0].click();
+    const editbox = doc.body.querySelector('.hop-ai-msg-editbox')!;
+    expect(editbox.value).toBe('첫 지시');
+
+    // 고쳐서 보내면 그 줄부터 다시 — 그 아래 대화(답1·둘째 지시·답2)는 제거된다.
+    editbox.value = '고친 지시';
+    doc.body.querySelector('.hop-ai-msg-edit-send')!.click();
+    await flush();
+
+    const texts = doc.body
+      .querySelectorAll('.hop-ai-msg-text')
+      .map((n) => n.textContent ?? '');
+    expect(texts).toContain('고친 지시');
+    expect(texts).not.toContain('첫 지시');
+    expect(texts).not.toContain('둘째 지시');
+    expect(texts).not.toContain('답2');
+    // 수정된 텍스트로 재요청이 나간다.
+    const last = bridge.aiRequestEdit.mock.calls.at(-1)!;
+    expect(last[1]).toBe('고친 지시');
   });
 
   it('ignores ready events for a different request id', async () => {

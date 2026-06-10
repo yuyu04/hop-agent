@@ -1432,20 +1432,13 @@ export class AgentSidebar {
     const body = el('div', 'hop-ai-msg-text');
     body.textContent = text;
     bubble.appendChild(body);
-    // 지난 메시지를 다시 다듬어 보낼 수 있게 '수정' 버튼 — 클릭하면 컴포저로 불러온다.
+    // '수정' — Cursor식 인라인 편집: 말풍선이 입력창으로 바뀌고, 보내면 이 지점부터
+    // 대화를 다시 시작한다(아래 메시지들은 제거).
     const editBtn = el('button', 'hop-ai-msg-edit') as HTMLButtonElement;
     editBtn.type = 'button';
     editBtn.textContent = '✎ 수정';
-    editBtn.title = '이 메시지를 입력창으로 불러와 수정 후 다시 보냅니다';
-    editBtn.addEventListener('click', () => {
-      this.promptInput.value = text;
-      this.promptInput.focus();
-      try {
-        this.promptInput.setSelectionRange(text.length, text.length);
-      } catch {
-        /* 일부 환경은 setSelectionRange 미지원 */
-      }
-    });
+    editBtn.title = '이 메시지를 고쳐 여기서부터 다시 보냅니다(아래 대화는 지워집니다)';
+    editBtn.addEventListener('click', () => this.beginEditMessage(bubble, body, text));
     bubble.appendChild(editBtn);
     if (attachments.length) {
       const chips = el('div', 'hop-ai-msg-chips');
@@ -1458,6 +1451,87 @@ export class AgentSidebar {
     }
     this.thread.appendChild(bubble);
     this.scrollThreadToEnd();
+  }
+
+  /** 말풍선을 그 자리에서 입력창으로 바꾼다(Cursor식). 보내기/취소 버튼 포함. */
+  private beginEditMessage(bubble: HTMLElement, bodyEl: HTMLElement, originalText: string): void {
+    if (bubble.querySelector('.hop-ai-msg-editor')) return; // 이미 편집 중.
+    bodyEl.classList.add('hop-ai-hidden');
+    const editor = el('div', 'hop-ai-msg-editor');
+    const input = document.createElement('textarea');
+    input.className = 'hop-ai-msg-editbox';
+    input.value = originalText;
+    input.rows = Math.min(6, Math.max(2, originalText.split('\n').length + 1));
+    const actions = el('div', 'hop-ai-msg-edit-actions');
+    const sendBtn = btn('hop-ai-msg-edit-send', '보내기');
+    sendBtn.title = '여기서부터 대화를 다시 시작합니다(아래 대화는 지워집니다)';
+    sendBtn.addEventListener('click', () => {
+      const newText = input.value.trim();
+      if (!newText) return;
+      void this.resendEditedMessage(bubble, newText);
+    });
+    const cancelBtn = btn('hop-ai-msg-edit-cancel', '취소');
+    cancelBtn.addEventListener('click', () => {
+      editor.remove();
+      bodyEl.classList.remove('hop-ai-hidden');
+    });
+    actions.append(sendBtn, cancelBtn);
+    editor.append(input, actions);
+    bubble.appendChild(editor);
+    input.focus?.();
+  }
+
+  /**
+   * 수정한 메시지를 그 지점부터 다시 보낸다 — 해당 말풍선 이후(본인 포함)의 대화를
+   * DOM·저장소에서 제거하고, 새 텍스트로 send()를 다시 탄다(Cursor IDE와 동일).
+   */
+  private async resendEditedMessage(bubble: HTMLElement, newText: string): Promise<void> {
+    // 진행 중 요청/미확정 편집 정리 — 이후 응답이 지워진 스레드에 붙지 않게 한다.
+    if (this.requestId) {
+      try {
+        await this.deps.bridge.aiCancelRequest(this.requestId);
+      } catch {
+        /* 취소 실패는 무시 */
+      }
+    }
+    this.session.cancel();
+    this.requestId = null;
+    this.active = null;
+    this.resolveProofread(null);
+
+    const conv = this.activeConv;
+    const children = Array.from(conv.thread.children) as HTMLElement[];
+    const pos = children.indexOf(bubble);
+    if (pos >= 0) {
+      // 이 말풍선 앞의 사용자 말풍선 수 = 유지할 user 메시지 수. 저장 메시지는
+      // (그 수 + 1)번째 user 메시지 직전까지 자른다(실패한 어시스턴트 턴처럼
+      // 기록이 없는 말풍선이 있어도 안전).
+      const keepUsers = children
+        .slice(0, pos)
+        .filter((c) => c.classList.contains('hop-ai-msg-user')).length;
+      let seenUsers = 0;
+      let cut = conv.messages.length;
+      for (let i = 0; i < conv.messages.length; i += 1) {
+        if (conv.messages[i].role === 'user') {
+          if (seenUsers === keepUsers) {
+            cut = i;
+            break;
+          }
+          seenUsers += 1;
+        }
+      }
+      conv.messages = conv.messages.slice(0, cut);
+      for (const node of children.slice(pos)) node.remove();
+      upsertConversation({
+        id: conv.id,
+        title: conv.title,
+        createdAt: conv.createdAt,
+        updatedAt: Date.now(),
+        messages: conv.messages,
+      });
+    }
+    this.promptInput.value = newText;
+    await this.send();
   }
 
   private appendAssistantTurn(): ActiveTurn {
