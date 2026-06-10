@@ -126,6 +126,52 @@ class FakeWasm implements WasmEditing {
     this.calls.push(`splitParagraphInCell(${s},${pp},${ci},${ce},${cp},${off})`);
     return '';
   }
+  /** 머리말/꼬리말 상태. 키: `${sec}.${isHeader}.${applyTo}` → 문단 텍스트 배열. */
+  hf: Record<string, string[]> = {};
+  getHeaderFooter(s: number, h: boolean, a: number): string {
+    this.calls.push(`getHeaderFooter(${s},${h},${a})`);
+    const paras = this.hf[`${s}.${h}.${a}`];
+    return JSON.stringify(paras ? { ok: true, exists: true } : { ok: true, exists: false });
+  }
+  createHeaderFooter(s: number, h: boolean, a: number): string {
+    this.calls.push(`createHeaderFooter(${s},${h},${a})`);
+    this.hf[`${s}.${h}.${a}`] = [''];
+    return JSON.stringify({ ok: true });
+  }
+  getHeaderFooterParaInfo(s: number, h: boolean, a: number, i: number): string {
+    const paras = this.hf[`${s}.${h}.${a}`] ?? [];
+    return JSON.stringify({
+      ok: true,
+      paraCount: paras.length,
+      charCount: Array.from(paras[i] ?? '').length,
+    });
+  }
+  insertTextInHeaderFooter(s: number, h: boolean, a: number, i: number, off: number, text: string): string {
+    this.calls.push(`insertTextInHeaderFooter(${s},${h},${a},${i},${off},"${text}")`);
+    return JSON.stringify({ ok: true });
+  }
+  deleteTextInHeaderFooter(s: number, h: boolean, a: number, i: number, off: number, count: number): string {
+    this.calls.push(`deleteTextInHeaderFooter(${s},${h},${a},${i},${off},${count})`);
+    return JSON.stringify({ ok: true });
+  }
+  splitParagraphInHeaderFooter(s: number, h: boolean, a: number, i: number, off: number): string {
+    this.calls.push(`splitParagraphInHeaderFooter(${s},${h},${a},${i},${off})`);
+    return JSON.stringify({ ok: true });
+  }
+  /** 각주 상태. 키: `${sec}.${para}.${ctrl}` → 문단 텍스트 배열. */
+  fns: Record<string, string[]> = {};
+  getFootnoteInfo(s: number, p: number, c: number) {
+    const texts = this.fns[`${s}.${p}.${c}`] ?? [];
+    return { ok: texts.length > 0, paraCount: texts.length, totalTextLen: 0, number: 1, texts };
+  }
+  insertTextInFootnote(s: number, p: number, c: number, i: number, off: number, text: string) {
+    this.calls.push(`insertTextInFootnote(${s},${p},${c},${i},${off},"${text}")`);
+    return { ok: true, charOffset: off + text.length };
+  }
+  deleteTextInFootnote(s: number, p: number, c: number, i: number, off: number, count: number) {
+    this.calls.push(`deleteTextInFootnote(${s},${p},${c},${i},${off},${count})`);
+    return { ok: true, charOffset: off };
+  }
   getCellParagraphLengthByPath(s: number, pp: number, pathJson: string): number {
     this.calls.push(`getCellParagraphLengthByPath(${s},${pp},${pathJson})`);
     return this.lengths[`${s}.${pp}.${pathJson}`] ?? 0;
@@ -863,6 +909,87 @@ describe('applyActionScript', () => {
     );
     expect(result.applied).toBe(0);
     expect(result.skipped[0].reason).toContain('본문 문단만');
+    expect(wasm.calls).toEqual([]);
+  });
+
+  // ── 머리말/꼬리말/각주 (F-191fd6) ───────────────────────────
+
+  it('REPLACE on an existing header paragraph clears then inserts (applies to all pages)', () => {
+    const wasm = new FakeWasm();
+    wasm.hf['0.true.0'] = ['옛 머리말'];
+    const result = applyActionScript(
+      wasm,
+      script([
+        {
+          command: 'REPLACE',
+          target_id: 'sec[0].header[0].p[0]',
+          payload: { type: 'paragraph', text: '대외비 — 2026 사업계획' },
+        },
+      ]),
+    );
+    expect(result.applied).toBe(1);
+    expect(wasm.calls).toEqual([
+      'getHeaderFooter(0,true,0)',
+      'deleteTextInHeaderFooter(0,true,0,0,0,5)',
+      'insertTextInHeaderFooter(0,true,0,0,0,"대외비 — 2026 사업계획")',
+    ]);
+  });
+
+  it('REPLACE on a missing footer placeholder creates it first (AC3)', () => {
+    const wasm = new FakeWasm();
+    const result = applyActionScript(
+      wasm,
+      script([
+        {
+          command: 'REPLACE',
+          target_id: 'sec[0].footer[0].p[0]',
+          payload: { type: 'paragraph', text: '- 1 -' },
+        },
+      ]),
+    );
+    expect(result.applied).toBe(1);
+    expect(wasm.calls).toEqual([
+      'getHeaderFooter(0,false,0)',
+      'createHeaderFooter(0,false,0)',
+      'insertTextInHeaderFooter(0,false,0,0,0,"- 1 -")',
+    ]);
+  });
+
+  it('footnote REPLACE rewrites content but preserves trailing marker spaces', () => {
+    const wasm = new FakeWasm();
+    wasm.fns['0.3.2'] = ['옛 출처  ']; // 끝 공백 2개 = 자동번호 표시 문자.
+    const result = applyActionScript(
+      wasm,
+      script([
+        {
+          command: 'REPLACE',
+          target_id: 'sec[0].p[3].fn[2].p[0]',
+          payload: { type: 'paragraph', text: '출처: 통계청(2026)' },
+        },
+      ]),
+    );
+    expect(result.applied).toBe(1);
+    // 끝 공백 2자는 지우지 않는다(4자 중 2자만 삭제).
+    expect(wasm.calls).toEqual([
+      'deleteTextInFootnote(0,3,2,0,0,4)',
+      'insertTextInFootnote(0,3,2,0,0,"출처: 통계청(2026)")',
+    ]);
+  });
+
+  it('footnote INSERT is rejected with guidance (REPLACE/DELETE only)', () => {
+    const wasm = new FakeWasm();
+    const result = applyActionScript(
+      wasm,
+      script([
+        {
+          command: 'INSERT_AFTER',
+          target_id: 'sec[0].p[3].fn[2].p[0]',
+          payload: { text: '추가' },
+        },
+      ]),
+    );
+    expect(result.applied).toBe(0);
+    expect(result.skipped[0].reason).toContain('REPLACE');
     expect(wasm.calls).toEqual([]);
   });
 

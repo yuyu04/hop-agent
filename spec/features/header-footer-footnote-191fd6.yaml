@@ -1,24 +1,38 @@
 id: F-191fd6
 slug: header-footer-footnote
 title: "머리말/꼬리말/각주 직렬화 + 편집"
-status: planned
+status: done
 modules:
   - apps/desktop/src-tauri/src/ai/serialize.rs
-  - apps/desktop/src-tauri/src/ai/schema.rs
+  - apps/desktop/src-tauri/src/ai/mod.rs
   - apps/studio-host/src/core/ai-apply.ts
 acceptance_criteria:
   - id: AC-626fc1
     ears: ubiquitous
     text: "The system shall 머리말/꼬리말/각주 텍스트를 경로 기반 id로 직렬화하여 AI 컨텍스트에 포함한다."
+    notes: "머리말/꼬리말: `sec[S].header|footer[A].p[I]`(A=0양쪽/1짝수/2홀수) — get_header_footer_native로 수집, 없으면 양쪽(0) 자리에 빈 placeholder(생성 진입점). 각주: `sec[S].p[P].fn[C].p[I]` — 페이지별 각주 프로브(get_page_footnote_info_native)로 발견, 본문 소속(body)만(표/글상자 안 각주 제외). 윈도우와 무관하게 항상 포함."
+    test_refs:
+      - apps/desktop/src-tauri/src/ai/serialize.rs
   - id: AC-9cbb08
     ears: event
     condition: "When AI가 머리말/꼬리말 영역에 대한 편집 액션을 반환하면"
     text: "The system shall 해당 영역 텍스트를 수정하고 모든 페이지에 반영한다."
+    notes: "applyOneHeaderFooter가 rhwp insert/delete/splitTextInHeaderFooter 프리미티브 사용(REPLACE/DELETE/INSERT_AFTER/BEFORE). 각주는 REPLACE/DELETE만(분할 API 미노출) — 끝 공백(자동번호 표시 문자)은 보존. 모든 페이지 반영·리플로우는 rhwp가 수행."
+    test_refs:
+      - apps/studio-host/src/core/ai-apply.test.ts
+      - apps/desktop/src-tauri/src/ai/serialize.rs
   - id: AC-ed3704
     ears: event
     condition: "When 머리말/꼬리말이 없는 문서에서 사용자가 추가를 요청하면"
     text: "The system shall 새 머리말/꼬리말을 생성하여 텍스트를 넣는다."
+    notes: "직렬화된 빈 placeholder에 REPLACE/INSERT → applyOneHeaderFooter가 exists=false면 createHeaderFooter 후 텍스트 삽입. 시스템 프롬프트가 placeholder 의미를 안내."
+    test_refs:
+      - apps/studio-host/src/core/ai-apply.test.ts
+      - apps/desktop/src-tauri/src/ai/mod.rs
   - id: AC-514ccd
     ears: unwanted
     condition: "If 생성/편집 결과가 저장 후 한컴오피스에서 깨지면"
     text: "The system shall 리그레션으로 간주하고 저장 후처리 경로(hwp_table_fix.rs 패턴)로 보정한다."
+    notes: "머리말 생성·편집 + 각주 편집 후 export→재파싱 라운드트립 테스트로 텍스트 보존 확인(2026-06-10). 한컴오피스 실기 확인에서 깨짐 발견 시 hwp_table_fix.rs 패턴의 후처리를 추가한다."
+    test_refs:
+      - apps/desktop/src-tauri/src/ai/serialize.rs

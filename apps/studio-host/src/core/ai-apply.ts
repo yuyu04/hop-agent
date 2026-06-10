@@ -92,6 +92,55 @@ export interface WasmEditing {
     charOffset: number,
     count: number,
   ): string;
+  // 머리말/꼬리말 편집(F-191fd6). get*/create*는 JSON 문자열을 반환한다.
+  getHeaderFooter(sec: number, isHeader: boolean, applyTo: number): string;
+  createHeaderFooter(sec: number, isHeader: boolean, applyTo: number): string;
+  getHeaderFooterParaInfo(sec: number, isHeader: boolean, applyTo: number, hfParaIdx: number): string;
+  insertTextInHeaderFooter(
+    sec: number,
+    isHeader: boolean,
+    applyTo: number,
+    hfParaIdx: number,
+    charOffset: number,
+    text: string,
+  ): string;
+  deleteTextInHeaderFooter(
+    sec: number,
+    isHeader: boolean,
+    applyTo: number,
+    hfParaIdx: number,
+    charOffset: number,
+    count: number,
+  ): string;
+  splitParagraphInHeaderFooter(
+    sec: number,
+    isHeader: boolean,
+    applyTo: number,
+    hfParaIdx: number,
+    charOffset: number,
+  ): string;
+  // 각주 텍스트 편집(F-191fd6). REPLACE/DELETE만 지원(문단 분할 API 미노출).
+  getFootnoteInfo(
+    sec: number,
+    para: number,
+    controlIdx: number,
+  ): { ok: boolean; paraCount: number; totalTextLen: number; number: number; texts: string[] };
+  insertTextInFootnote(
+    sec: number,
+    para: number,
+    controlIdx: number,
+    fnParaIdx: number,
+    charOffset: number,
+    text: string,
+  ): { ok: boolean; charOffset: number };
+  deleteTextInFootnote(
+    sec: number,
+    para: number,
+    controlIdx: number,
+    fnParaIdx: number,
+    charOffset: number,
+    count: number,
+  ): { ok: boolean; charOffset: number };
   // 기존 표 구조 편집(F-7a3dbe). rhwp가 셀 내용을 보존하며 행/열을 넣고 뺀다.
   insertTableRow(
     sec: number,
@@ -259,15 +308,67 @@ export function parseCellTarget(targetId: string): CellTarget | null {
   return { sec: Number(base[1]), parentPara: Number(base[2]), path };
 }
 
+/** `sec[s].header|footer[a].p[i]` 형식의 머리말/꼬리말 문단 타깃(F-191fd6). */
+export interface HeaderFooterTarget {
+  sec: number;
+  isHeader: boolean;
+  /** 적용 대상: 0=양쪽, 1=짝수, 2=홀수. */
+  applyTo: number;
+  paraIdx: number;
+}
+
+const HF_PATTERN = /^sec\[(\d+)\]\.(header|footer)\[(\d+)\]\.p\[(\d+)\]$/;
+
+export function parseHeaderFooterTarget(targetId: string): HeaderFooterTarget | null {
+  const m = HF_PATTERN.exec(targetId);
+  if (!m) return null;
+  return {
+    sec: Number(m[1]),
+    isHeader: m[2] === 'header',
+    applyTo: Number(m[3]),
+    paraIdx: Number(m[4]),
+  };
+}
+
+/** `sec[s].p[p].fn[c].p[i]` 형식의 각주 문단 타깃(F-191fd6). */
+export interface FootnoteTarget {
+  sec: number;
+  para: number;
+  controlIdx: number;
+  fnParaIdx: number;
+}
+
+const FN_PATTERN = /^sec\[(\d+)\]\.p\[(\d+)\]\.fn\[(\d+)\]\.p\[(\d+)\]$/;
+
+export function parseFootnoteTarget(targetId: string): FootnoteTarget | null {
+  const m = FN_PATTERN.exec(targetId);
+  if (!m) return null;
+  return {
+    sec: Number(m[1]),
+    para: Number(m[2]),
+    controlIdx: Number(m[3]),
+    fnParaIdx: Number(m[4]),
+  };
+}
+
 type LocatedEdit =
   | { kind: 'body'; edit: Edit; sec: number; para: number; order: number }
-  | { kind: 'cell'; edit: Edit; cell: CellTarget; order: number };
+  | { kind: 'cell'; edit: Edit; cell: CellTarget; order: number }
+  | { kind: 'hf'; edit: Edit; hf: HeaderFooterTarget; order: number }
+  | { kind: 'fn'; edit: Edit; fn: FootnoteTarget; order: number };
 
 function locatedSec(item: LocatedEdit): number {
-  return item.kind === 'body' ? item.sec : item.cell.sec;
+  if (item.kind === 'body') return item.sec;
+  if (item.kind === 'cell') return item.cell.sec;
+  if (item.kind === 'hf') return item.hf.sec;
+  return item.fn.sec;
 }
 function locatedPara(item: LocatedEdit): number {
-  return item.kind === 'body' ? item.para : item.cell.parentPara;
+  if (item.kind === 'body') return item.para;
+  if (item.kind === 'cell') return item.cell.parentPara;
+  // 머리말/꼬리말은 본문 인덱스와 무관 — 항상 마지막에 적용되도록 -1.
+  if (item.kind === 'hf') return -1;
+  return item.fn.para;
 }
 
 /**
@@ -324,6 +425,32 @@ export function applyActionScript(
       return;
     }
 
+    const hf = parseHeaderFooterTarget(edit.target_id);
+    if (hf) {
+      if (isTableEdit(edit) || isImageEdit(edit) || isTableStructEdit(edit) || isFormatEdit(edit)) {
+        skipped.push({
+          targetId: edit.target_id,
+          reason: '머리말/꼬리말에는 텍스트 편집(REPLACE/DELETE/INSERT)만 가능합니다.',
+        });
+        return;
+      }
+      located.push({ kind: 'hf', edit, hf, order });
+      return;
+    }
+
+    const footnote = parseFootnoteTarget(edit.target_id);
+    if (footnote) {
+      if (edit.command !== 'REPLACE' && edit.command !== 'DELETE') {
+        skipped.push({
+          targetId: edit.target_id,
+          reason: '각주는 내용 수정(REPLACE)·비우기(DELETE)만 지원합니다.',
+        });
+        return;
+      }
+      located.push({ kind: 'fn', edit, fn: footnote, order });
+      return;
+    }
+
     const target = parseParagraphTarget(edit.target_id);
     if (!target) {
       skipped.push({
@@ -368,6 +495,10 @@ export function applyActionScript(
       if (item.kind === 'cell') {
         if (isTableStructEdit(item.edit)) applyTableEdit(wasm, item.edit, item.cell);
         else applyOneCell(wasm, item.edit, item.cell);
+      } else if (item.kind === 'hf') {
+        applyOneHeaderFooter(wasm, item.edit, item.hf);
+      } else if (item.kind === 'fn') {
+        applyOneFootnote(wasm, item.edit, item.fn);
       } else if (isFormatEdit(item.edit)) {
         // 부분 서식 — 텍스트는 그대로, 지정 범위 런에만 글자 서식을 입힌다.
         applyFormatEdit(wasm, item.edit, item.sec, item.para);
@@ -524,6 +655,70 @@ function isImageEdit(edit: Edit): boolean {
     edit.payload.type === 'image' &&
     typeof edit.payload.image_index === 'number'
   );
+}
+
+/**
+ * 머리말/꼬리말 문단 편집(F-191fd6). 존재하지 않으면 먼저 생성한다(placeholder를
+ * REPLACE/INSERT한 경우 — AC3). rhwp가 모든 페이지에 반영·리플로우한다.
+ */
+function applyOneHeaderFooter(wasm: WasmEditing, edit: Edit, t: HeaderFooterTarget): void {
+  const { sec, isHeader, applyTo, paraIdx } = t;
+  const text = edit.payload.text ?? '';
+  const exists =
+    (JSON.parse(wasm.getHeaderFooter(sec, isHeader, applyTo)) as { exists?: boolean }).exists ===
+    true;
+  if (!exists) {
+    if (edit.command === 'DELETE') return; // 없는 머리말 비우기 — 할 일 없음.
+    wasm.createHeaderFooter(sec, isHeader, applyTo); // 빈 문단 1개로 생성.
+  }
+  const info = JSON.parse(wasm.getHeaderFooterParaInfo(sec, isHeader, applyTo, paraIdx)) as {
+    paraCount?: number;
+    charCount?: number;
+  };
+  const paraCount = info.paraCount ?? 0;
+  if (paraIdx >= paraCount) {
+    throw new Error(`머리말/꼬리말 문단 ${paraIdx} 범위 초과(총 ${paraCount}개)`);
+  }
+  const length = info.charCount ?? 0;
+  switch (edit.command) {
+    case 'REPLACE':
+      if (length > 0) wasm.deleteTextInHeaderFooter(sec, isHeader, applyTo, paraIdx, 0, length);
+      wasm.insertTextInHeaderFooter(sec, isHeader, applyTo, paraIdx, 0, text);
+      break;
+    case 'DELETE':
+      if (length > 0) wasm.deleteTextInHeaderFooter(sec, isHeader, applyTo, paraIdx, 0, length);
+      break;
+    case 'INSERT_AFTER':
+      wasm.splitParagraphInHeaderFooter(sec, isHeader, applyTo, paraIdx, length);
+      wasm.insertTextInHeaderFooter(sec, isHeader, applyTo, paraIdx + 1, 0, text);
+      break;
+    case 'INSERT_BEFORE':
+      wasm.splitParagraphInHeaderFooter(sec, isHeader, applyTo, paraIdx, 0);
+      wasm.insertTextInHeaderFooter(sec, isHeader, applyTo, paraIdx, 0, text);
+      break;
+  }
+}
+
+/**
+ * 각주 문단 내용 수정/비우기(F-191fd6). 분할 API가 없어 REPLACE/DELETE만.
+ * 문단 끝의 공백 표시 문자(자동번호 컨트롤이 텍스트로는 공백으로 보인다)는 지우지
+ * 않고 보존한다 — 전부 지우면 각주 번호 표식이 사라질 수 있다.
+ */
+function applyOneFootnote(wasm: WasmEditing, edit: Edit, t: FootnoteTarget): void {
+  const info = wasm.getFootnoteInfo(t.sec, t.para, t.controlIdx);
+  if (!info.ok) throw new Error('각주를 찾을 수 없습니다.');
+  if (t.fnParaIdx >= info.texts.length) {
+    throw new Error(`각주 문단 ${t.fnParaIdx} 범위 초과(총 ${info.texts.length}개)`);
+  }
+  const chars = Array.from(info.texts[t.fnParaIdx] ?? '');
+  let deleteCount = chars.length;
+  while (deleteCount > 0 && chars[deleteCount - 1] === ' ') deleteCount -= 1;
+  if (deleteCount > 0) {
+    wasm.deleteTextInFootnote(t.sec, t.para, t.controlIdx, t.fnParaIdx, 0, deleteCount);
+  }
+  if (edit.command === 'REPLACE') {
+    wasm.insertTextInFootnote(t.sec, t.para, t.controlIdx, t.fnParaIdx, 0, edit.payload.text ?? '');
+  }
 }
 
 /** 기존 표 구조 편집(행/열 추가·삭제, 셀 병합 — F-7a3dbe). target은 그 표의 셀 ID. */

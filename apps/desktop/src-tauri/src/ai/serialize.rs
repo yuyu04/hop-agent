@@ -86,9 +86,11 @@ pub fn build_windowed_context(
         paragraphs[start..end].iter().map(|p| body_node(p, &headings)).collect()
     };
 
-    // 표 셀(중첩 포함, 스펙 2장)은 본문 윈도우와 무관하게 항상 포함한다 — 편집 핵심 타깃.
+    // 표 셀(중첩 포함, 스펙 2장)·머리말/꼬리말·각주는 본문 윈도우와 무관하게 항상 포함한다.
     let mut nodes = body;
     nodes.extend(cell_nodes(core));
+    nodes.extend(collect_header_footers(core, total_sections));
+    nodes.extend(collect_footnotes(core));
 
     Ok(assemble(nodes, total_sections, cursor_path))
 }
@@ -109,6 +111,81 @@ fn cell_nodes(core: &DocumentCore) -> Vec<Node> {
     collect_cells(core).into_iter().map(|(id, text)| (id, text, None)).collect()
 }
 
+/// 머리말/꼬리말 문단을 `sec[S].header|footer[A].p[I]` 노드로 수집한다(A=적용 대상
+/// 0=양쪽/1=짝수/2=홀수). 해당 종류가 하나도 없으면 양쪽(0) 자리에 빈 placeholder를
+/// 넣어 AI가 REPLACE로 새로 만들 수 있게 한다(F-191fd6 — 화이트리스트에 있어야
+/// 편집 대상이 될 수 있다).
+fn collect_header_footers(core: &DocumentCore, total_sections: u32) -> Vec<Node> {
+    let mut out = Vec::new();
+    for sec in 0..total_sections as usize {
+        for (is_header, kind) in [(true, "header"), (false, "footer")] {
+            let mut any = false;
+            for apply in 0u8..=2 {
+                let Ok(json) = core.get_header_footer_native(sec, is_header, apply) else {
+                    continue;
+                };
+                let Ok(v) = serde_json::from_str::<serde_json::Value>(&json) else { continue };
+                if v.get("exists").and_then(|e| e.as_bool()) != Some(true) {
+                    continue;
+                }
+                any = true;
+                let text = v.get("text").and_then(|t| t.as_str()).unwrap_or("");
+                // 문단은 줄바꿈을 포함할 수 없으므로 '\n' 분리가 곧 문단 경계다.
+                for (i, para) in text.split('\n').enumerate() {
+                    out.push((
+                        format!("sec[{}].{}[{}].p[{}]", sec, kind, apply, i),
+                        para.to_string(),
+                        None,
+                    ));
+                }
+            }
+            if !any {
+                out.push((format!("sec[{}].{}[0].p[0]", sec, kind), String::new(), None));
+            }
+        }
+    }
+    out
+}
+
+/// 본문 각주를 `sec[S].p[P].fn[C].p[I]` 노드로 수집한다. 페이지별 각주 목록을
+/// 인덱스 프로브(범위 초과 시 Err)로 발견하고 본문 소속(body)만 직렬화한다.
+fn collect_footnotes(core: &DocumentCore) -> Vec<Node> {
+    let mut out = Vec::new();
+    let mut seen: HashSet<(usize, usize, usize)> = HashSet::new();
+    for page in 0..core.page_count() {
+        let mut idx = 0usize;
+        while let Ok(json) = core.get_page_footnote_info_native(page, idx) {
+            idx += 1;
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(&json) else { continue };
+            if v.get("sourceType").and_then(|s| s.as_str()) != Some("body") {
+                continue; // 표/글상자 안 각주는 컨트롤 인덱스 해석이 달라 제외.
+            }
+            let (Some(sec), Some(para), Some(ctrl)) = (
+                v.get("sectionIdx").and_then(|x| x.as_u64()),
+                v.get("paraIdx").and_then(|x| x.as_u64()),
+                v.get("controlIdx").and_then(|x| x.as_u64()),
+            ) else {
+                continue;
+            };
+            let key = (sec as usize, para as usize, ctrl as usize);
+            if !seen.insert(key) {
+                continue;
+            }
+            let Ok(info) = core.get_footnote_info_native(key.0, key.1, key.2) else { continue };
+            let Ok(iv) = serde_json::from_str::<serde_json::Value>(&info) else { continue };
+            let Some(texts) = iv.get("texts").and_then(|t| t.as_array()) else { continue };
+            for (i, t) in texts.iter().enumerate() {
+                out.push((
+                    format!("sec[{}].p[{}].fn[{}].p[{}]", key.0, key.1, key.2, i),
+                    t.as_str().unwrap_or("").to_string(),
+                    None,
+                ));
+            }
+        }
+    }
+    out
+}
+
 /// 전체 문서(본문 전부 + 표 셀) 컨텍스트 — 교정 패스 등 전수 스캔용(Sliding Window 없음).
 /// 긴 문서는 호출 측(프런트)이 노드를 구간으로 나눠 `target_ids`로 스코프 요청한다.
 pub fn build_full_context(
@@ -118,6 +195,8 @@ pub fn build_full_context(
     let headings = detect_headings(&paragraphs, &collect_body_font_info(core));
     let mut nodes: Vec<Node> = paragraphs.iter().map(|p| body_node(p, &headings)).collect();
     nodes.extend(cell_nodes(core));
+    nodes.extend(collect_header_footers(core, total_sections));
+    nodes.extend(collect_footnotes(core));
     Ok(assemble(nodes, total_sections, None))
 }
 
@@ -131,6 +210,8 @@ pub fn build_scoped_context(
     let headings = detect_headings(&paragraphs, &collect_body_font_info(core));
     let mut nodes: Vec<Node> = paragraphs.iter().map(|p| body_node(p, &headings)).collect();
     nodes.extend(cell_nodes(core));
+    nodes.extend(collect_header_footers(core, total_sections));
+    nodes.extend(collect_footnotes(core));
     nodes.retain(|(id, _, _)| ids.contains(id));
     Ok(assemble(nodes, total_sections, None))
 }
@@ -636,8 +717,9 @@ mod tests {
     fn small_document_is_not_windowed() {
         let core = doc_with_paragraphs(3, 10); // 30자 — 임계치 미만
         let (context, whitelist) = build_windowed_context(&core, Some((0, 1)), false).unwrap();
-        assert_eq!(context.content.len(), 3);
-        assert_eq!(whitelist.len(), 3);
+        // 본문 3 + 머리말/꼬리말 placeholder 2.
+        assert_eq!(context.content.len(), 5);
+        assert_eq!(whitelist.len(), 5);
     }
 
     #[test]
@@ -646,11 +728,11 @@ mod tests {
         let core = doc_with_paragraphs(30, 1100);
         let (context, whitelist) = build_windowed_context(&core, Some((0, 15)), false).unwrap();
 
-        // 커서 15 기준 앞 5 + 본인 + 뒤 5 = 11문단(p[10]..p[20]).
-        assert_eq!(context.content.len(), 11);
+        // 커서 15 기준 앞 5 + 본인 + 뒤 5 = 11문단(p[10]..p[20]) + hf placeholder 2.
+        assert_eq!(context.content.len(), 13);
         assert_eq!(context.content[0].id(), "sec[0].p[10]");
         assert_eq!(context.content[10].id(), "sec[0].p[20]");
-        assert_eq!(whitelist.len(), 11);
+        assert_eq!(whitelist.len(), 13);
         assert!(whitelist.contains("sec[0].p[15]"));
         assert!(!whitelist.contains("sec[0].p[0]"));
         assert_eq!(
@@ -890,13 +972,78 @@ mod tests {
         }
     }
 
+    /// 머리말/꼬리말(F-191fd6): placeholder 직렬화(없을 때) → 생성·편집 → 저장
+    /// 라운드트립까지 검증한다.
+    #[test]
+    fn header_footer_serializes_edits_and_roundtrips() {
+        let mut core = blank_core();
+        core.insert_text_native(0, 0, 0, "본문").unwrap();
+
+        // 머리말/꼬리말이 없으면 placeholder가 화이트리스트에 들어간다(AI가 생성 가능).
+        let (_, whitelist) = build_full_context(&core).unwrap();
+        assert!(whitelist.contains("sec[0].header[0].p[0]"));
+        assert!(whitelist.contains("sec[0].footer[0].p[0]"));
+
+        // 생성 + 텍스트 입력 → 직렬화에 실제 텍스트가 나온다.
+        core.create_header_footer_native(0, true, 0).unwrap();
+        core.insert_text_in_header_footer_native(0, true, 0, 0, 0, "회사 기밀").unwrap();
+        let (context, _) = build_full_context(&core).unwrap();
+        let header_text = context
+            .content
+            .iter()
+            .find(|n| n.id() == "sec[0].header[0].p[0]")
+            .map(|n| match n {
+                ContentNode::Paragraph { text, .. } => text.clone(),
+            });
+        assert_eq!(header_text.as_deref(), Some("회사 기밀"));
+
+        // REPLACE 흐름(삭제 후 삽입) → 저장 후 재파싱해도 유지된다(AC4 회귀 프록시).
+        core.delete_text_in_header_footer_native(0, true, 0, 0, 0, 5).unwrap();
+        core.insert_text_in_header_footer_native(0, true, 0, 0, 0, "대외비 문서").unwrap();
+        let bytes = core.export_hwp_native().unwrap();
+        let reloaded =
+            crate::state::editable_core_from_bytes(&bytes, "파싱 실패", "변환 실패").unwrap();
+        let json = reloaded.get_header_footer_native(0, true, 0).unwrap();
+        assert!(json.contains("대외비 문서"), "저장 후 머리말 소실: {}", json);
+    }
+
+    /// 각주(F-191fd6): 본문 각주가 `sec[S].p[P].fn[C].p[I]`로 직렬화되고 편집·저장된다.
+    #[test]
+    fn footnote_serializes_edits_and_roundtrips() {
+        let mut core = blank_core();
+        core.insert_text_native(0, 0, 0, "각주가 달린 문장").unwrap();
+        let result = core.insert_footnote_native(0, 0, 8).unwrap();
+        let ctrl = serde_json::from_str::<serde_json::Value>(&result)
+            .ok()
+            .and_then(|v| v.get("controlIdx").and_then(|c| c.as_u64()))
+            .unwrap() as usize;
+        core.insert_text_in_footnote_native(0, 0, ctrl, 0, 0, "출처: 2026 통계연보").unwrap();
+
+        let id = format!("sec[0].p[0].fn[{}].p[0]", ctrl);
+        let (context, whitelist) = build_full_context(&core).unwrap();
+        assert!(whitelist.contains(&id), "각주 ID 직렬화 누락");
+        let fn_text = context.content.iter().find(|n| n.id() == id).map(|n| match n {
+            ContentNode::Paragraph { text, .. } => text.clone(),
+        });
+        // 각주 문단 끝에 자동번호 자리 공백이 붙을 수 있어 starts_with로 본다.
+        assert!(fn_text.as_deref().unwrap_or("").starts_with("출처: 2026 통계연보"), "{:?}", fn_text);
+
+        // 저장 라운드트립.
+        let bytes = core.export_hwp_native().unwrap();
+        let reloaded =
+            crate::state::editable_core_from_bytes(&bytes, "파싱 실패", "변환 실패").unwrap();
+        let info = reloaded.get_footnote_info_native(0, 0, ctrl).unwrap();
+        assert!(info.contains("출처"), "저장 후 각주 소실: {}", info);
+    }
+
     #[test]
     fn full_context_ignores_window_threshold() {
         // 33,000자(임계치 초과)여도 전체 컨텍스트는 모든 문단을 직렬화한다.
         let core = doc_with_paragraphs(30, 1100);
         let (context, whitelist) = build_full_context(&core).unwrap();
-        assert_eq!(context.content.len(), 30);
-        assert_eq!(whitelist.len(), 30);
+        // 본문 30 + hf placeholder 2.
+        assert_eq!(context.content.len(), 32);
+        assert_eq!(whitelist.len(), 32);
         assert!(whitelist.contains("sec[0].p[0]"));
         assert!(whitelist.contains("sec[0].p[29]"));
     }
@@ -917,7 +1064,8 @@ mod tests {
     fn selection_only_forces_windowing_under_threshold() {
         let core = doc_with_paragraphs(20, 10); // 200자 — 임계치 미만이지만 selection_only=true
         let (context, _) = build_windowed_context(&core, Some((0, 10)), true).unwrap();
-        assert_eq!(context.content.len(), 11);
+        // 윈도우 11문단 + hf placeholder 2.
+        assert_eq!(context.content.len(), 13);
         assert_eq!(context.content[0].id(), "sec[0].p[5]");
     }
 }
