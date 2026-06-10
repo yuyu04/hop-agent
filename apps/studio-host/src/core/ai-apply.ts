@@ -203,6 +203,10 @@ export interface WasmEditing {
     cellParaIdx: number,
     propsJson: string,
   ): string;
+  /** 문서에 정의된 스타일 목록(한컴 F6 스타일 — 바탕글/개요1 등). */
+  getStyleList?(): Array<{ id: number; name: string; englishName: string }>;
+  /** 문단에 문서 스타일을 적용한다(Ctrl+숫자와 동일 — 글자+문단 모양 일괄). */
+  applyStyle?(sec: number, para: number, styleId: number): { ok: boolean };
   /** 본문 문단의 글자 서식(굵게·크기·색 등)을 [start,end) 범위에 적용. propsJson은 CharProperties. */
   applyCharFormat?(sec: number, para: number, startOffset: number, endOffset: number, propsJson: string): string;
   /** 본문 문단의 [start,end) 텍스트를 읽는다(부분 서식의 대상 위치 탐색용). */
@@ -574,11 +578,29 @@ export function applyActionScript(
 // applyActionScript 진입 시 호출 측이 고른 테마로 설정된다(JS 단일 스레드라 안전).
 let activeTheme: CompiledTheme = DEFAULT_COMPILED_THEME;
 
+/** 테마가 지정한 '문서 스타일 이름'을 문서 스타일 목록에서 찾아 적용한다. 성공 시 true. */
+function applyNamedDocStyle(wasm: WasmEditing, sec: number, para: number, styleName: string): boolean {
+  if (!wasm.getStyleList || !wasm.applyStyle) return false;
+  try {
+    const wanted = styleName.replace(/\s+/g, '');
+    const match = wasm
+      .getStyleList()
+      .find((s) => s.name.replace(/\s+/g, '') === wanted || s.englishName.replace(/\s+/g, '') === wanted);
+    if (!match) return false;
+    return wasm.applyStyle(sec, para, match.id).ok === true;
+  } catch {
+    return false;
+  }
+}
+
 /** 삽입된 본문 문단(sec,para)의 [0,len)에 semantic 스타일을 적용한다. 미지정·미지원이면 무시. */
 function applyParaStyle(wasm: WasmEditing, sec: number, para: number, text: string, style?: string): void {
   if (!style) return;
   const spec = activeTheme.styles[style];
   if (!spec) return;
+  // 테마가 문서 스타일 이름을 지정했고 문서에 존재하면 그 스타일을 통째로 적용 —
+  // 한컴 스타일 시스템을 그대로 타므로 문서 전체와 디자인이 일치한다. 못 찾으면 수치 폴백.
+  if (spec.styleName && applyNamedDocStyle(wasm, sec, para, spec.styleName)) return;
   const len = [...text].length;
   try {
     if (spec.char && len > 0 && wasm.applyCharFormat) {

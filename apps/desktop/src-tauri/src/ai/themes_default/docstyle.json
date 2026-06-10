@@ -1,0 +1,12 @@
+{
+  "name": "문서 스타일 따름",
+  "description": "한컴 스타일 시스템(F6) 사용 — 문서/템플릿에 정의된 '개요 1', '본문' 등의 스타일을 그대로 적용해 문서 전체와 디자인이 일치합니다. 템플릿 기반 문서에 추천. 해당 이름의 스타일이 없으면 기본 수치로 폴백. 주의: 개요 스타일에 자동 번호가 있으면 제목에 번호가 중복될 수 있습니다.",
+  "styles": {
+    "heading":    { "styleName": "개요 1" },
+    "subheading": { "styleName": "개요 2" },
+    "body":       { "styleName": "본문" },
+    "caption":    { "styleName": "캡션" },
+    "quote":      { "styleName": "인용" }
+  },
+  "table": { "paraSpacingPt": 8, "headerFill": "#E8EEF6" }
+}

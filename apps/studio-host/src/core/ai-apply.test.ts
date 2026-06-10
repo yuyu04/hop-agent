@@ -131,6 +131,15 @@ class FakeWasm implements WasmEditing {
     this.calls.push(`splitParagraphInCell(${s},${pp},${ci},${ce},${cp},${off})`);
     return '';
   }
+  /** 문서 스타일 목록(테스트 설정용). */
+  docStyles: Array<{ id: number; name: string; englishName: string }> = [];
+  getStyleList() {
+    return this.docStyles;
+  }
+  applyStyle(sec: number, para: number, styleId: number) {
+    this.calls.push(`applyStyle(${sec},${para},${styleId})`);
+    return { ok: true };
+  }
   setFieldValue(fieldId: number, value: string) {
     this.calls.push(`setFieldValue(${fieldId},"${value}")`);
     return { ok: true, fieldId, oldValue: '', newValue: value };
@@ -1035,6 +1044,53 @@ describe('applyActionScript', () => {
     expect(result.applied).toBe(0);
     expect(result.skipped[0].reason).toContain('REPLACE');
     expect(wasm.calls).toEqual([]);
+  });
+
+  it('uses the named document style when the theme maps a role to one', () => {
+    const wasm = new FakeWasm();
+    wasm.lengths['0.1'] = 5;
+    wasm.docStyles = [
+      { id: 0, name: '바탕글', englishName: 'Normal' },
+      { id: 2, name: '개요 1', englishName: 'Outline 1' },
+    ];
+    const theme = compileTheme({ id: 'doc', styles: { heading: { styleName: '개요 1' } } });
+    applyActionScript(
+      wasm,
+      script([
+        {
+          command: 'INSERT_AFTER',
+          target_id: 'sec[0].p[1]',
+          payload: { text: '사업 개요', style: 'heading' },
+        },
+      ]),
+      [],
+      theme,
+    );
+    // 문서 스타일을 통째로 적용 — 수치 서식(applyCharFormat/applyParaFormat)은 건너뛴다.
+    expect(wasm.calls).toContain('applyStyle(0,2,2)');
+    expect(wasm.calls.some((c) => c.startsWith('applyCharFormat'))).toBe(false);
+  });
+
+  it('falls back to numeric formatting when the named style is missing', () => {
+    const wasm = new FakeWasm();
+    wasm.lengths['0.1'] = 5;
+    wasm.docStyles = [{ id: 0, name: '바탕글', englishName: 'Normal' }];
+    const theme = compileTheme({ id: 'doc', styles: { heading: { styleName: '개요 1' } } });
+    applyActionScript(
+      wasm,
+      script([
+        {
+          command: 'INSERT_AFTER',
+          target_id: 'sec[0].p[1]',
+          payload: { text: '사업 개요', style: 'heading' },
+        },
+      ]),
+      [],
+      theme,
+    );
+    // '개요 1'이 문서에 없음 → 기본 수치 서식으로 폴백.
+    expect(wasm.calls.some((c) => c.startsWith('applyStyle'))).toBe(false);
+    expect(wasm.calls.some((c) => c.startsWith('applyCharFormat'))).toBe(true);
   });
 
   // ── 누름틀 템플릿 채우기 (F-10a6a5) ─────────────────────────

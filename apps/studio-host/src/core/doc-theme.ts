@@ -25,6 +25,10 @@ export interface DocThemeStyle {
   afterPt?: number;
   /** 왼쪽 들여쓰기(pt) — 인용 등. */
   indentPt?: number;
+  /** 문서에 정의된 '스타일 이름'(예: "개요 1", "본문"). 지정되어 있고 문서에서 찾으면
+   *  수치 서식 대신 그 스타일을 적용한다(한컴 스타일 시스템 — 문서 전체 일관성 유지,
+   *  나중에 한컴에서 스타일만 바꿔 전체 모양 변경 가능). 못 찾으면 수치로 폴백. */
+  styleName?: string;
 }
 
 /** 테마 파일 전체(ai_list_themes가 넘기는 형태, id는 파일명). */
@@ -45,7 +49,10 @@ export interface DocTheme {
 export interface CompiledTheme {
   id: string;
   name: string;
-  styles: Record<string, { char?: Record<string, unknown>; para?: Record<string, unknown> }>;
+  styles: Record<
+    string,
+    { char?: Record<string, unknown>; para?: Record<string, unknown>; styleName?: string }
+  >;
   /** 표 문단 위/아래 간격(저장 단위). */
   tableParaSpacing: number;
   headerFill: string;
@@ -97,6 +104,7 @@ function compileStyle(style: DocThemeStyle): {
   return {
     ...(Object.keys(char).length ? { char } : {}),
     ...(Object.keys(para).length ? { para } : {}),
+    ...(style.styleName ? { styleName: style.styleName } : {}),
   };
 }
 

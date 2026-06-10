@@ -33,6 +33,13 @@ describe('compileTheme', () => {
     expect(compiled.styles.body).toEqual(DEFAULT_COMPILED_THEME.styles.body);
   });
 
+  it('carries styleName through compilation alongside numeric fallback', () => {
+    const compiled = compileTheme({ id: 's', styles: { heading: { styleName: '개요 1' } } });
+    expect(compiled.styles.heading.styleName).toBe('개요 1');
+    // 수치 폴백용 기본값도 함께 유지된다(스타일을 못 찾는 문서 대비).
+    expect(compiled.styles.heading.char).toMatchObject({ bold: true });
+  });
+
   it('falls back to the default theme for null and fills table settings', () => {
     const compiled = compileTheme(null);
     expect(compiled.name).toBe('기본');
