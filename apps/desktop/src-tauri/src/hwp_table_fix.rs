@@ -81,7 +81,7 @@ fn try_fix(bytes: &[u8]) -> Option<Vec<u8>> {
 }
 
 /// FileHeader(256바이트, 비압축) offset 36 속성 플래그에서 (compressed, encrypted)를 읽는다.
-fn read_header_flags(comp: &mut cfb::CompoundFile<Cursor<Vec<u8>>>) -> Option<(bool, bool)> {
+pub(crate) fn read_header_flags(comp: &mut cfb::CompoundFile<Cursor<Vec<u8>>>) -> Option<(bool, bool)> {
     let fh = read_stream(comp, "/FileHeader")?;
     if fh.len() < 40 {
         return None;
@@ -91,7 +91,7 @@ fn read_header_flags(comp: &mut cfb::CompoundFile<Cursor<Vec<u8>>>) -> Option<(b
 }
 
 /// 본문 섹션 스트림 경로를 모은다 (`/BodyText/SectionN` 및 구버전 `/SectionN`).
-fn collect_section_paths(comp: &cfb::CompoundFile<Cursor<Vec<u8>>>) -> Vec<String> {
+pub(crate) fn collect_section_paths(comp: &cfb::CompoundFile<Cursor<Vec<u8>>>) -> Vec<String> {
     let mut paths = Vec::new();
     for entry in comp.walk() {
         if !entry.is_stream() {
@@ -111,7 +111,7 @@ fn collect_section_paths(comp: &cfb::CompoundFile<Cursor<Vec<u8>>>) -> Vec<Strin
     paths
 }
 
-fn read_stream(comp: &mut cfb::CompoundFile<Cursor<Vec<u8>>>, path: &str) -> Option<Vec<u8>> {
+pub(crate) fn read_stream(comp: &mut cfb::CompoundFile<Cursor<Vec<u8>>>, path: &str) -> Option<Vec<u8>> {
     if !comp.is_stream(path) {
         return None;
     }
@@ -121,7 +121,7 @@ fn read_stream(comp: &mut cfb::CompoundFile<Cursor<Vec<u8>>>, path: &str) -> Opt
     Some(buf)
 }
 
-fn write_stream(
+pub(crate) fn write_stream(
     comp: &mut cfb::CompoundFile<Cursor<Vec<u8>>>,
     path: &str,
     data: &[u8],
@@ -134,7 +134,7 @@ fn write_stream(
     Some(())
 }
 
-fn inflate_raw(data: &[u8]) -> Option<Vec<u8>> {
+pub(crate) fn inflate_raw(data: &[u8]) -> Option<Vec<u8>> {
     use flate2::read::DeflateDecoder;
     let mut d = DeflateDecoder::new(data);
     let mut out = Vec::new();
@@ -142,7 +142,7 @@ fn inflate_raw(data: &[u8]) -> Option<Vec<u8>> {
     Some(out)
 }
 
-fn deflate_raw(data: &[u8]) -> Vec<u8> {
+pub(crate) fn deflate_raw(data: &[u8]) -> Vec<u8> {
     use flate2::write::DeflateEncoder;
     use flate2::Compression;
     let mut e = DeflateEncoder::new(Vec::new(), Compression::default());

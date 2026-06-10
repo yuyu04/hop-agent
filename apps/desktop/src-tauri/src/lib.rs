@@ -5,6 +5,7 @@ mod ai;
 mod app_quit;
 mod commands;
 mod font_catalog;
+mod hwp_lineseg_fix;
 mod hwp_table_fix;
 #[cfg(target_os = "linux")]
 mod linux_runtime;

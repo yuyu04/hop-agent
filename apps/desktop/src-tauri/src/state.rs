@@ -214,9 +214,13 @@ impl DocumentSessionManager {
                 e
             )
         })?;
-        // 저장 직전 표 CTRL_HEADER(개체 공통 속성)를 정상 48바이트 레이아웃으로 보정한다.
-        // 보정 결과가 검증을 통과하지 못하면 원본 바이트로 폴백해 저장을 악화시키지 않는다.
-        let fixed_bytes = crate::hwp_table_fix::fix_table_headers(raw_bytes.clone());
+        // 저장 직전 보정 2종(실패 시 각자 원본 폴백 — 저장을 악화시키지 않는다):
+        // 1) 표 CTRL_HEADER(개체 공통 속성)를 정상 48바이트 레이아웃으로,
+        // 2) 줄 배치(PARA_LINE_SEG) vpos를 포맷 표준인 '페이지 상대'로(rhwp는 구역
+        //    누적으로 저장해 2쪽 이상 문서가 구버전 HOP/뷰어에서 겹쳐 보였다).
+        let fixed_bytes = crate::hwp_lineseg_fix::fix_linesegs(
+            crate::hwp_table_fix::fix_table_headers(raw_bytes.clone()),
+        );
         let (bytes, core) = match editable_core_from_bytes(
             &fixed_bytes,
             "저장 바이트 검증 실패",

@@ -1121,3 +1121,37 @@ mod spacing_probe {
         }
     }
 }
+
+#[cfg(test)]
+mod lineseg_probe {
+    /// [진단] 다중 페이지 문서를 만들어 저장 → 저장된 줄 위치(vpos)가 페이지 상대인지
+    /// 구역 누적인지 확인용 파일을 만든다. scripts/hwp_lineseg_dump.py로 검사.
+    #[test]
+    #[ignore]
+    fn export_multipage_doc_for_lineseg_check() {
+        let mut core = rhwp::DocumentCore::new_empty();
+        core.create_blank_document_native().unwrap();
+        let body = "이 문단은 다중 페이지 줄 배치 저장 검증을 위한 본문입니다. \
+                    충분히 길게 써서 한 문단이 여러 줄을 차지하게 합니다. \
+                    페이지 경계를 넘는 내용이 필요합니다.";
+        core.insert_text_native(0, 0, 0, "다중 페이지 줄 배치 검증").unwrap();
+        for i in 0..60 {
+            let len = core.get_paragraph_length_native(0, i).unwrap();
+            core.split_paragraph_native(0, i, len).unwrap();
+            core.insert_text_native(0, i + 1, 0, body).unwrap();
+            // 생성 파이프라인과 동일하게 body 스타일(줄간격 180% + 아래 6pt)도 입힌다.
+            core.apply_para_format_native(
+                0,
+                i + 1,
+                r#"{"lineSpacingType":"Percent","lineSpacing":180,"spacingAfter":600}"#,
+            )
+            .unwrap();
+        }
+        core.reflow_linesegs_on_demand();
+        eprintln!("page_count={}", core.page_count());
+        let bytes = core.export_hwp_native().unwrap();
+        let path = std::env::temp_dir().join("hop_lineseg_multipage.hwp");
+        std::fs::write(&path, &bytes).unwrap();
+        eprintln!("saved: {}", path.display());
+    }
+}
