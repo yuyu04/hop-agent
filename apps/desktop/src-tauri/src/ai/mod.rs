@@ -553,6 +553,13 @@ fn system_prompt() -> String {
      (예 2)로 두면 긴 내용이 가로로 펼쳐져 표가 세로로 덜 늘어나고 여러 쪽으로 쪼개지지 \
      않습니다. 예: 5열(비용항목/세목/증액여부/전용여부/세목별 사용 용도 및 제한 내용)이면 \
      머리글 한 줄 + col_weights=[3,3,2,2,10] 로 마지막 긴 열을 가장 넓게. \
+     [차트] 데이터를 차트로 그려 달라고 하면(또는 표 데이터의 시각화가 적절하면) 본문 문단 \
+     ID에 INSERT_AFTER 하고 payload.type=\"chart\", payload.chart_data에 kind(bar/line/pie), \
+     title, labels(범주), series([{name,values}])를 채우세요. values는 labels와 같은 길이의 \
+     순수 숫자 배열이어야 합니다 — '10억', '1,200원' 같은 문자열 금지(콤마·단위를 빼고 숫자만, \
+     단위는 title이나 series.name에 명시). 문서 안 표의 데이터로 요청하면 직렬화된 셀 값을 \
+     읽어 숫자로 변환해 쓰세요. pie는 시리즈 1개만 가능합니다. 앱이 차트를 이미지로 그려 \
+     삽입합니다. \
      [머리말/꼬리말/각주] 머리말·꼬리말 문단은 `sec[s].header[a].p[i]`/`sec[s].footer[a].p[i]` \
      ID로 제공됩니다(a: 0=양쪽, 1=짝수 쪽, 2=홀수 쪽). 내용을 바꾸려면 그 ID로 REPLACE \
      하세요. text가 빈 placeholder가 보이면 그 문서에 아직 머리말/꼬리말이 없다는 뜻이고, \
@@ -677,6 +684,17 @@ mod tests {
         assert!(prompt.contains("양식/템플릿"));
         assert!(prompt.contains("라벨"));
         assert!(prompt.contains("빈 셀"));
+    }
+
+    #[test]
+    fn system_prompt_guides_chart_generation() {
+        let prompt = system_prompt();
+        assert!(prompt.contains("chart_data"));
+        assert!(prompt.contains("bar/line/pie"));
+        // 값은 순수 숫자여야 한다는 지시(AC4 예방).
+        assert!(prompt.contains("순수 숫자"));
+        // 문서 표 데이터로 차트를 만들 수 있다는 지시(AC — 표 데이터 근거).
+        assert!(prompt.contains("직렬화된 셀 값"));
     }
 
     #[test]

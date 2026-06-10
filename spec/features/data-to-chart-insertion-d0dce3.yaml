@@ -1,24 +1,39 @@
 id: F-d0dce3
 slug: data-to-chart-insertion
 title: "데이터 → 차트 이미지 생성 삽입"
-status: planned
+status: done
 modules:
+  - apps/studio-host/src/core/chart-render.ts
   - apps/studio-host/src/ui/agent-sidebar.ts
   - apps/desktop/src-tauri/src/ai/schema.rs
-  - apps/studio-host/src/core/ai-apply.ts
+  - apps/desktop/src-tauri/src/ai/mod.rs
 acceptance_criteria:
   - id: AC-fc97c4
     ears: event
     condition: "When AI가 차트 생성 액션(차트 종류+데이터 시리즈)을 반환하면"
     text: "The system shall 캔버스(오프스크린)로 차트를 PNG로 렌더하고 insertPicture로 본문에 삽입한다."
+    notes: "payload.type='chart' + chart_data{kind,title,labels,series}. onReady의 materializeCharts가 applyImageCrops와 같은 패턴으로 적용 전에 PNG 렌더 → pendingInsertImages에 추가 → edit을 type='image'+image_index로 변환 → 기존 insertImageAt 경로가 삽입."
+    test_refs:
+      - apps/studio-host/src/core/chart-render.test.ts
+      - apps/studio-host/src/ui/agent-sidebar.test.ts
   - id: AC-b279e1
     ears: ubiquitous
     text: "The system shall 막대/선/원형 차트를 지원하고 기존 이미지 삽입 파이프라인(px→HWPUNIT, 폭 캐핑, 종횡비 유지)을 재사용한다."
+    notes: "chart-render.ts: bar(그룹 막대)/line(꺾은선+점)/pie(조각+비율 라벨), 그리드·축·범례·팔레트 포함 880×520 PNG. 삽입은 ImageForInsert로 기존 파이프라인 재사용."
+    test_refs:
+      - apps/studio-host/src/core/chart-render.test.ts
   - id: AC-9fba0c
     ears: event
     condition: "When 사용자가 문서 내 표 데이터로 차트를 요청하면"
     text: "The system shall 직렬화된 표 셀 데이터를 근거로 차트 액션을 생성한다."
+    notes: "LLM 유도: system_prompt [차트] 절이 '직렬화된 셀 값을 읽어 숫자로 변환(콤마·단위 제거)' 지시. 표 셀은 컨텍스트에 이미 직렬화돼 있다."
+    test_refs:
+      - apps/desktop/src-tauri/src/ai/mod.rs
   - id: AC-ff9b20
     ears: unwanted
     condition: "If 차트 데이터가 숫자로 파싱되지 않으면"
     text: "The system shall 삽입을 중단하고 어떤 값이 문제인지 메시지로 알린다."
+    notes: "validateChartData가 시리즈명+라벨+값을 명시한 사유(예: \"'매출'의 '2분기' 값(\\\"10억\\\")이 숫자가 아닙니다\")를 반환 → 해당 편집 제외 + 버블 메시지로 표시. 길이 불일치/빈 데이터/pie 다중 시리즈·음수도 거부. Rust 스키마는 values를 f64로 강제(구조화 출력 프로바이더가 타입 보장)."
+    test_refs:
+      - apps/studio-host/src/core/chart-render.test.ts
+      - apps/studio-host/src/ui/agent-sidebar.test.ts

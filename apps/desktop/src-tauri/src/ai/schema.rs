@@ -59,6 +59,32 @@ pub struct TableEditSpec {
     pub texts: Vec<String>,
 }
 
+/// 차트 시리즈 하나(payload.type="chart").
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ChartSeries {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// labels와 같은 길이의 숫자 값들.
+    pub values: Vec<f64>,
+}
+
+impl Eq for ChartSeries {}
+
+/// 데이터 → 차트 이미지 생성 스펙. 프런트가 캔버스로 PNG 렌더 후 그림으로 삽입한다.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ChartData {
+    /// "bar" | "line" | "pie"
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// 가로축(범주) 라벨들.
+    pub labels: Vec<String>,
+    /// 시리즈 목록(pie는 1개만).
+    pub series: Vec<ChartSeries>,
+}
+
+impl Eq for ChartData {}
+
 /// 런 단위 부분 서식 스펙(payload.type="format"). 텍스트 내용은 바꾸지 않는다.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CharFormatSpec {
@@ -119,6 +145,9 @@ pub struct EditPayload {
     /// type="table_edit"일 때: 기존 표의 구조 편집(행/열 추가·삭제, 셀 병합).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub table_edit: Option<TableEditSpec>,
+    /// type="chart"일 때: 차트 데이터(프런트가 PNG로 렌더해 그림으로 삽입).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chart_data: Option<ChartData>,
     /// type="format"일 때: 문단 안에서 서식을 바꿀 정확한 문자열(생략=문단 전체).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub format_target: Option<String>,
@@ -239,7 +268,7 @@ pub fn action_script_schema() -> Value {
                         "payload": {
                             "type": "object",
                             "properties": {
-                                "type": { "type": "string", "enum": ["paragraph", "table", "image", "table_edit", "format"] },
+                                "type": { "type": "string", "enum": ["paragraph", "table", "image", "table_edit", "format", "chart"] },
                                 "text": { "type": "string" },
                                 "style": {
                                     "type": "string",
@@ -272,6 +301,28 @@ pub fn action_script_schema() -> Value {
                                 "reason": {
                                     "type": "string",
                                     "description": "교정 패스에서만: 이 편집이 고치는 이슈를 '분류: 설명' 형식 한국어 한 문장으로(분류는 맞춤법/문법/어색한 표현/일관성 중 하나). 일반 편집에서는 생략."
+                                },
+                                "chart_data": {
+                                    "type": "object",
+                                    "description": "type=\"chart\"일 때: 데이터로 차트 이미지를 만들어 본문에 삽입한다. command=INSERT_AFTER, target은 표 바깥 본문 문단 ID. 값은 반드시 숫자(단위·콤마 제거).",
+                                    "properties": {
+                                        "kind": { "type": "string", "enum": ["bar", "line", "pie"] },
+                                        "title": { "type": "string" },
+                                        "labels": { "type": "array", "items": { "type": "string" }, "description": "범주 라벨(가로축). pie면 조각 이름." },
+                                        "series": {
+                                            "type": "array",
+                                            "description": "시리즈 목록(pie는 1개만). 각 values 길이는 labels와 같아야 한다.",
+                                            "items": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "name": { "type": "string" },
+                                                    "values": { "type": "array", "items": { "type": "number" } }
+                                                },
+                                                "required": ["values"]
+                                            }
+                                        }
+                                    },
+                                    "required": ["kind", "labels", "series"]
                                 },
                                 "format_target": {
                                     "type": "string",
@@ -527,6 +578,23 @@ mod tests {
         assert_eq!(spec.font_size_pt, Some(14));
         let json = serde_json::to_string(&script).unwrap();
         assert!(json.contains("char_format") && json.contains("format_target"));
+    }
+
+    #[test]
+    fn parses_chart_data_and_round_trips() {
+        let raw = r#"{"edits":[
+            {"command":"INSERT_AFTER","target_id":"sec[0].p[3]",
+             "payload":{"type":"chart","chart_data":{"kind":"bar","title":"분기별 매출",
+               "labels":["1분기","2분기"],"series":[{"name":"매출","values":[120.5,98.0]}]}}}
+        ]}"#;
+        let script = parse_action_script(raw).unwrap();
+        let chart = script.edits[0].payload.chart_data.as_ref().unwrap();
+        assert_eq!(chart.kind, "bar");
+        assert_eq!(chart.labels.len(), 2);
+        assert_eq!(chart.series[0].values, vec![120.5, 98.0]);
+        // 재직렬화(emit_validated)에서 살아남아 프런트로 전달된다.
+        let json = serde_json::to_string(&script).unwrap();
+        assert!(json.contains("chart_data") && json.contains("분기별 매출"));
     }
 
     #[test]

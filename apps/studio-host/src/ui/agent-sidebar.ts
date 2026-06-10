@@ -40,6 +40,7 @@ import {
   type StoredConversation,
   type StoredMessage,
 } from '@/core/conversation-store';
+import { renderChartToPng, validateChartData } from '@/core/chart-render';
 import { clearInlineDiff, showInlineDiff, type InlineDiffEntry } from '@/ui/ai-inline-diff';
 import type { CursorRect, PageInfo } from '@/core/types';
 
@@ -969,6 +970,44 @@ export class AgentSidebar {
     }
   }
 
+  /**
+   * 차트 생성 액션(payload.type="chart")을 검증·렌더해 이미지 삽입 액션으로 바꾼다.
+   * 렌더된 PNG는 pendingInsertImages에 추가되고 edit은 type="image"+image_index가 된다.
+   * 실패한 편집은 script에서 제외하고 {targetId, reason}으로 반환한다(AC4).
+   */
+  private materializeCharts(script: ActionScript): { targetId: string; reason: string }[] {
+    if (!script.edits.some((e) => e.payload.type === 'chart')) return [];
+    const failures: { targetId: string; reason: string }[] = [];
+    const kept: Edit[] = [];
+    for (const edit of script.edits) {
+      const chart = edit.payload.chart_data;
+      if (edit.payload.type !== 'chart' || !chart) {
+        kept.push(edit);
+        continue;
+      }
+      const error = validateChartData(chart);
+      if (error) {
+        failures.push({ targetId: edit.target_id, reason: error });
+        continue;
+      }
+      const image = renderChartToPng(chart);
+      if (!image) {
+        failures.push({
+          targetId: edit.target_id,
+          reason: '이 환경에서는 차트 캔버스 렌더를 사용할 수 없습니다.',
+        });
+        continue;
+      }
+      this.pendingInsertImages.push(image);
+      edit.payload.type = 'image';
+      edit.payload.image_index = this.pendingInsertImages.length - 1;
+      delete edit.payload.chart_data;
+      kept.push(edit);
+    }
+    script.edits = kept;
+    return failures;
+  }
+
   /** 프롬프트의 이미지 URL을 Rust로 다운로드(CORS 우회)해 라벨과 함께 반환한다. */
   private async fetchPromptImageUrls(prompt: string): Promise<{ input: AiImageInput; label: string }[]> {
     if (typeof this.deps.bridge.aiFetchImage !== 'function') return [];
@@ -1049,12 +1088,24 @@ export class AgentSidebar {
         .map((e) => `${e.command} ${e.target_id} [${e.payload.type ?? 'paragraph'}${e.payload.image_index !== undefined ? ` idx=${e.payload.image_index}` : ''}${e.payload.crop ? ' crop' : ''}]`)
         .join(' / ')}`,
     );
+    // 차트 생성 액션 → 캔버스로 PNG 렌더 후 이미지 삽입 액션으로 변환(F-d0dce3).
+    // 데이터가 숫자가 아니거나 렌더 불가면 해당 편집을 제외하고 사유를 알린다.
+    const chartIssues = this.materializeCharts(script);
+    if (chartIssues.length) {
+      this.log(
+        `차트 변환 실패 ${chartIssues.length}건: ${chartIssues.map((c) => c.reason).join(' / ')}`,
+      );
+    }
     // 질문/요약 모드이거나 편집이 없으면, 문서를 건드리지 않고 답변만 표시한다(Copilot의 'Ask').
     if (this.requestMode === 'ask' || script.edits.length === 0) {
       this.session.complete();
       const answer =
         script.message?.trim() ||
-        (this.requestMode === 'ask' ? '(응답이 비어 있습니다.)' : '바꿀 내용이 없습니다.');
+        (this.requestMode === 'ask'
+          ? '(응답이 비어 있습니다.)'
+          : chartIssues.length
+            ? `차트를 만들지 못했습니다 — ${chartIssues[0].reason}`
+            : '바꿀 내용이 없습니다.');
       if (this.active) this.active.msgEl.textContent = answer;
       this.recordMessage('assistant', answer);
       this.log(`답변 모드: 편집 없음(message ${script.message ? '있음' : '없음'})`);

@@ -793,6 +793,34 @@ describe('AgentSidebar', () => {
     expect(find('hop-ai-status').textContent).toContain('이슈 없음');
   });
 
+  it('drops a chart edit with bad data and reports which value failed (F-d0dce3 AC4)', async () => {
+    build();
+    await flush();
+    await sendAndReady({
+      edits: [
+        {
+          command: 'INSERT_AFTER',
+          target_id: 'sec[0].p[0]',
+          payload: {
+            type: 'chart',
+            chart_data: {
+              kind: 'bar',
+              labels: ['1분기', '2분기'],
+              series: [{ name: '매출', values: [120, '10억'] }],
+            },
+          },
+        },
+      ],
+    });
+
+    // 편집은 제외되고(문서 무변경) 사유가 답변으로 표시된다.
+    expect(bridge.insertText).not.toHaveBeenCalled();
+    const msg = doc.body.querySelectorAll('.hop-ai-msg-text');
+    const lastMsg = msg[msg.length - 1];
+    expect(lastMsg?.textContent).toContain('차트를 만들지 못했습니다');
+    expect(lastMsg?.textContent).toContain('10억');
+  });
+
   it('ignores ready events for a different request id', async () => {
     build();
     await flush();
