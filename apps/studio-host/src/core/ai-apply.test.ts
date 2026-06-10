@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { applyActionScript, type WasmEditing } from './ai-apply';
 import type { ActionScript } from './ai-bridge';
+import { compileTheme } from './doc-theme';
 
 class FakeWasm implements WasmEditing {
   calls: string[] = [];
@@ -240,6 +241,26 @@ describe('applyActionScript', () => {
       'applyParaFormat(0,5,{"alignment":"justify","lineSpacingType":"Percent","lineSpacing":180,"spacingAfter":600})',
       'insertPageBreak(0,5,0)',
     ]);
+  });
+
+  it('applies the caller-provided theme instead of hardcoded spacing', () => {
+    const wasm = new FakeWasm();
+    wasm.lengths['0.1'] = 5;
+    const theme = compileTheme({
+      id: 'wide',
+      styles: { body: { fontPt: 11, lineSpacingPercent: 200, afterPt: 10 } },
+    });
+    applyActionScript(
+      wasm,
+      script([{ command: 'INSERT_AFTER', target_id: 'sec[0].p[1]', payload: { text: '새 문단' } }]),
+      [],
+      theme,
+    );
+    // 테마의 body 수치(11pt 글자, 줄간격 200%, 아래 10pt=2000)가 그대로 적용된다.
+    expect(wasm.calls).toContain('applyCharFormat(0,2,0,4,{"fontSize":1100})');
+    expect(
+      wasm.calls.some((c) => c.includes('"lineSpacing":200') && c.includes('"spacingAfter":2000')),
+    ).toBe(true);
   });
 
   it('INSERT_AFTER with a table payload creates and fills a table', () => {

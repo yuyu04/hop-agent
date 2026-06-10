@@ -1,0 +1,14 @@
+{
+  "name": "촘촘하게",
+  "description": "한 쪽에 많은 내용을 담아야 하는 요약본·양식용 — 간격을 최소로.",
+  "styles": {
+    "title":      { "bold": true, "fontPt": 16, "color": "#1A1A1A", "align": "center", "beforePt": 4, "afterPt": 8 },
+    "heading":    { "bold": true, "fontPt": 13, "color": "#1F3864", "beforePt": 8, "afterPt": 3 },
+    "subheading": { "bold": true, "fontPt": 11, "color": "#2F2F2F", "beforePt": 6, "afterPt": 2 },
+    "body":       { "fontPt": 10, "align": "justify", "lineSpacingPercent": 150, "afterPt": 1 },
+    "caption":    { "fontPt": 9, "color": "#666666", "align": "center", "beforePt": 2, "afterPt": 4 },
+    "quote":      { "italic": true, "color": "#444444", "indentPt": 15, "lineSpacingPercent": 140 },
+    "emphasis":   { "bold": true }
+  },
+  "table": { "paraSpacingPt": 4, "headerFill": "#EFEFEF" }
+}

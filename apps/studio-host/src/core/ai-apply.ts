@@ -7,6 +7,7 @@
  */
 
 import type { ActionScript, Edit } from './ai-bridge';
+import { DEFAULT_COMPILED_THEME, type CompiledTheme } from './doc-theme';
 
 /** `applyActionScript`가 의존하는 최소 WASM 편집 표면(WasmBridge가 구조적으로 충족). */
 export interface WasmEditing {
@@ -381,7 +382,9 @@ export function applyActionScript(
   wasm: WasmEditing,
   script: ActionScript,
   images: ImageForInsert[] = [],
+  theme?: CompiledTheme,
 ): ApplyResult {
+  activeTheme = theme ?? DEFAULT_COMPILED_THEME;
   const located: LocatedEdit[] = [];
   const skipped: ApplySkip[] = [];
 
@@ -530,46 +533,14 @@ export function applyActionScript(
  * 지정하고(title/heading/…), 실제 폰트 크기·정렬·간격은 여기서 일관되게 적용한다.
  * fontSize는 HWPUNIT(1pt=100). 색/크기는 과하지 않게 — 깔끔한 문서 톤.
  */
-// 주의: spacingBefore/After·marginLeft는 rhwp ParaShape에 'HWPUNIT의 2배 스케일'로
-// 저장된다(HWP 포맷 자체가 2배 저장 — 렌더러가 /2). 즉 화면의 Npt = 값 N×200.
-// pt 감각의 작은 숫자(8, 12 등)를 넣으면 사실상 0이 되어 문단이 다닥다닥 붙는다.
-const SPACING_PT = 200; // 렌더링 1pt에 해당하는 저장값.
-const PARA_STYLES: Record<string, { char?: Record<string, unknown>; para?: Record<string, unknown> }> = {
-  title: {
-    char: { bold: true, fontSize: 1800, textColor: '#1A1A1A' },
-    para: { alignment: 'center', spacingBefore: 8 * SPACING_PT, spacingAfter: 14 * SPACING_PT },
-  },
-  heading: {
-    char: { bold: true, fontSize: 1400, textColor: '#1F3864' },
-    para: { spacingBefore: 16 * SPACING_PT, spacingAfter: 6 * SPACING_PT },
-  },
-  subheading: {
-    char: { bold: true, fontSize: 1200, textColor: '#2F2F2F' },
-    para: { spacingBefore: 12 * SPACING_PT, spacingAfter: 4 * SPACING_PT },
-  },
-  body: {
-    char: { fontSize: 1000 },
-    // 줄간격 넉넉히 + 문단 아래 3pt → 빽빽하지 않고 자연스러운 흐름.
-    para: { alignment: 'justify', lineSpacingType: 'Percent', lineSpacing: 180, spacingAfter: 3 * SPACING_PT },
-  },
-  caption: {
-    char: { fontSize: 900, textColor: '#666666' },
-    para: { alignment: 'center', spacingBefore: 3 * SPACING_PT, spacingAfter: 8 * SPACING_PT },
-  },
-  quote: {
-    char: { italic: true, textColor: '#444444' },
-    para: { marginLeft: 20 * SPACING_PT, lineSpacingType: 'Percent', lineSpacing: 160 },
-  },
-  emphasis: { char: { bold: true } },
-};
-
-/** AI가 새로 만든 표가 든 문단의 위/아래 간격(렌더 8pt) — 표가 본문에 붙지 않게. */
-const TABLE_PARA_SPACING = 8 * SPACING_PT;
+// 시각 수치(간격·크기·색)는 하드코딩하지 않고 테마(core/doc-theme)가 결정한다.
+// applyActionScript 진입 시 호출 측이 고른 테마로 설정된다(JS 단일 스레드라 안전).
+let activeTheme: CompiledTheme = DEFAULT_COMPILED_THEME;
 
 /** 삽입된 본문 문단(sec,para)의 [0,len)에 semantic 스타일을 적용한다. 미지정·미지원이면 무시. */
 function applyParaStyle(wasm: WasmEditing, sec: number, para: number, text: string, style?: string): void {
   if (!style) return;
-  const spec = PARA_STYLES[style];
+  const spec = activeTheme.styles[style];
   if (!spec) return;
   const len = [...text].length;
   try {
@@ -943,7 +914,10 @@ function createTableAt(wasm: WasmEditing, sec: number, para: number, edit: Edit)
     wasm.applyParaFormat?.(
       sec,
       result.paraIdx,
-      JSON.stringify({ spacingBefore: TABLE_PARA_SPACING, spacingAfter: TABLE_PARA_SPACING }),
+      JSON.stringify({
+        spacingBefore: activeTheme.tableParaSpacing,
+        spacingAfter: activeTheme.tableParaSpacing,
+      }),
     );
   } catch {
     /* 간격 적용 실패는 무시(표 내용은 정상) */
@@ -991,7 +965,7 @@ function createTableAt(wasm: WasmEditing, sec: number, para: number, edit: Edit)
 }
 
 /** 헤더 셀 배경색(연한 청회색) — 표를 깔끔하게 보이게 하는 기본 테마. */
-const HEADER_FILL = '#E8EEF6';
+
 
 /**
  * matrix 내용 길이로 열별 상대 폭을 자동 산정한다(AI가 col_weights를 안 줄 때).
@@ -1054,7 +1028,7 @@ function styleTableCells(
     try {
       wasm.setCellProperties?.(sec, para, ctrl, c.cellIdx, {
         fillType: 'solid',
-        fillColor: HEADER_FILL,
+        fillColor: activeTheme.headerFill,
         verticalAlign: 1, // center
       });
     } catch {

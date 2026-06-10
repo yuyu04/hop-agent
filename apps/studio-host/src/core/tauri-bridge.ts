@@ -143,6 +143,10 @@ export interface AiBridgeApi {
   >;
   /** 스킬 폴더를 OS 파일 탐색기로 연다(사용자가 .md 추가/편집). */
   aiOpenSkillsDir(): Promise<void>;
+  /** 디자인 테마 목록(간격·크기·색 수치 .json — core/doc-theme이 해석). */
+  aiListThemes(): Promise<import('./doc-theme').DocTheme[]>;
+  /** 테마 폴더를 OS 파일 탐색기로 연다(사용자가 .json 추가/편집). */
+  aiOpenThemesDir(): Promise<void>;
   /** 진행 중인 요청을 취소한다(스펙 7장). */
   aiCancelRequest(requestId: string): Promise<void>;
   /** provider API 키를 OS 보안 저장소에 저장한다(스펙 6장). */
@@ -415,6 +419,15 @@ export class TauriBridge extends WasmBridge implements DesktopBridgeApi, AiBridg
 
   async aiOpenSkillsDir(): Promise<void> {
     await this.invoke<void>('ai_open_skills_dir');
+  }
+
+  async aiListThemes(): Promise<import('./doc-theme').DocTheme[]> {
+    const json = await this.invoke<string>('ai_list_themes');
+    return JSON.parse(json) as import('./doc-theme').DocTheme[];
+  }
+
+  async aiOpenThemesDir(): Promise<void> {
+    await this.invoke<void>('ai_open_themes_dir');
   }
 
   async aiCancelRequest(requestId: string): Promise<void> {

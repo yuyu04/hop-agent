@@ -1,0 +1,14 @@
+{
+  "name": "기본",
+  "description": "공문서 톤 — 제목은 또렷하게 구분되고 본문은 줄간격 180%로 읽기 편하게. 수치는 모두 pt 단위.",
+  "styles": {
+    "title":      { "bold": true, "fontPt": 18, "color": "#1A1A1A", "align": "center", "beforePt": 8, "afterPt": 14 },
+    "heading":    { "bold": true, "fontPt": 14, "color": "#1F3864", "beforePt": 16, "afterPt": 6 },
+    "subheading": { "bold": true, "fontPt": 12, "color": "#2F2F2F", "beforePt": 12, "afterPt": 4 },
+    "body":       { "fontPt": 10, "align": "justify", "lineSpacingPercent": 180, "afterPt": 3 },
+    "caption":    { "fontPt": 9, "color": "#666666", "align": "center", "beforePt": 3, "afterPt": 8 },
+    "quote":      { "italic": true, "color": "#444444", "indentPt": 20, "lineSpacingPercent": 160 },
+    "emphasis":   { "bold": true }
+  },
+  "table": { "paraSpacingPt": 8, "headerFill": "#E8EEF6" }
+}

@@ -19,9 +19,11 @@ pub mod schema;
 pub mod secrets;
 pub mod serialize;
 pub mod skills;
+pub mod themes;
 
 pub use secrets::{ai_delete_api_key, ai_has_api_key, ai_set_api_key};
 pub use skills::{ai_list_skills, ai_open_skills_dir};
+pub use themes::{ai_list_themes, ai_open_themes_dir};
 
 use crate::state::AppState;
 use provider::{CancelToken, DeltaSink, ImageInput, LlmProvider, LlmRequest, MockProvider};

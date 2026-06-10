@@ -1,0 +1,14 @@
+{
+  "name": "여유있게",
+  "description": "발표 자료·제안서처럼 시원하게 읽혀야 하는 문서용 — 간격을 넉넉하게.",
+  "styles": {
+    "title":      { "bold": true, "fontPt": 20, "color": "#1A1A1A", "align": "center", "beforePt": 12, "afterPt": 20 },
+    "heading":    { "bold": true, "fontPt": 15, "color": "#1F3864", "beforePt": 22, "afterPt": 9 },
+    "subheading": { "bold": true, "fontPt": 13, "color": "#2F2F2F", "beforePt": 16, "afterPt": 6 },
+    "body":       { "fontPt": 10, "align": "justify", "lineSpacingPercent": 200, "afterPt": 6 },
+    "caption":    { "fontPt": 9, "color": "#666666", "align": "center", "beforePt": 4, "afterPt": 10 },
+    "quote":      { "italic": true, "color": "#444444", "indentPt": 24, "lineSpacingPercent": 180 },
+    "emphasis":   { "bold": true }
+  },
+  "table": { "paraSpacingPt": 12, "headerFill": "#E8EEF6" }
+}

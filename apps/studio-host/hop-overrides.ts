@@ -12,6 +12,7 @@ const overrideIds = [
   'core/ai-session',
   'core/chart-render',
   'core/conversation-store',
+  'core/doc-theme',
   'core/document-files',
   'core/desktop-chrome',
   'core/desktop-events',

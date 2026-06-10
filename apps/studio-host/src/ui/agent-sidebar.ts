@@ -41,6 +41,12 @@ import {
   type StoredMessage,
 } from '@/core/conversation-store';
 import { renderChartToPng, validateChartData } from '@/core/chart-render';
+import {
+  compileTheme,
+  DEFAULT_COMPILED_THEME,
+  type CompiledTheme,
+  type DocTheme,
+} from '@/core/doc-theme';
 import { clearInlineDiff, showInlineDiff, type InlineDiffEntry } from '@/ui/ai-inline-diff';
 import type { CursorRect, PageInfo } from '@/core/types';
 
@@ -217,8 +223,13 @@ export class AgentSidebar {
   private readonly modeAskBtn: HTMLButtonElement;
   private readonly quickActions: HTMLElement;
   private readonly skillSelect: HTMLSelectElement;
+  private readonly themeSelect: HTMLSelectElement;
   /** 로드된 글쓰기 스킬 목록(문서 유형별 작성 지침). */
   private skills: { id: string; name: string; description: string; triggers: string[]; body: string }[] = [];
+  /** 로드된 디자인 테마 목록(간격·크기·색 수치). */
+  private themes: DocTheme[] = [];
+  /** 적용에 쓸 컴파일된 테마(선택 변경 시 갱신). */
+  private compiledTheme: CompiledTheme = DEFAULT_COMPILED_THEME;
   /** 변형 제안 상태(대안 버튼들 + 대상 edit + 컨테이너). 변형을 고를 때 다시 적용한다. */
   private variationState: { edit: Edit; btns: HTMLButtonElement[]; container: HTMLElement } | null =
     null;
@@ -279,6 +290,7 @@ export class AgentSidebar {
     this.modeAskBtn = built.modeAskBtn;
     this.quickActions = built.quickActions;
     this.skillSelect = built.skillSelect;
+    this.themeSelect = built.themeSelect;
     this.keyRow = built.keyRow;
     this.keyInput = built.keyInput;
     this.keyStatus = built.keyStatus;
@@ -340,6 +352,8 @@ export class AgentSidebar {
     void this.subscribeNativeDragDrop();
     void this.refreshKeyState();
     void this.loadSkills();
+    void this.loadThemes();
+    this.themeSelect.addEventListener('change', () => this.onThemeChange());
   }
 
   /** 글쓰기 스킬을 불러와 드롭다운을 채운다(자동/없음 + 각 스킬). */
@@ -357,6 +371,38 @@ export class AgentSidebar {
     this.skillSelect.appendChild(option('none', '스킬: 없음'));
     for (const s of this.skills) this.skillSelect.appendChild(option(`id:${s.id}`, `스킬: ${s.name}`));
     this.skillSelect.value = prev || 'auto';
+  }
+
+  /** 디자인 테마를 불러와 드롭다운을 채우고 저장된 선택을 복원한다. */
+  private async loadThemes(): Promise<void> {
+    try {
+      if (typeof this.deps.bridge.aiListThemes === 'function') {
+        this.themes = await this.deps.bridge.aiListThemes();
+      }
+    } catch {
+      this.themes = [];
+    }
+    const saved =
+      (typeof localStorage !== 'undefined' && localStorage.getItem('hop-ai-theme-id')) || '';
+    this.themeSelect.replaceChildren();
+    for (const t of this.themes) {
+      this.themeSelect.appendChild(option(t.id ?? '', `테마: ${t.name ?? t.id ?? ''}`));
+    }
+    if (!this.themes.length) this.themeSelect.appendChild(option('', '테마: 기본'));
+    const ids = this.themes.map((t) => t.id ?? '');
+    this.themeSelect.value = ids.includes(saved) ? saved : (ids[0] ?? '');
+    this.onThemeChange(false);
+  }
+
+  /** 테마 선택 변경 — 컴파일해 적용 경로(ai-apply)에 쓸 수 있게 한다. */
+  private onThemeChange(persist = true): void {
+    const id = this.themeSelect.value;
+    const raw = this.themes.find((t) => t.id === id) ?? null;
+    this.compiledTheme = compileTheme(raw);
+    if (persist) {
+      if (typeof localStorage !== 'undefined') localStorage.setItem('hop-ai-theme-id', id);
+      this.log(`테마 변경: ${this.compiledTheme.name}`);
+    }
   }
 
   /**
@@ -1128,7 +1174,7 @@ export class AgentSidebar {
     // 스냅샷 가능(데스크톱)하면 승인 전 "미리 적용"해 문서에 바로 반영하고, 거절 시
     // 스냅샷으로 되돌린다(Cursor/변경내용추적 방식). 불가하면 가상 미리보기로 폴백.
     if (this.snapshotDocument()) {
-      const result = applyActionScript(this.deps.bridge, script, this.pendingInsertImages);
+      const result = applyActionScript(this.deps.bridge, script, this.pendingInsertImages, this.compiledTheme);
       this.log(
         `적용(미리): ${result.applied}건${result.skipped.map((s) => `\n  건너뜀 ${s.targetId}: ${s.reason}`).join('')}`,
       );
@@ -1189,6 +1235,7 @@ export class AgentSidebar {
       this.deps.bridge,
       this.filteredScript(this.pendingScript),
       this.pendingInsertImages,
+      this.compiledTheme,
     );
     this.clearPreview();
     if (result.applied === 0) {
@@ -1337,7 +1384,7 @@ export class AgentSidebar {
   /** 이슈 하나를 적용한다 — 해당 문단만 REPLACE(다른 이슈의 인덱스는 변하지 않는다). */
   private applyIssue(edit: Edit, row: HTMLElement, applyBtn: HTMLButtonElement): void {
     if (row.classList.contains('hop-ai-issue-resolved')) return;
-    const result = applyActionScript(this.deps.bridge, { edits: [edit] }, []);
+    const result = applyActionScript(this.deps.bridge, { edits: [edit] }, [], this.compiledTheme);
     if (result.applied === 0) {
       this.setActiveStatus(
         `적용하지 못했습니다: ${result.skipped[0]?.reason ?? '알 수 없는 이유'}`,
@@ -1654,6 +1701,13 @@ export class AgentSidebar {
       void this.deps.bridge.aiOpenSkillsDir?.().then(() => this.loadSkills());
     });
     this.menu.appendChild(skillItem);
+    const themeItem = el('button', 'hop-ai-menu-item') as HTMLButtonElement;
+    themeItem.textContent = '🎨 테마 폴더 열기';
+    themeItem.addEventListener('click', () => {
+      this.toggleMenu(false);
+      void this.deps.bridge.aiOpenThemesDir?.().then(() => this.loadThemes());
+    });
+    this.menu.appendChild(themeItem);
     const settings = el('button', 'hop-ai-menu-item') as HTMLButtonElement;
     settings.textContent = '⚙ Agent 설정';
     settings.addEventListener('click', () => {
@@ -1830,7 +1884,7 @@ export class AgentSidebar {
       try {
         this.reloadSnapshot();
         clearInlineDiff(this.deps.scrollContent);
-        const result = applyActionScript(this.deps.bridge, filtered, this.pendingInsertImages);
+        const result = applyActionScript(this.deps.bridge, filtered, this.pendingInsertImages, this.compiledTheme);
         this.reflowAndRender();
         this.applied = result;
         this.renderDecisionBar(filtered, result.changed);
@@ -2006,7 +2060,7 @@ export class AgentSidebar {
     state.edit.payload.text = text;
     clearInlineDiff(this.deps.scrollContent);
     const filtered = this.filteredScript(script);
-    const result = applyActionScript(this.deps.bridge, filtered, this.pendingInsertImages);
+    const result = applyActionScript(this.deps.bridge, filtered, this.pendingInsertImages, this.compiledTheme);
     this.reflowAndRender();
     this.applied = result;
     this.renderDiff(script);
@@ -2303,6 +2357,7 @@ interface PanelParts {
   modeAskBtn: HTMLButtonElement;
   quickActions: HTMLElement;
   skillSelect: HTMLSelectElement;
+  themeSelect: HTMLSelectElement;
   providerSelect: HTMLSelectElement;
   modelSelect: HTMLSelectElement;
   modelInput: HTMLInputElement;
@@ -2448,7 +2503,12 @@ function buildPanel(): PanelParts {
   skillSelect.title = '글쓰기 스킬 — 문서 유형별 작성 지침';
   skillSelect.appendChild(option('auto', '스킬: 자동'));
 
-  quickbar.append(modeToggle, skillSelect, quickActions);
+  // 디자인 테마(간격·크기·색 수치) 선택. 런타임에 옵션 채움.
+  const themeSelect = document.createElement('select');
+  themeSelect.className = 'hop-ai-theme-select';
+  themeSelect.title = '디자인 테마 — 생성 문서의 간격·글자 크기·색 (themes/*.json)';
+
+  quickbar.append(modeToggle, skillSelect, themeSelect, quickActions);
 
   const promptInput = document.createElement('textarea');
   promptInput.className = 'hop-ai-prompt';
@@ -2512,6 +2572,7 @@ function buildPanel(): PanelParts {
     modeAskBtn,
     quickActions,
     skillSelect,
+    themeSelect,
     providerSelect,
     modelSelect,
     modelInput,

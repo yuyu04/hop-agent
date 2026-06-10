@@ -427,7 +427,8 @@
   background: #2563eb;
   color: #fff;
 }
-.hop-ai-skill-select {
+.hop-ai-skill-select,
+.hop-ai-theme-select {
   font: inherit;
   font-size: 11px;
   border: 1px solid #d0d4da;
