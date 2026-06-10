@@ -46,3 +46,6 @@ Thumbs.db
 # 환경변수 (민감 정보)
 .env
 .env.docker
+
+# Cladding runtime state
+.cladding/

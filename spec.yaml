@@ -1,0 +1,24 @@
+# Cladding · Tier A · SSoT — Iron Law sealed · Refreshed by: clad_create_feature / manual
+# hop-agent — Cladding spec
+# Features live in spec/features/<slug>-<hash>.yaml — one file per feature.
+# Edit shards there, run `clad sync` to validate, `clad check` to exercise
+# every Iron Law stage. See https://github.com/qwerfunch/ironclad for the standard.
+
+schema: "0.1"
+
+project:
+  name: hop-agent
+  language: typescript
+  description: "Tauri 2 기반 HWP 편집기(HOP)의 인라인 AI 편집 사이드바 — MS Word Copilot 패리티 목표. Rust(ai/*) 직렬화·프로바이더 + TS(studio-host) diff/세션/적용 파이프라인."
+  version: "0.0.1"
+  intent_summary: "HWP 문서를 AI가 보고(직렬화) 고치는(ActionScript→WASM 프리미티브) Copilot식 편집기. 제약: third_party/rhwp read-only(저장 후처리로 우회), 표 변경 시 hwp_table_check.py exit 0 필수. 전체 의도: docs/cladding-intent.md"
+
+features: []
+
+# Auto-maintained by `clad sync` (F-5b9f9f). Do not edit by hand.
+inventory:
+  features: 9
+  scenarios: 1
+  capabilities: 5
+  test_files: 0
+  last_synced: "2026-06-10"

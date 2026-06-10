@@ -1,0 +1,38 @@
+# Cladding · Tier B · SSoT — editable, cross-validated · Refreshed by: clad init --scan
+# `forbidden_imports` lists layer pairs the scan never observed in
+# your import graph — they are candidates, not enforced rules.
+# Prune the list to the ones you actually want to forbid before committing.
+layers:
+  - name: apps
+    modules: ["apps/**"]
+    forbidden_imports: ["desktop:quicklook", "desktop:src-tauri", "scripts", "studio-host:command", "studio-host:core", "studio-host:ui", "studio-host:view", "third_party"]
+  - name: desktop:quicklook
+    modules: ["desktop:quicklook/**"]
+    forbidden_imports: ["apps", "desktop:src-tauri", "scripts", "studio-host:command", "studio-host:core", "studio-host:ui", "studio-host:view", "third_party"]
+  - name: desktop:src-tauri
+    modules: ["desktop:src-tauri/**"]
+    forbidden_imports: ["apps", "desktop:quicklook", "scripts", "studio-host:command", "studio-host:core", "studio-host:ui", "studio-host:view", "third_party"]
+  - name: scripts
+    modules: ["scripts/**"]
+    forbidden_imports: ["apps", "desktop:quicklook", "desktop:src-tauri", "studio-host:command", "studio-host:core", "studio-host:ui", "studio-host:view", "third_party"]
+  - name: site
+    modules: ["site/**"]
+    forbidden_imports: []
+  - name: studio-host
+    modules: ["studio-host/**"]
+    forbidden_imports: []
+  - name: studio-host:command
+    modules: ["studio-host:command/**"]
+    forbidden_imports: ["apps", "desktop:quicklook", "desktop:src-tauri", "scripts", "studio-host:core", "studio-host:ui", "studio-host:view", "third_party"]
+  - name: studio-host:core
+    modules: ["studio-host:core/**"]
+    forbidden_imports: ["apps", "desktop:quicklook", "desktop:src-tauri", "scripts", "studio-host:command", "studio-host:ui", "studio-host:view", "third_party"]
+  - name: studio-host:ui
+    modules: ["studio-host:ui/**"]
+    forbidden_imports: ["apps", "desktop:quicklook", "desktop:src-tauri", "scripts", "studio-host:command", "studio-host:core", "studio-host:view", "third_party"]
+  - name: studio-host:view
+    modules: ["studio-host:view/**"]
+    forbidden_imports: ["apps", "desktop:quicklook", "desktop:src-tauri", "scripts", "studio-host:command", "studio-host:core", "studio-host:ui", "third_party"]
+  - name: third_party
+    modules: ["third_party/**"]
+    forbidden_imports: ["apps", "desktop:quicklook", "desktop:src-tauri", "scripts", "studio-host:command", "studio-host:core", "studio-host:ui", "studio-host:view"]

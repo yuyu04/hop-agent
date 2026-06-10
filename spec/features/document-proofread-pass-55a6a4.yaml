@@ -1,0 +1,36 @@
+id: F-55a6a4
+slug: document-proofread-pass
+title: "문서 전체 교정 패스 (Word Editor식 코칭)"
+status: done
+modules:
+  - apps/studio-host/src/ui/agent-sidebar.ts
+  - apps/desktop/src-tauri/src/ai/mod.rs
+  - apps/desktop/src-tauri/src/ai/schema.rs
+  - apps/desktop/src-tauri/src/ai/serialize.rs
+acceptance_criteria:
+  - id: AC-e46db0
+    ears: event
+    condition: "When 사용자가 교정 패스를 실행하면"
+    text: "The system shall 문서 전체(본문+표 셀)를 스캔하여 맞춤법·어색한 문장·일관성 이슈 목록을 사이드바에 표시한다."
+    notes: "'전체 교정' 빠른 작업 칩 → runProofread. ai_get_document_context(fullDocument=true)가 Sliding Window를 우회해 전체를 직렬화하고, 응답 edit은 적용하지 않고 이슈 목록(payload.reason 포함)으로 수집한다."
+    test_refs:
+      - apps/studio-host/src/ui/agent-sidebar.test.ts
+  - id: AC-e29e9e
+    ears: event
+    condition: "When 사용자가 이슈 항목을 클릭하면"
+    text: "The system shall 해당 문단 위치로 스크롤/점프하고 해당 영역을 하이라이트한다."
+    test_refs:
+      - apps/studio-host/src/ui/agent-sidebar.test.ts
+  - id: AC-0c6bdc
+    ears: event
+    condition: "When 사용자가 이슈의 수정 제안을 수락하면"
+    text: "The system shall 해당 문단만 REPLACE로 적용하고 목록에서 해당 이슈를 해결 처리한다."
+    test_refs:
+      - apps/studio-host/src/ui/agent-sidebar.test.ts
+  - id: AC-84b31d
+    ears: unwanted
+    condition: "If 문서가 프로바이더 컨텍스트 한도를 초과할 만큼 길면"
+    text: "The system shall 구간을 나누어 순차 스캔하고 진행률을 표시한다."
+    notes: "9,000자 단위 구간(chunkContextNodes) → ai_request_edit(target_ids=구간 ID들)가 그 노드만 직렬화·허용(build_scoped_context). 진행률은 '구간 i/N'으로 버블 상태줄에 표시."
+    test_refs:
+      - apps/studio-host/src/ui/agent-sidebar.test.ts

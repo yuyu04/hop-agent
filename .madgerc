@@ -1,0 +1,3 @@
+{
+  "excludeRegExp": ["^third_party/", "^node_modules/", "^site/"]
+}

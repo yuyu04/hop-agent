@@ -18,5 +18,9 @@
     "test:desktop": "cd apps/desktop/src-tauri && cargo test",
     "test:quicklook:macos": "node scripts/test-quicklook-macos.mjs",
     "clippy:desktop": "cd apps/desktop/src-tauri && cargo clippy -- -D warnings"
+  },
+  "devDependencies": {
+    "@secretlint/secretlint-rule-preset-recommend": "^13.0.2",
+    "secretlint": "^13.0.2"
   }
 }

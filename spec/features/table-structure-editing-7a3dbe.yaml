@@ -1,0 +1,40 @@
+id: F-7a3dbe
+slug: table-structure-editing
+title: "표 구조 편집 — 행/열 추가·삭제, 셀 병합"
+status: done
+modules:
+  - apps/desktop/src-tauri/src/ai/schema.rs
+  - apps/desktop/src-tauri/src/ai/mod.rs
+  - apps/studio-host/src/core/ai-apply.ts
+  - apps/desktop/src-tauri/src/hwp_table_fix.rs
+acceptance_criteria:
+  - id: AC-6933f0
+    ears: event
+    condition: "When AI가 기존 표에 대한 행/열 추가·삭제 액션을 반환하면"
+    text: "The system shall 해당 표의 구조를 수정하고 기존 셀 내용을 보존한다."
+    notes: "payload.type='table_edit' + table_edit{op,row/col,below/right,texts} (command=REPLACE, target=그 표의 셀 ID). applyTableEdit가 rhwp insertTableRow/Column·deleteTableRow/Column 호출, 새 행/열 텍스트는 getTableCellBboxes로 위치를 찾아 채움. 같은 표의 여러 table_edit은 입력 정순 적용(인덱스 누적). 최상위 표만 지원(중첩 표는 거부)."
+    test_refs:
+      - apps/studio-host/src/core/ai-apply.test.ts
+      - apps/desktop/src-tauri/src/ai/serialize.rs
+  - id: AC-2cde9c
+    ears: event
+    condition: "When AI가 셀 병합 액션을 반환하면"
+    text: "The system shall 지정 범위의 셀을 병합하고 첫 셀의 내용을 유지한다."
+    notes: "op='merge_cells' + merge{start_row,start_col,end_row,end_col} → rhwp mergeTableCells(표 생성 시 쓰던 것과 동일 프리미티브)."
+    test_refs:
+      - apps/studio-host/src/core/ai-apply.test.ts
+      - apps/desktop/src-tauri/src/ai/serialize.rs
+  - id: AC-d13e41
+    ears: ubiquitous
+    text: "The system shall 표 구조 변경 후 저장된 HWP가 hwp_table_check.py 검증을 exit 0으로 통과하게 한다 (필수 게이트)."
+    notes: "table_structure_edits_preserve_cells_and_roundtrip 테스트가 행 추가/삭제·열 추가·세로 병합을 적용한 표를 hwp_table_fix 후처리 포함으로 내보내고, hwp_table_check.py exit 0 확인(2026-06-10)."
+    test_refs:
+      - apps/desktop/src-tauri/src/ai/serialize.rs
+  - id: AC-7342bb
+    ears: unwanted
+    condition: "If 병합/삭제가 기존 merge 영역과 충돌하면"
+    text: "The system shall 해당 액션을 거부하고 이유를 메시지로 반환하며 문서는 변경하지 않는다."
+    notes: "rhwp Table::merge_cells가 부분 겹침을 한국어 오류로 거부 → applyActionScript가 skipped{reason}로 보고(사이드바 '건너뜀' 표시), 해당 액션은 문서에 적용되지 않음. 시스템 프롬프트에도 병합 경계 맞춤 안내."
+    test_refs:
+      - apps/studio-host/src/core/ai-apply.test.ts
+      - apps/desktop/src-tauri/src/ai/serialize.rs

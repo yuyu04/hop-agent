@@ -1,0 +1,18 @@
+id: F-4e2261
+slug: cross-platform-pdf-render
+title: "Windows/Linux PDF 페이지 렌더 (pdfium)"
+status: planned
+modules:
+  - apps/desktop/src-tauri/src/ai/pdf_render.rs
+acceptance_criteria:
+  - id: AC-83b60b
+    ears: state
+    condition: "While Windows 또는 Linux에서 실행 중일 때"
+    text: "The system shall pdfium 기반으로 PDF 페이지를 RGBA로 렌더하여 macOS CoreGraphics 경로와 동일한 결과 형식을 반환한다."
+  - id: AC-f68a5f
+    ears: ubiquitous
+    text: "The system shall 기존 render_query_pages 인터페이스(쿼리 토큰 매칭 상위 4페이지)를 플랫폼 무관하게 유지한다."
+  - id: AC-fd63b8
+    ears: unwanted
+    condition: "If pdfium 라이브러리를 로드할 수 없으면"
+    text: "The system shall 빈 목록을 반환하고(현재 비-macOS 동작과 동일) 오류로 세션을 중단하지 않는다."

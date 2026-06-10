@@ -1,0 +1,36 @@
+id: F-0858f2
+slug: document-outline-recognition
+title: "문서 개요 인식 — 헤딩 추정·목차 생성·장별 요약"
+status: done
+modules:
+  - apps/desktop/src-tauri/src/ai/serialize.rs
+  - apps/desktop/src-tauri/src/ai/mod.rs
+  - apps/studio-host/src/core/ai-bridge.ts
+acceptance_criteria:
+  - id: AC-6577bd
+    ears: ubiquitous
+    text: "The system shall 글자 크기·굵기·번호 패턴(1. / 1.1 / 가. / Ⅰ.) 휴리스틱으로 본문 문단의 헤딩 레벨(h1~h3)을 추정하여 직렬화 결과에 포함한다 (rhwp 스타일 접근 없이, read-only 제약 준수)."
+    notes: "레이아웃 런(get_page_text_layout_native)의 fontSize/bold를 문단별 글자수 가중 평균으로 수집(collect_body_font_info) → 중앙값 대비 크기·과반 굵음 + 번호 패턴 깊이(numbering_depth)로 detect_headings가 h1~h3 부여. ContentNode.heading 필드로 직렬화(없으면 생략)."
+    test_refs:
+      - apps/desktop/src-tauri/src/ai/serialize.rs
+  - id: AC-961931
+    ears: event
+    condition: "When 사용자가 목차 생성을 요청하면"
+    text: "The system shall 추정된 헤딩으로 목차 문단들을 문서 앞부분에 INSERT한다."
+    notes: "LLM 유도: system_prompt [문서 개요] 절이 heading 문단들로 목차를 만들어 첫 본문 문단에 INSERT_BEFORE 하도록 지시(목차 제목 style=heading + 항목 들여쓰기). heading이 없으면 목차 생성 금지."
+    test_refs:
+      - apps/desktop/src-tauri/src/ai/mod.rs
+  - id: AC-eae340
+    ears: event
+    condition: "When 사용자가 특정 장(예: \"3장\")의 요약을 요청하면"
+    text: "The system shall 해당 헤딩 구간의 문단만 컨텍스트로 삼아 응답한다."
+    notes: "LLM 유도: system_prompt가 '그 heading부터 다음 같은 수준 heading 직전까지만 근거로' 지시. 컨텍스트에 heading 마커가 포함되므로 모델이 구간을 식별할 수 있다."
+    test_refs:
+      - apps/desktop/src-tauri/src/ai/mod.rs
+  - id: AC-b1f5bd
+    ears: unwanted
+    condition: "If 헤딩 휴리스틱이 확신할 수 없는 문서(모든 문단 동일 서식)를 만나면"
+    text: "The system shall 헤딩 없음으로 처리하고 오분류된 구조를 강제하지 않는다."
+    notes: "폰트 신호(과반 굵음 또는 중앙값 1.1배 이상)가 없으면 번호 패턴만으로는 헤딩으로 단정하지 않는다 — 동일 서식 문서·레이아웃 미배치 문서는 빈 결과. 60자 초과 문단도 제외."
+    test_refs:
+      - apps/desktop/src-tauri/src/ai/serialize.rs

@@ -1,0 +1,41 @@
+id: F-dc4b99
+slug: per-edit-accept-reject
+title: "편집 단위별 수락/거절 (per-edit accept/reject)"
+status: done
+modules:
+  - apps/studio-host/src/core/ai-diff.ts
+  - apps/studio-host/src/core/ai-session.ts
+  - apps/studio-host/src/core/ai-apply.ts
+  - apps/studio-host/src/ui/agent-sidebar.ts
+  - apps/studio-host/src/ui/ai-inline-diff.ts
+acceptance_criteria:
+  - id: AC-8d733a
+    ears: event
+    condition: "When AI 응답에 2개 이상의 edit이 포함되어 DIFF_PENDING 상태가 되었을 때"
+    text: "The system shall 각 변경 블록(edit) 옆에 개별 수락(✓)/거절(✗) 컨트롤을 표시한다 (하이라이트 오버레이 또는 사이드바 목록)."
+    test_refs:
+      - apps/studio-host/src/ui/agent-sidebar.test.ts
+  - id: AC-491094
+    ears: event
+    condition: "When 사용자가 개별 edit을 거절하면"
+    text: "The system shall 해당 edit만 적용 대상에서 제외하고 나머지 edit의 미리보기/하이라이트는 유지한다."
+    test_refs:
+      - apps/studio-host/src/ui/agent-sidebar.test.ts
+  - id: AC-12976a
+    ears: event
+    condition: "When 사용자가 전체 승인을 누르면"
+    text: "The system shall 개별 거절된 edit을 제외한 나머지만 ai-apply 프리미티브로 적용하고 document-changed를 emit한다."
+    test_refs:
+      - apps/studio-host/src/ui/agent-sidebar.test.ts
+  - id: AC-95b4b0
+    ears: unwanted
+    condition: "If 일부 edit만 적용된 후 적용 중 오류가 발생하면"
+    text: "The system shall 스냅샷으로 롤백하여 부분 적용 상태로 문서가 남지 않도록 한다."
+    notes: "구조적 보장: 개별 제외는 항상 '스냅샷 전체 복원 → 남은 edit 전체 재적용'이라 부분 상태가 없다. 재적용 중 예외는 setEditRejected의 catch가 session.cancel()로 전체 롤백한다. edit 단위 실패는 applyActionScript가 skipped로 흡수한다."
+    test_refs:
+      - apps/studio-host/src/ui/agent-sidebar.test.ts
+  - id: AC-310518
+    ears: ubiquitous
+    text: "The system shall 기존 턴 단위 승인/거부 버튼의 동작을 유지한다 (모든 edit 일괄 처리와 동등)."
+    test_refs:
+      - apps/studio-host/src/ui/agent-sidebar.test.ts

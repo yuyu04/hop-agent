@@ -1,0 +1,24 @@
+id: F-d0dce3
+slug: data-to-chart-insertion
+title: "데이터 → 차트 이미지 생성 삽입"
+status: planned
+modules:
+  - apps/studio-host/src/ui/agent-sidebar.ts
+  - apps/desktop/src-tauri/src/ai/schema.rs
+  - apps/studio-host/src/core/ai-apply.ts
+acceptance_criteria:
+  - id: AC-fc97c4
+    ears: event
+    condition: "When AI가 차트 생성 액션(차트 종류+데이터 시리즈)을 반환하면"
+    text: "The system shall 캔버스(오프스크린)로 차트를 PNG로 렌더하고 insertPicture로 본문에 삽입한다."
+  - id: AC-b279e1
+    ears: ubiquitous
+    text: "The system shall 막대/선/원형 차트를 지원하고 기존 이미지 삽입 파이프라인(px→HWPUNIT, 폭 캐핑, 종횡비 유지)을 재사용한다."
+  - id: AC-9fba0c
+    ears: event
+    condition: "When 사용자가 문서 내 표 데이터로 차트를 요청하면"
+    text: "The system shall 직렬화된 표 셀 데이터를 근거로 차트 액션을 생성한다."
+  - id: AC-ff9b20
+    ears: unwanted
+    condition: "If 차트 데이터가 숫자로 파싱되지 않으면"
+    text: "The system shall 삽입을 중단하고 어떤 값이 문제인지 메시지로 알린다."

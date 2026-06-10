@@ -1,0 +1,23 @@
+id: F-04a91c
+slug: run-level-formatting
+title: "런 단위 부분 서식 편집 (\"이 단어만 굵게\")"
+status: planned
+modules:
+  - apps/desktop/src-tauri/src/ai/schema.rs
+  - apps/studio-host/src/core/ai-apply.ts
+acceptance_criteria:
+  - id: AC-b94144
+    ears: event
+    condition: "When AI가 문단 내 부분 문자열 범위에 대한 서식 액션(굵게/색/밑줄/크기)을 반환하면"
+    text: "The system shall 해당 범위의 런에만 applyCharFormat을 적용하고 문단 나머지 텍스트의 서식은 보존한다."
+  - id: AC-67e1de
+    ears: ubiquitous
+    text: "The system shall 서식 전용 액션을 텍스트 변경 없이 수행할 수 있게 한다 (REPLACE 없이 style-only)."
+  - id: AC-264bfd
+    ears: event
+    condition: "When 사용자가 텍스트를 드래그 선택하고 서식 변경을 요청하면"
+    text: "The system shall 선택 영역을 대상 범위로 사용하여 서식을 적용한다."
+  - id: AC-57d574
+    ears: unwanted
+    condition: "If 대상 문자열이 문단에서 유일하게 매칭되지 않으면"
+    text: "The system shall 적용을 건너뛰고 사유를 메시지로 알린다."

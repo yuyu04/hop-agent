@@ -1,0 +1,37 @@
+id: F-21a81b
+slug: textbox-shape-text-editing
+title: "글상자/도형 텍스트 직렬화 + 편집"
+status: done
+modules:
+  - apps/desktop/src-tauri/src/ai/serialize.rs
+  - apps/desktop/src-tauri/src/ai/mod.rs
+  - apps/studio-host/src/core/ai-apply.ts
+acceptance_criteria:
+  - id: AC-0e627e
+    ears: ubiquitous
+    text: "The system shall 글상자(text box)·도형 내부 텍스트를 경로 기반 id(예: sec[S].shape[N].p[I])로 직렬화하여 AI가 볼 수 있게 한다."
+    notes: "조사 결과 rhwp layout_textbox_content가 글상자 런에 cell_index=0인 CellContext를 달아 주어, 기존 collect_cells 파이프라인이 글상자 문단을 `sec[S].p[P].tbl[C].cell[0].p[I]` 형식(셀과 동일)으로 이미 직렬화함을 확인·테스트로 고정. 별도 shape[N] 표기 대신 셀 형식 ID를 그대로 쓴다(apply 경로 재사용). system_prompt에 글상자=셀 형식 ID 안내 추가."
+    test_refs:
+      - apps/desktop/src-tauri/src/ai/serialize.rs
+  - id: AC-7ec1d8
+    ears: event
+    condition: "When AI가 글상자 문단에 REPLACE/DELETE를 반환하면"
+    text: "The system shall WASM 편집 프리미티브로 해당 글상자 텍스트를 수정하고 레이아웃을 리플로우한다."
+    notes: "rhwp flat 셀 API(get_cell_paragraph_mut 계열)가 Control::Shape(글상자)·캡션을 처리하고 reflow_cell_paragraph를 호출한다. ai-apply applyOneCell의 path-1 분기를 INSERT까지 전부 flat API로 확장(기존 by-path INSERT는 Table 전용+리플로우 없음). 중첩 글상자(path≥2)는 by-path가 Table 전용이라 미지원 — 알려진 갭."
+    test_refs:
+      - apps/studio-host/src/core/ai-apply.test.ts
+      - apps/desktop/src-tauri/src/ai/serialize.rs
+  - id: AC-49f586
+    ears: ubiquitous
+    text: "The system shall third_party/rhwp를 패치하지 않고 구현한다 (필요 시 저장 후처리 또는 앱 측 래퍼로 우회)."
+    notes: "rhwp 변경 0건 — 기존 공개 API(insertTextInCell/deleteTextInCell/splitParagraphInCell/getCellParagraphLength)만 사용. git status로 서브모듈 무변경 확인."
+    evidence_refs:
+      - apps/studio-host/src/core/ai-apply.ts
+      - apps/desktop/src-tauri/src/ai/serialize.rs
+  - id: AC-d2dc27
+    ears: unwanted
+    condition: "If 글상자 편집 후 저장한 HWP를 한컴오피스에서 열었을 때 구조가 깨지면"
+    text: "The system shall 이를 리그레션으로 간주하며, 검증 스크립트(hwp 라운드트립 체크)로 확인한다."
+    notes: "export_cell_split_doc_for_table_check 테스트가 표 셀 split+insert와 글상자 편집을 담은 HWP를 hwp_table_fix 후처리 포함으로 내보내고, hwp_table_check.py exit 0 확인(2026-06-10). 재파싱 라운드트립으로 글상자 텍스트 보존도 검증."
+    test_refs:
+      - apps/desktop/src-tauri/src/ai/serialize.rs
