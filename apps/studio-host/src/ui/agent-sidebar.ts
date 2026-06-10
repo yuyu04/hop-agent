@@ -252,6 +252,8 @@ export class AgentSidebar {
   private unsubscribe: AiEventUnsubscribe | null = null;
   private copyHandler: ((event: KeyboardEvent) => void) | null = null;
   private requestId: string | null = null;
+  /** 스트리밍 중 누적되는 Raw 응답(여기서 생성 본문 text를 실시간 추출해 보여준다). */
+  private streamBuffer = '';
   private context: DocumentContext | null = null;
   private pendingScript: ActionScript | null = null;
   /** 이번 요청에 첨부된 이미지(삽입용, 첨부 순서). image_index가 이 배열을 가리킨다. */
@@ -919,6 +921,7 @@ export class AgentSidebar {
       /* 동기화 실패는 무시 — 프론트 가드가 이미 외부 전송을 막았다. */
     }
 
+    this.streamBuffer = '';
     this.session.startRequest();
     this.setRequesting(true);
     this.setStatus('요청 중…');
@@ -1089,10 +1092,17 @@ export class AgentSidebar {
 
   private onDelta(delta: AiStreamDelta): void {
     if (delta.requestId !== this.requestId || !this.active) return;
-    // 부분 응답은 Raw Action Script JSON이라 그대로 보여주면 혼란스럽다.
-    // 사람이 읽을 결과는 diff/인라인 카드로 보여주므로, 생성 중에는 점 애니메이션만
-    // 유지한다(이미 표시 중이면 그대로 둔다).
-    if (!this.active.streamEl.querySelector('.hop-ai-thinking')) this.showThinking(this.active);
+    // Raw 응답(Action Script JSON)을 그대로 보여주면 혼란스럽지만, 그 안의
+    // payload.text들은 곧 'AI가 쓰고 있는 본문'이다 — Cursor처럼 완성된 문장부터
+    // 실시간으로 흘려보여준다. 아직 본문이 없으면 점 애니메이션을 유지한다.
+    this.streamBuffer += delta.partialText;
+    const texts = extractGeneratedTexts(this.streamBuffer);
+    if (!texts.length) {
+      if (!this.active.streamEl.querySelector('.hop-ai-thinking')) this.showThinking(this.active);
+      return;
+    }
+    this.active.streamEl.textContent = `${texts.join('\n\n')} ▌`;
+    this.scrollThreadToEnd();
   }
 
   private async onReady(ready: AiEditReady): Promise<void> {
@@ -2389,15 +2399,57 @@ function chunkContextNodes(nodes: ContentNode[], maxChars: number): ContentNode[
   return chunks;
 }
 
+/**
+ * 스트리밍 중인 Action Script JSON 버퍼에서 완성된 payload.text 문자열들을 추출한다.
+ * (따옴표가 닫힌 값만 — 쓰다 만 문장은 다음 델타에서 완성되면 나타난다.)
+ */
+function extractGeneratedTexts(buffer: string): string[] {
+  const out: string[] = [];
+  const pattern = /"text"\s*:\s*"((?:[^"\\]|\\.)*)"/g;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(buffer)) !== null) {
+    try {
+      const text = JSON.parse(`"${match[1]}"`) as string;
+      if (text.trim()) out.push(text);
+    } catch {
+      /* 이스케이프가 깨진 조각은 건너뛴다 */
+    }
+  }
+  return out;
+}
+
 /** 표시용 — 앞 `max`자만, 길면 말줄임표. */
 function clip(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max)}…` : text;
 }
 
+/** 편집 명령·대상 ID를 사람이 읽는 라벨로 바꾼다(원본 ID는 title 속성으로 보존). */
+function describeEdit(command: string, targetId: string): string {
+  const action =
+    command === 'REPLACE'
+      ? '바꿈'
+      : command === 'DELETE'
+        ? '삭제'
+        : command === 'INSERT_BEFORE'
+          ? '앞에 추가'
+          : '추가';
+  const where = targetId.includes('.header[')
+    ? '머리말'
+    : targetId.includes('.footer[')
+      ? '꼬리말'
+      : targetId.includes('.fn[')
+        ? '각주'
+        : targetId.includes('.tbl[')
+          ? '표 셀'
+          : '본문';
+  return `${where} ${action}`;
+}
+
 function renderDiffItem(item: DiffItem): HTMLElement {
   const row = el('div', 'hop-ai-diff-item');
   const head = el('div', 'hop-ai-diff-head');
-  head.textContent = `${item.command} · ${item.targetId}`;
+  head.textContent = describeEdit(item.command, item.targetId);
+  head.title = `${item.command} · ${item.targetId}`;
   row.appendChild(head);
   if (item.beforeText !== undefined) {
     const before = el('div', 'hop-ai-diff-before');

@@ -636,12 +636,15 @@
 
 .hop-ai-stream {
   margin: 0;
-  max-height: 160px;
+  max-height: 260px;
   overflow: auto;
   white-space: pre-wrap;
   word-break: break-word;
-  font-size: 11px;
-  color: #666;
+  /* 생성 중인 '본문'이 흘러나오는 영역 — 코드가 아니라 글처럼 보이게. */
+  font-family: inherit;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: #1f2328;
   background: #eef0f3;
   border-radius: 6px;
   padding: 6px;

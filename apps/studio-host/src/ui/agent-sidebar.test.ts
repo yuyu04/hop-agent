@@ -821,6 +821,34 @@ describe('AgentSidebar', () => {
     expect(lastMsg?.textContent).toContain('10억');
   });
 
+  it('streams the generated body text into the bubble as it arrives (Cursor-style)', async () => {
+    build();
+    await flush();
+    await selectProvider('ollama');
+    find('hop-ai-prompt').value = '사업계획서 써줘';
+    find('hop-ai-send').click();
+    await flush();
+
+    // 아직 본문(text)이 없는 조각 → 점 애니메이션 유지.
+    captured!.onDelta?.({ requestId: 'req-1', partialText: '{"edits":[{"command":"INSERT_AFTER",' });
+    expect(find('hop-ai-stream').querySelector('.hop-ai-thinking')).not.toBeNull();
+
+    // 완성된 payload.text가 들어오면 그 본문이 말풍선에 흘러나온다.
+    captured!.onDelta?.({
+      requestId: 'req-1',
+      partialText:
+        '"target_id":"sec[0].p[0]","payload":{"type":"paragraph","text":"1. 사업 개요"}},' +
+        '{"command":"INSERT_AFTER","target_id":"sec[0].p[0]","payload":{"text":"본 사업은 플라스틱 도장면을',
+    });
+    const streamed = find('hop-ai-stream').textContent ?? '';
+    expect(streamed).toContain('1. 사업 개요');
+    // 따옴표가 아직 안 닫힌 문장은 다음 델타에서 나타난다(쓰다 만 조각 미표시).
+    expect(streamed).not.toContain('플라스틱');
+
+    captured!.onDelta?.({ requestId: 'req-1', partialText: ' 검사한다."}}]}' });
+    expect(find('hop-ai-stream').textContent).toContain('플라스틱 도장면을 검사한다.');
+  });
+
   it('edits a past message in place and restarts the conversation from that line', async () => {
     build();
     await flush();
