@@ -131,6 +131,10 @@ class FakeWasm implements WasmEditing {
     this.calls.push(`splitParagraphInCell(${s},${pp},${ci},${ce},${cp},${off})`);
     return '';
   }
+  setFieldValue(fieldId: number, value: string) {
+    this.calls.push(`setFieldValue(${fieldId},"${value}")`);
+    return { ok: true, fieldId, oldValue: '', newValue: value };
+  }
   /** 머리말/꼬리말 상태. 키: `${sec}.${isHeader}.${applyTo}` → 문단 텍스트 배열. */
   hf: Record<string, string[]> = {};
   getHeaderFooter(s: number, h: boolean, a: number): string {
@@ -1026,6 +1030,42 @@ describe('applyActionScript', () => {
           target_id: 'sec[0].p[3].fn[2].p[0]',
           payload: { text: '추가' },
         },
+      ]),
+    );
+    expect(result.applied).toBe(0);
+    expect(result.skipped[0].reason).toContain('REPLACE');
+    expect(wasm.calls).toEqual([]);
+  });
+
+  // ── 누름틀 템플릿 채우기 (F-10a6a5) ─────────────────────────
+
+  it('REPLACE on a field target sets the field value only (template preserved)', () => {
+    const wasm = new FakeWasm();
+    const result = applyActionScript(
+      wasm,
+      script([
+        {
+          command: 'REPLACE',
+          target_id: 'field[3:사업명]',
+          payload: { type: 'paragraph', text: '실시간 도장면 검사 시스템 개발' },
+        },
+        { command: 'DELETE', target_id: 'field[7:비고]', payload: {} },
+      ]),
+    );
+    expect(result.applied).toBe(2);
+    // 값 교체만 — 문단/서식 프리미티브는 전혀 호출되지 않는다.
+    expect(wasm.calls).toEqual([
+      'setFieldValue(3,"실시간 도장면 검사 시스템 개발")',
+      'setFieldValue(7,"")',
+    ]);
+  });
+
+  it('INSERT into a field target is rejected with guidance', () => {
+    const wasm = new FakeWasm();
+    const result = applyActionScript(
+      wasm,
+      script([
+        { command: 'INSERT_AFTER', target_id: 'field[3:사업명]', payload: { text: '추가' } },
       ]),
     );
     expect(result.applied).toBe(0);

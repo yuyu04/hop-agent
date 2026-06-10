@@ -93,6 +93,11 @@ export interface WasmEditing {
     charOffset: number,
     count: number,
   ): string;
+  /** 누름틀(Field) 값 교체(F-10a6a5). 서식·구조는 템플릿 그대로 보존된다. */
+  setFieldValue(
+    fieldId: number,
+    value: string,
+  ): { ok: boolean; fieldId: number; oldValue: string; newValue: string };
   // 머리말/꼬리말 편집(F-191fd6). get*/create*는 JSON 문자열을 반환한다.
   getHeaderFooter(sec: number, isHeader: boolean, applyTo: number): string;
   createHeaderFooter(sec: number, isHeader: boolean, applyTo: number): string;
@@ -352,23 +357,33 @@ export function parseFootnoteTarget(targetId: string): FootnoteTarget | null {
   };
 }
 
+/** `field[<id>:<이름>]` 형식의 누름틀 타깃(F-10a6a5). */
+const FIELD_PATTERN = /^field\[(\d+):/;
+
+export function parseFieldTarget(targetId: string): { fieldId: number } | null {
+  const m = FIELD_PATTERN.exec(targetId);
+  return m ? { fieldId: Number(m[1]) } : null;
+}
+
 type LocatedEdit =
   | { kind: 'body'; edit: Edit; sec: number; para: number; order: number }
   | { kind: 'cell'; edit: Edit; cell: CellTarget; order: number }
   | { kind: 'hf'; edit: Edit; hf: HeaderFooterTarget; order: number }
-  | { kind: 'fn'; edit: Edit; fn: FootnoteTarget; order: number };
+  | { kind: 'fn'; edit: Edit; fn: FootnoteTarget; order: number }
+  | { kind: 'field'; edit: Edit; fieldId: number; order: number };
 
 function locatedSec(item: LocatedEdit): number {
   if (item.kind === 'body') return item.sec;
   if (item.kind === 'cell') return item.cell.sec;
   if (item.kind === 'hf') return item.hf.sec;
+  if (item.kind === 'field') return 0;
   return item.fn.sec;
 }
 function locatedPara(item: LocatedEdit): number {
   if (item.kind === 'body') return item.para;
   if (item.kind === 'cell') return item.cell.parentPara;
-  // 머리말/꼬리말은 본문 인덱스와 무관 — 항상 마지막에 적용되도록 -1.
-  if (item.kind === 'hf') return -1;
+  // 머리말/꼬리말·누름틀은 본문 인덱스와 무관 — 항상 마지막에 적용되도록 -1.
+  if (item.kind === 'hf' || item.kind === 'field') return -1;
   return item.fn.para;
 }
 
@@ -428,6 +443,19 @@ export function applyActionScript(
       return;
     }
 
+    const field = parseFieldTarget(edit.target_id);
+    if (field) {
+      if (edit.command !== 'REPLACE' && edit.command !== 'DELETE') {
+        skipped.push({
+          targetId: edit.target_id,
+          reason: '누름틀은 값 교체(REPLACE)·비우기(DELETE)만 가능합니다.',
+        });
+        return;
+      }
+      located.push({ kind: 'field', edit, fieldId: field.fieldId, order });
+      return;
+    }
+
     const hf = parseHeaderFooterTarget(edit.target_id);
     if (hf) {
       if (isTableEdit(edit) || isImageEdit(edit) || isTableStructEdit(edit) || isFormatEdit(edit)) {
@@ -482,6 +510,8 @@ export function applyActionScript(
       locatedSec(b) - locatedSec(a) || locatedPara(b) - locatedPara(a);
     if (byPos !== 0) return byPos;
     if (isTableStructEdit(a.edit) && isTableStructEdit(b.edit)) return a.order - b.order;
+    // 누름틀도 입력 정순 — 같은 필드를 여러 번 만지면 마지막 지시가 남는다.
+    if (a.kind === 'field' && b.kind === 'field') return a.order - b.order;
     return b.order - a.order;
   });
 
@@ -498,6 +528,13 @@ export function applyActionScript(
       if (item.kind === 'cell') {
         if (isTableStructEdit(item.edit)) applyTableEdit(wasm, item.edit, item.cell);
         else applyOneCell(wasm, item.edit, item.cell);
+      } else if (item.kind === 'field') {
+        // 누름틀 값만 교체 — 서식·구조는 템플릿 그대로(F-10a6a5).
+        const result = wasm.setFieldValue(
+          item.fieldId,
+          item.edit.command === 'DELETE' ? '' : (item.edit.payload.text ?? ''),
+        );
+        if (!result.ok) throw new Error('누름틀을 찾지 못했습니다.');
       } else if (item.kind === 'hf') {
         applyOneHeaderFooter(wasm, item.edit, item.hf);
       } else if (item.kind === 'fn') {

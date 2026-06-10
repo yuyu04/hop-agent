@@ -573,6 +573,12 @@ fn system_prompt() -> String {
      회사명 넣어줘'). 줄을 추가하려면 INSERT_AFTER. 각주는 `sec[s].p[p].fn[c].p[i]` ID로 \
      제공되며 REPLACE(내용 수정)·DELETE(비우기)만 가능합니다 — 새 각주 추가는 지원하지 \
      않습니다. \
+     [누름틀 템플릿] 컨텍스트에 `field[<번호>:<이름>]` ID가 보이면 이 문서는 사람이 \
+     미리 디자인한 양식 템플릿입니다 — 최우선으로 누름틀만 REPLACE로 채우고, 본문 \
+     문단 추가·표 생성 같은 구조 변경은 사용자가 명시적으로 요구할 때만 하세요. \
+     text가 `(안내: …)` 형태인 누름틀은 비어 있는 것이며, 안내문에 맞는 내용을 채우세요. \
+     누름틀에는 INSERT를 쓰지 마세요(값 교체만 가능). 서식은 템플릿이 이미 갖고 있으므로 \
+     style도 지정하지 마세요. \
      [부분 서식] 텍스트 내용은 그대로 두고 서식만 바꾸려면 command=REPLACE, \
      payload.type=\"format\"을 쓰세요. format_target에 그 문단 안에서 서식을 바꿀 정확한 \
      문자열을 넣고(문단 전체면 생략), char_format에 바꿀 속성만 지정하세요: \
@@ -711,6 +717,15 @@ mod tests {
         assert!(prompt.contains("fn[c]"));
         // 각주는 내용 수정/비우기만 — 새 각주 추가는 미지원임을 명시.
         assert!(prompt.contains("새 각주 추가는 지원하지"));
+    }
+
+    #[test]
+    fn system_prompt_guides_template_field_filling() {
+        let prompt = system_prompt();
+        assert!(prompt.contains("누름틀"));
+        assert!(prompt.contains("field[<번호>:<이름>]"));
+        // 템플릿 문서에선 구조 변경 대신 누름틀 채우기를 우선(AC3).
+        assert!(prompt.contains("구조 변경은 사용자가 명시적으로 요구할 때만"));
     }
 
     #[test]

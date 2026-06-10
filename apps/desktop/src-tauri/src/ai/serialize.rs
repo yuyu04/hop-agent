@@ -91,6 +91,7 @@ pub fn build_windowed_context(
     nodes.extend(cell_nodes(core));
     nodes.extend(collect_header_footers(core, total_sections));
     nodes.extend(collect_footnotes(core));
+    nodes.extend(collect_fields(core));
 
     Ok(assemble(nodes, total_sections, cursor_path))
 }
@@ -186,6 +187,38 @@ fn collect_footnotes(core: &DocumentCore) -> Vec<Node> {
     out
 }
 
+/// 누름틀(Field)을 `field[<id>:<이름>]` 노드로 수집한다(F-10a6a5 — 템플릿 채우기).
+/// 값이 비어 있으면 안내문을 `(안내: …)`로 보여 AI가 무엇을 채울지 알게 한다.
+fn collect_fields(core: &DocumentCore) -> Vec<Node> {
+    field_nodes_from_json(&core.get_field_list_json())
+}
+
+/// getFieldList JSON 배열 → 노드 변환(테스트 가능하게 분리).
+fn field_nodes_from_json(json: &str) -> Vec<Node> {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(json) else {
+        return Vec::new();
+    };
+    let Some(fields) = value.as_array() else { return Vec::new() };
+    let mut out = Vec::new();
+    for field in fields {
+        let Some(id) = field.get("fieldId").and_then(|v| v.as_u64()) else { continue };
+        let name = field.get("name").and_then(|v| v.as_str()).unwrap_or("");
+        let value_text = field.get("value").and_then(|v| v.as_str()).unwrap_or("");
+        let guide = field.get("guide").and_then(|v| v.as_str()).unwrap_or("");
+        let text = if value_text.trim().is_empty() {
+            if guide.trim().is_empty() {
+                String::new()
+            } else {
+                format!("(안내: {})", guide.trim())
+            }
+        } else {
+            value_text.to_string()
+        };
+        out.push((format!("field[{}:{}]", id, name), text, None));
+    }
+    out
+}
+
 /// 전체 문서(본문 전부 + 표 셀) 컨텍스트 — 교정 패스 등 전수 스캔용(Sliding Window 없음).
 /// 긴 문서는 호출 측(프런트)이 노드를 구간으로 나눠 `target_ids`로 스코프 요청한다.
 pub fn build_full_context(
@@ -197,6 +230,7 @@ pub fn build_full_context(
     nodes.extend(cell_nodes(core));
     nodes.extend(collect_header_footers(core, total_sections));
     nodes.extend(collect_footnotes(core));
+    nodes.extend(collect_fields(core));
     Ok(assemble(nodes, total_sections, None))
 }
 
@@ -212,6 +246,7 @@ pub fn build_scoped_context(
     nodes.extend(cell_nodes(core));
     nodes.extend(collect_header_footers(core, total_sections));
     nodes.extend(collect_footnotes(core));
+    nodes.extend(collect_fields(core));
     nodes.retain(|(id, _, _)| ids.contains(id));
     Ok(assemble(nodes, total_sections, None))
 }
@@ -1034,6 +1069,21 @@ mod tests {
             crate::state::editable_core_from_bytes(&bytes, "파싱 실패", "변환 실패").unwrap();
         let info = reloaded.get_footnote_info_native(0, 0, ctrl).unwrap();
         assert!(info.contains("출처"), "저장 후 각주 소실: {}", info);
+    }
+
+    #[test]
+    fn field_nodes_show_value_or_guide() {
+        let json = r#"[
+            {"fieldId":3,"fieldType":"ClickHere","name":"사업명","guide":"사업명을 입력하세요","command":"","value":""},
+            {"fieldId":7,"fieldType":"ClickHere","name":"기관","guide":"","command":"","value":"지금강(주)"}
+        ]"#;
+        let nodes = field_nodes_from_json(json);
+        assert_eq!(nodes.len(), 2);
+        assert_eq!(nodes[0].0, "field[3:사업명]");
+        assert_eq!(nodes[0].1, "(안내: 사업명을 입력하세요)"); // 빈 누름틀은 안내문 표시.
+        assert_eq!(nodes[1].0, "field[7:기관]");
+        assert_eq!(nodes[1].1, "지금강(주)"); // 채워진 누름틀은 현재값.
+        assert!(field_nodes_from_json("garbage").is_empty());
     }
 
     #[test]

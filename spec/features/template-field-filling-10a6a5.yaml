@@ -1,0 +1,31 @@
+id: F-10a6a5
+slug: template-field-filling
+title: "누름틀 템플릿 채우기 — 디자인 100% 보장 모드"
+status: done
+modules:
+  - apps/desktop/src-tauri/src/ai/serialize.rs
+  - apps/desktop/src-tauri/src/ai/mod.rs
+  - apps/studio-host/src/core/ai-apply.ts
+acceptance_criteria:
+  - id: AC-3bee27
+    ears: ubiquitous
+    text: "The system shall 문서의 누름틀(Field)을 field[<id>:<이름>] ID로 직렬화하여(현재값, 비어 있으면 안내문) AI 컨텍스트와 화이트리스트에 포함한다."
+    test_refs:
+      - apps/desktop/src-tauri/src/ai/serialize.rs
+  - id: AC-147399
+    ears: event
+    condition: "When AI가 누름틀 ID에 REPLACE를 반환하면"
+    text: "The system shall setFieldValue로 값만 교체한다 — 서식·구조는 템플릿 그대로 보존된다(DELETE는 빈 값으로)."
+    test_refs:
+      - apps/studio-host/src/core/ai-apply.test.ts
+  - id: AC-efccf7
+    ears: ubiquitous
+    text: "The system shall 시스템 프롬프트가 누름틀이 있는 문서에서 누름틀 채우기를 우선하고 본문 구조 변경을 피하도록 지시한다."
+    test_refs:
+      - apps/desktop/src-tauri/src/ai/mod.rs
+  - id: AC-148af5
+    ears: unwanted
+    condition: "If 누름틀에 INSERT 등 지원하지 않는 명령이 오면"
+    text: "The system shall 적용을 거부하고 사유를 skipped로 보고한다."
+    test_refs:
+      - apps/studio-host/src/core/ai-apply.test.ts

@@ -2433,7 +2433,9 @@ function describeEdit(command: string, targetId: string): string {
         : command === 'INSERT_BEFORE'
           ? '앞에 추가'
           : '추가';
-  const where = targetId.includes('.header[')
+  const where = targetId.startsWith('field[')
+    ? '누름틀'
+    : targetId.includes('.header[')
     ? '머리말'
     : targetId.includes('.footer[')
       ? '꼬리말'
