@@ -213,6 +213,21 @@ const CONTEXT = {
   content: [{ type: 'paragraph', id: 'sec[0].p[0]', text: '원문' }],
 };
 
+const TWO_EDIT_SCRIPT = {
+  edits: [
+    {
+      command: 'REPLACE',
+      target_id: 'sec[0].p[0]',
+      payload: { type: 'paragraph', text: '첫째 수정' },
+    },
+    {
+      command: 'REPLACE',
+      target_id: 'sec[0].p[1]',
+      payload: { type: 'paragraph', text: '둘째 수정' },
+    },
+  ],
+};
+
 /** 사이드바 생성자가 await하는 구독/요청 마이크로태스크를 비운다. */
 async function flush(): Promise<void> {
   for (let i = 0; i < 6; i += 1) await Promise.resolve();
@@ -221,7 +236,7 @@ async function flush(): Promise<void> {
 function createBridge() {
   return {
     aiGetDocumentContext: vi.fn(async () => CONTEXT),
-    aiRequestEdit: vi.fn(async () => 'req-1'),
+    aiRequestEdit: vi.fn(async (..._args: unknown[]) => 'req-1'),
     aiCancelRequest: vi.fn(async () => undefined),
     aiSetApiKey: vi.fn(async () => undefined),
     aiHasApiKey: vi.fn(async () => false),
@@ -561,6 +576,221 @@ describe('AgentSidebar', () => {
     // 거절 → 스냅샷으로 복원(loadDocument 호출).
     scrollContent.querySelector('.hop-ai-inline-reject')!.click();
     expect(loadDocument).toHaveBeenCalledWith(snapshotBytes, 'doc.hwp');
+  });
+
+  // ── 편집 단위별 수락/거절 (F-dc4b99) ─────────────────────────
+
+  /** 전송 후 ready 이벤트까지 흘려보내는 공통 준비. */
+  async function sendAndReady(script: unknown): Promise<void> {
+    find('hop-ai-prompt').value = '바꿔줘';
+    await selectProvider('ollama');
+    find('hop-ai-send').click();
+    await flush();
+    captured!.onEditReady?.({ requestId: 'req-1', actionScriptJson: JSON.stringify(script) });
+  }
+
+  it('shows per-edit ✓/✗ controls for 2+ edits but not for a single edit (AC-8d733a)', async () => {
+    build();
+    await flush();
+    await sendAndReady(REPLACE_SCRIPT);
+    expect(doc.body.querySelectorAll('.hop-ai-diff-drop').length).toBe(0);
+
+    find('hop-ai-reject').click();
+    await sendAndReady(TWO_EDIT_SCRIPT);
+    expect(doc.body.querySelectorAll('.hop-ai-diff-drop').length).toBe(2);
+    expect(doc.body.querySelectorAll('.hop-ai-diff-keep').length).toBe(2);
+  });
+
+  it('excludes an individually rejected edit and applies the rest on accept (AC-491094/AC-12976a)', async () => {
+    build();
+    await flush();
+    await sendAndReady(TWO_EDIT_SCRIPT);
+
+    // 첫 편집만 제외 — 나머지 미리보기(diff 행)는 유지된다.
+    doc.body.querySelectorAll('.hop-ai-diff-drop')[0].click();
+    const rows = doc.body.querySelectorAll('.hop-ai-diff-item');
+    expect(rows.length).toBe(2);
+    expect(rows[0].classList.contains('hop-ai-diff-item-rejected')).toBe(true);
+    expect(rows[1].classList.contains('hop-ai-diff-item-rejected')).toBe(false);
+    expect(find('hop-ai-status').textContent).toContain('1/2건 적용 예정');
+
+    find('hop-ai-accept').click();
+
+    // 거절된 첫 편집(p[0])은 적용되지 않고 둘째(p[1])만 적용된다.
+    expect(bridge.insertText).toHaveBeenCalledTimes(1);
+    expect(bridge.insertText).toHaveBeenCalledWith(0, 1, 0, '둘째 수정');
+    expect(emit).toHaveBeenCalledWith('document-changed', 'ai-edit');
+    expect(bridge.markDocumentDirty).toHaveBeenCalled();
+    expect(find('hop-ai-status').textContent).toContain('적용 완료: 1건');
+  });
+
+  it('re-includes a rejected edit when ✓ is clicked again', async () => {
+    build();
+    await flush();
+    await sendAndReady(TWO_EDIT_SCRIPT);
+
+    doc.body.querySelectorAll('.hop-ai-diff-drop')[0].click();
+    expect(find('hop-ai-status').textContent).toContain('1/2건 적용 예정');
+    doc.body.querySelectorAll('.hop-ai-diff-keep')[0].click();
+    expect(find('hop-ai-status').textContent).toContain('2/2건 적용 예정');
+
+    find('hop-ai-accept').click();
+    expect(bridge.insertText).toHaveBeenCalledTimes(2);
+  });
+
+  it('reapplies only the remaining edits via snapshot on per-edit reject (optimistic path)', async () => {
+    const snapshotBytes = new Uint8Array([9, 9]);
+    const extra = bridge as Record<string, unknown>;
+    extra.getSourceFormat = vi.fn(() => 'hwp');
+    extra.exportHwp = vi.fn(() => snapshotBytes);
+    const loadDocument = vi.fn();
+    extra.loadDocument = loadDocument;
+    extra.fileName = 'doc.hwp';
+
+    build(true);
+    await flush();
+    await sendAndReady(TWO_EDIT_SCRIPT);
+
+    // ready 시점에 두 편집 모두 미리 적용된다.
+    expect(bridge.insertText).toHaveBeenCalledTimes(2);
+
+    // 첫 편집 제외 → 스냅샷으로 되돌린 뒤 남은 편집만 재적용된다.
+    doc.body.querySelectorAll('.hop-ai-diff-drop')[0].click();
+    expect(loadDocument).toHaveBeenCalledWith(snapshotBytes, 'doc.hwp');
+    expect(bridge.insertText).toHaveBeenCalledTimes(3);
+    expect(bridge.insertText).toHaveBeenLastCalledWith(0, 1, 0, '둘째 수정');
+    // 남은 편집의 하이라이트(초록 변경 표시줄)는 유지된다.
+    expect(scrollContent.querySelector('.hop-ai-inline-changebar')).not.toBeNull();
+    expect(find('hop-ai-status').textContent).toContain('1/2건 적용 예정');
+
+    // 승인 — 문서엔 이미 남은 편집만 반영돼 있으므로 그대로 확정된다.
+    find('hop-ai-accept').click();
+    expect(bridge.insertText).toHaveBeenCalledTimes(3); // 추가 적용 없음
+    expect(bridge.markDocumentDirty).toHaveBeenCalled();
+    expect(find('hop-ai-status').textContent).toContain('적용 완료: 1건');
+  });
+
+  it('rolls back to the snapshot when reapply errors mid per-edit reject (AC-95b4b0)', async () => {
+    const snapshotBytes = new Uint8Array([7]);
+    const extra = bridge as Record<string, unknown>;
+    extra.getSourceFormat = vi.fn(() => 'hwp');
+    extra.exportHwp = vi.fn(() => snapshotBytes);
+    const loadDocument = vi.fn();
+    extra.loadDocument = loadDocument;
+    extra.fileName = 'doc.hwp';
+
+    build(true);
+    await flush();
+    await sendAndReady(TWO_EDIT_SCRIPT);
+
+    // 재적용 직후의 document-changed emit(3번째 호출)에서 오류를 일으킨다.
+    emit.mockImplementation(() => {
+      if (emit.mock.calls.length >= 3) throw new Error('boom');
+    });
+    doc.body.querySelectorAll('.hop-ai-diff-drop')[0].click();
+
+    // 부분 적용 상태로 남지 않고 스냅샷으로 전체 롤백된다(재적용 1회 + 롤백 1회).
+    expect(loadDocument).toHaveBeenCalledTimes(2);
+    expect(loadDocument).toHaveBeenLastCalledWith(snapshotBytes, 'doc.hwp');
+    expect(find('hop-ai-status').textContent).toContain('되돌렸습니다');
+    expect(find('hop-ai-accept').disabled).toBe(true);
+    expect(find('hop-ai-diff').children.length).toBe(0);
+  });
+
+  // ── 문서 전체 교정 패스 (F-55a6a4) ──────────────────────────
+
+  /** 빠른 작업 칩 클릭을 흉내낸다(위임 핸들러는 closest('[data-action]')를 쓴다). */
+  function clickQuickAction(action: string): void {
+    find('hop-ai-quick').fire('click', {
+      target: { closest: () => ({ dataset: { action } }) },
+    });
+  }
+
+  it('scans the whole document, lists issues without editing, and applies one on demand', async () => {
+    bridge.aiGetDocumentContext.mockResolvedValue({
+      document_metadata: { total_sections: 1 },
+      content: [
+        { type: 'paragraph', id: 'sec[0].p[0]', text: '사업이 시작 됬다' },
+        { type: 'paragraph', id: 'sec[0].p[1]', text: '정상 문장' },
+      ],
+    });
+    build(true);
+    await flush();
+    await selectProvider('ollama');
+    clickQuickAction('proofread');
+    await flush();
+
+    // 전체 컨텍스트(fullDocument=true)를 받아 구간 ID들을 스코프로 요청한다.
+    expect(bridge.aiGetDocumentContext).toHaveBeenCalledWith('doc-1', false, null, true);
+    expect(bridge.aiRequestEdit).toHaveBeenCalledTimes(1);
+    expect(bridge.aiRequestEdit.mock.calls[0][9]).toEqual(['sec[0].p[0]', 'sec[0].p[1]']);
+
+    captured!.onEditReady?.({
+      requestId: 'req-1',
+      actionScriptJson: JSON.stringify({
+        edits: [
+          {
+            command: 'REPLACE',
+            target_id: 'sec[0].p[0]',
+            payload: { type: 'paragraph', text: '사업이 시작됐다', reason: "맞춤법: '됬다'→'됐다'" },
+          },
+        ],
+      }),
+    });
+    await flush();
+
+    // 문서는 아직 수정되지 않고 이슈 목록만 뜬다.
+    expect(bridge.insertText).not.toHaveBeenCalled();
+    expect(doc.body.querySelectorAll('.hop-ai-issue').length).toBe(1);
+    expect(doc.body.querySelector('.hop-ai-issue-reason')?.textContent).toContain('맞춤법');
+    expect(find('hop-ai-status').textContent).toContain('이슈 1건');
+
+    // 이슈 행 클릭 → 해당 위치로 점프하며 하이라이트가 그려진다.
+    doc.body.querySelector('.hop-ai-issue')!.fire('click');
+    expect(scrollContent.querySelector('.hop-ai-proofread-flash')).not.toBeNull();
+
+    // '수정 적용' → 그 문단만 REPLACE 되고 해결 처리된다.
+    doc.body.querySelector('.hop-ai-issue-apply')!.click();
+    expect(bridge.deleteText).toHaveBeenCalled();
+    expect(bridge.insertText).toHaveBeenCalledWith(0, 0, 0, '사업이 시작됐다');
+    expect(emit).toHaveBeenCalledWith('document-changed', 'ai-edit');
+    expect(bridge.markDocumentDirty).toHaveBeenCalled();
+    expect(
+      doc.body.querySelector('.hop-ai-issue')!.classList.contains('hop-ai-issue-resolved'),
+    ).toBe(true);
+  });
+
+  it('splits a long document into chunks and scans sequentially with progress (AC4)', async () => {
+    const long = '가'.repeat(8000); // 2문단 × 8000자 > 9000자 한도 → 2구간
+    bridge.aiGetDocumentContext.mockResolvedValue({
+      document_metadata: { total_sections: 1 },
+      content: [
+        { type: 'paragraph', id: 'sec[0].p[0]', text: long },
+        { type: 'paragraph', id: 'sec[0].p[1]', text: long },
+      ],
+    });
+    build();
+    await flush();
+    await selectProvider('ollama');
+    clickQuickAction('proofread');
+    await flush();
+
+    // 1번째 구간만 먼저 요청되고 진행률이 표시된다.
+    expect(bridge.aiRequestEdit).toHaveBeenCalledTimes(1);
+    expect(bridge.aiRequestEdit.mock.calls[0][9]).toEqual(['sec[0].p[0]']);
+    expect(find('hop-ai-status').textContent).toContain('구간 1/2');
+
+    captured!.onEditReady?.({ requestId: 'req-1', actionScriptJson: '{"edits":[]}' });
+    await flush();
+
+    // 1구간 완료 후에야 2번째 구간이 요청된다(순차).
+    expect(bridge.aiRequestEdit).toHaveBeenCalledTimes(2);
+    expect(bridge.aiRequestEdit.mock.calls[1][9]).toEqual(['sec[0].p[1]']);
+    expect(find('hop-ai-status').textContent).toContain('구간 2/2');
+
+    captured!.onEditReady?.({ requestId: 'req-1', actionScriptJson: '{"edits":[]}' });
+    await flush();
+    expect(find('hop-ai-status').textContent).toContain('이슈 없음');
   });
 
   it('ignores ready events for a different request id', async () => {

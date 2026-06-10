@@ -13,6 +13,8 @@ export interface ParagraphNode {
   type: 'paragraph';
   id: string;
   text: string;
+  /** 휴리스틱으로 추정한 제목 수준(1~3). 글자 크기·굵기·번호 패턴 기반(F-0858f2). */
+  heading?: number;
 }
 
 export type ContentNode = ParagraphNode;
@@ -28,7 +30,7 @@ export interface DocumentContext {
 export type EditCommand = 'INSERT_BEFORE' | 'INSERT_AFTER' | 'REPLACE' | 'DELETE';
 
 export interface EditPayload {
-  type?: 'paragraph' | 'table' | 'image';
+  type?: 'paragraph' | 'table' | 'image' | 'table_edit';
   text?: string;
   style?: string;
   /** type="image"일 때 삽입할 첨부 이미지의 0-기준 인덱스(첨부 순서). */
@@ -39,6 +41,8 @@ export interface EditPayload {
   page_break?: boolean;
   /** 다시쓰기 대안들(2~3개). 사용자가 여러 변형을 원할 때. text는 추천안(보통 첫 번째). */
   variations?: string[];
+  /** 교정 패스에서만: 이 편집이 고치는 이슈 설명("분류: 설명", 분류=맞춤법/문법/어색한 표현/일관성). */
+  reason?: string;
   table_data?: {
     rows: number;
     cols: number;
@@ -47,6 +51,17 @@ export interface EditPayload {
     merges?: { start_row: number; start_col: number; end_row: number; end_col: number }[];
     /** 열별 상대 폭 가중치(길이=cols). 긴 텍스트 열은 크게, 짧은 열은 작게. */
     col_weights?: number[];
+  };
+  /** type="table_edit"일 때: 기존 표의 구조 편집(행/열 추가·삭제, 셀 병합). target_id는 그 표의 셀 ID. */
+  table_edit?: {
+    op: 'insert_row' | 'insert_col' | 'delete_row' | 'delete_col' | 'merge_cells';
+    row?: number;
+    col?: number;
+    below?: boolean;
+    right?: boolean;
+    merge?: { start_row: number; start_col: number; end_row: number; end_col: number };
+    /** 새 행/열의 셀 텍스트(순서대로, 선택). */
+    texts?: string[];
   };
 }
 

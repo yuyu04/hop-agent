@@ -18,6 +18,7 @@ import {
   type AiEditReady,
   type AiEventUnsubscribe,
   type AiStreamDelta,
+  type ContentNode,
   type DocumentContext,
 } from '@/core/ai-bridge';
 import type { AiBridgeApi, AiImageInput } from '@/core/tauri-bridge';
@@ -206,8 +207,11 @@ export class AgentSidebar {
   private logWindow: Window | null = null;
   /** 작업 모드: 'edit'=문서 편집, 'ask'=편집 없이 질문/요약 답변. */
   private mode: 'edit' | 'ask' = 'edit';
-  /** 전송 시점에 고정한 모드(응답 처리에서 사용 — this.mode가 그새 바뀌어도 안전). */
-  private requestMode: 'edit' | 'ask' = 'edit';
+  /** 전송 시점에 고정한 모드(응답 처리에서 사용 — this.mode가 그새 바뀌어도 안전).
+   *  'proofread'는 전체 교정 패스(응답을 적용하지 않고 이슈 목록으로 수집). */
+  private requestMode: 'edit' | 'ask' | 'proofread' = 'edit';
+  /** 교정 패스의 순차 루프가 기다리는 현재 구간 응답 resolver. */
+  private proofreadResolve: ((script: ActionScript | null) => void) | null = null;
   private readonly modeEditBtn: HTMLButtonElement;
   private readonly modeAskBtn: HTMLButtonElement;
   private readonly quickActions: HTMLElement;
@@ -244,6 +248,10 @@ export class AgentSidebar {
   private snapshot: { bytes: Uint8Array; fileName: string } | null = null;
   /** 낙관적 적용 결과(승인 메시지용). */
   private applied: ApplyResult | null = null;
+  /** 개별 거절된 edit 인덱스(pendingScript.edits 기준). 승인 시 제외된다. */
+  private rejectedEdits = new Set<number>();
+  /** 사이드바 diff 행(개별 거절 시 시각 상태 갱신용, edit 인덱스와 1:1). */
+  private diffRows: HTMLElement[] = [];
 
   constructor(private readonly deps: AgentSidebarDeps) {
     this.session = new AiSessionMachine({ onRollback: () => this.revertToSnapshot() });
@@ -706,6 +714,11 @@ export class AgentSidebar {
 
   /** 빠른 작업 칩 — 프리셋 지시를 채워 바로 전송한다. 선택 영역이 있으면 그 부분이 대상. */
   private async runQuickAction(action: string): Promise<void> {
+    // 전체 교정은 프리셋 전송이 아니라 전용 스캔 루프를 돈다(F-55a6a4).
+    if (action === 'proofread') {
+      await this.runProofread();
+      return;
+    }
     const presets: Record<string, { mode: 'edit' | 'ask'; text: string }> = {
       concise: { mode: 'edit', text: '선택한 부분(선택이 없으면 현재 문단)을 의미는 유지하되 더 간결하게 다듬어줘.' },
       formal: { mode: 'edit', text: '선택한 부분(선택이 없으면 현재 문단)을 더 격식 있고 정중한 문어체로 다듬어줘.' },
@@ -725,33 +738,41 @@ export class AgentSidebar {
     await this.send();
   }
 
+  /** 전송 공통 가드(문서/민감/키/Base URL). 통과 시 요청 파라미터를, 막히면 null을 반환한다. */
+  private checkSendGuards(): { docId: string; provider: string; baseUrl: string | null } | null {
+    const docId = this.deps.bridge.currentDocId();
+    if (!docId) {
+      this.setStatus('먼저 문서를 여세요.', 'warn');
+      return null;
+    }
+    const provider = this.providerSelect.value;
+    if (this.sensitive && !LOCAL_PROVIDERS.has(provider)) {
+      this.setStatus('민감 문서로 표시됨 — 로컬 모델(ollama)만 사용할 수 있습니다.', 'warn');
+      return null;
+    }
+    if (KEY_PROVIDERS.has(provider) && this.keyState.get(provider) === false) {
+      this.toggleSettings(true);
+      this.setStatus('API 키를 먼저 저장하세요. (⚙ 옵션에서 입력)', 'warn');
+      return null;
+    }
+    const baseUrl = provider === CUSTOM_PROVIDER ? this.baseUrlInput.value.trim() : null;
+    if (provider === CUSTOM_PROVIDER && !baseUrl) {
+      this.toggleSettings(true);
+      this.setStatus('Base URL을 입력하세요 (⚙ 옵션, 예: https://api.groq.com/openai).', 'warn');
+      return null;
+    }
+    return { docId, provider, baseUrl };
+  }
+
   private async send(): Promise<void> {
     const prompt = this.promptInput.value.trim();
     if (!prompt) {
       this.setStatus('지시를 입력하세요.', 'warn');
       return;
     }
-    const docId = this.deps.bridge.currentDocId();
-    if (!docId) {
-      this.setStatus('먼저 문서를 여세요.', 'warn');
-      return;
-    }
-    const provider = this.providerSelect.value;
-    if (this.sensitive && !LOCAL_PROVIDERS.has(provider)) {
-      this.setStatus('민감 문서로 표시됨 — 로컬 모델(ollama)만 사용할 수 있습니다.', 'warn');
-      return;
-    }
-    if (KEY_PROVIDERS.has(provider) && this.keyState.get(provider) === false) {
-      this.toggleSettings(true);
-      this.setStatus('API 키를 먼저 저장하세요. (⚙ 옵션에서 입력)', 'warn');
-      return;
-    }
-    const baseUrl = provider === CUSTOM_PROVIDER ? this.baseUrlInput.value.trim() : null;
-    if (provider === CUSTOM_PROVIDER && !baseUrl) {
-      this.toggleSettings(true);
-      this.setStatus('Base URL을 입력하세요 (⚙ 옵션, 예: https://api.groq.com/openai).', 'warn');
-      return;
-    }
+    const guard = this.checkSendGuards();
+    if (!guard) return;
+    const { docId, provider, baseUrl } = guard;
 
     // 첨부 문서가 아직 백그라운드 추출 중이면, 끝난 뒤에 AI에 전송한다.
     if (this.extractTasks.length) {
@@ -977,6 +998,7 @@ export class AgentSidebar {
     this.session.cancel();
     this.requestId = null;
     this.setRequesting(false);
+    this.resolveProofread(null);
     this.setActiveStatus('취소했습니다.');
   }
 
@@ -992,13 +1014,21 @@ export class AgentSidebar {
     if (ready.requestId !== this.requestId || !this.active) return;
     // 같은 요청의 ready 이벤트가 두 번 와도 한 번만 처리(이중 적용 방지).
     this.requestId = null;
-    this.setRequesting(false);
+    // 교정 패스는 구간 루프가 끝날 때까지 요청 중 상태(취소 버튼)를 유지한다.
+    if (this.requestMode !== 'proofread') this.setRequesting(false);
     this.active.streamEl.textContent = '';
     const script = parseActionScript(ready.actionScriptJson);
     if (!script) {
       this.log(`응답 파싱 실패. 원문 일부: ${ready.actionScriptJson.slice(0, 300)}`);
       this.session.onFailed();
       this.setActiveStatus(interpretAiFailure('PARSE_ERROR'), 'error');
+      this.resolveProofread(null);
+      return;
+    }
+    // 교정 패스: 적용하지 않고 응답을 루프(runProofread)에 넘긴다.
+    if (this.requestMode === 'proofread') {
+      this.session.complete();
+      this.resolveProofread(script);
       return;
     }
     // 동일한 편집(명령+대상+payload)이 중복되면 한 번만 적용한다(AI가 같은 작업을 두 번
@@ -1039,6 +1069,7 @@ export class AgentSidebar {
       await this.applyImageCrops(script);
     }
     this.pendingScript = script;
+    this.rejectedEdits = new Set();
     if (this.active && script.message) this.active.msgEl.textContent = script.message;
     this.recordMessage('assistant', script.message?.trim() || `편집 ${script.edits.length}건을 제안했습니다.`);
     this.renderDiff(script);
@@ -1074,6 +1105,14 @@ export class AgentSidebar {
     this.setRequesting(false);
     this.active.streamEl.textContent = '';
     this.setActiveStatus(`${interpretAiFailure(failed.code)} (${failed.reason})`, 'error');
+    this.resolveProofread(null);
+  }
+
+  /** 교정 루프가 기다리는 구간 응답을 풀어준다(완료/실패/취소 공통). */
+  private resolveProofread(script: ActionScript | null): void {
+    const resolve = this.proofreadResolve;
+    this.proofreadResolve = null;
+    resolve?.(script);
   }
 
   private accept(): void {
@@ -1093,9 +1132,13 @@ export class AgentSidebar {
       return;
     }
 
-    // 폴백(가상 미리보기) 경로 — 승인 시점에 적용.
+    // 폴백(가상 미리보기) 경로 — 승인 시점에 적용(개별 거절된 edit은 제외).
     if (!this.pendingScript || !this.session.accept()) return;
-    const result = applyActionScript(this.deps.bridge, this.pendingScript, this.pendingInsertImages);
+    const result = applyActionScript(
+      this.deps.bridge,
+      this.filteredScript(this.pendingScript),
+      this.pendingInsertImages,
+    );
     this.clearPreview();
     if (result.applied === 0) {
       const reason = result.skipped[0]?.reason ?? '적용할 수 있는 편집이 없습니다.';
@@ -1111,6 +1154,175 @@ export class AgentSidebar {
     const active = this.active;
     if (!this.session.reject()) return; // rollback 콜백이 스냅샷 복원/미리보기 정리를 한다.
     this.setActiveStatus('제안을 거절하여 되돌렸습니다.', 'info', active);
+  }
+
+  // ── 문서 전체 교정 패스 (F-55a6a4) ───────────────────────────
+
+  /**
+   * 문서 전체(본문+표 셀)를 구간으로 나눠 순차 스캔하고, 발견한 이슈를 적용하지 않은 채
+   * 목록으로 보여준다(Word Editor식). 항목 클릭=위치 점프, '수정 적용'=그 문단만 REPLACE.
+   */
+  private async runProofread(): Promise<void> {
+    if (this.session.state === 'REQUESTING') return; // 이미 요청 진행 중.
+    const guard = this.checkSendGuards();
+    if (!guard) return;
+    const { docId, provider, baseUrl } = guard;
+    // 미확정 편집이 있으면 정리하고 시작한다.
+    if (this.session.isPending) this.session.cancel();
+
+    this.requestMode = 'proofread';
+    this.appendUserTurn('문서 전체 교정', []);
+    this.recordMessage('user', '문서 전체 교정');
+    this.active = this.appendAssistantTurn();
+    this.setRequesting(true);
+    const model = this.currentModel();
+    try {
+      const context = await this.deps.bridge.aiGetDocumentContext(docId, false, null, true);
+      this.context = context;
+      const chunks = chunkContextNodes(context.content, PROOFREAD_CHUNK_CHARS);
+      if (!chunks.length) {
+        this.setActiveStatus('교정할 텍스트가 없습니다.', 'warn');
+        return;
+      }
+      this.log(`교정 시작: ${context.content.length}개 노드 → ${chunks.length}개 구간`);
+      let found = 0;
+      for (let i = 0; i < chunks.length; i += 1) {
+        this.setActiveStatus(
+          chunks.length > 1 ? `문서 스캔 중… (구간 ${i + 1}/${chunks.length})` : '문서 스캔 중…',
+        );
+        const ids = chunks[i].map((node) => node.id);
+        const script = await this.requestProofreadChunk(docId, provider, model, baseUrl, ids);
+        if (!script) return; // 실패/취소 — 상태 표시는 onFailed/cancel이 했다.
+        found += this.collectIssues(script, new Set(ids));
+        this.log(`교정 구간 ${i + 1}/${chunks.length} 완료 — 누적 이슈 ${found}건`);
+      }
+      const summary = found
+        ? `교정 스캔 완료 — 이슈 ${found}건을 찾았습니다. 항목을 클릭하면 해당 위치로 이동하고, '수정 적용'을 누르면 그 문단만 반영됩니다.`
+        : '교정 스캔 완료 — 발견된 이슈가 없습니다.';
+      if (this.active) this.active.msgEl.textContent = summary;
+      this.recordMessage('assistant', summary);
+      this.setActiveStatus(found ? `이슈 ${found}건` : '이슈 없음', 'ok');
+    } catch (error) {
+      this.setActiveStatus(`교정 실패: ${String(error)}`, 'error');
+    } finally {
+      this.setRequesting(false);
+    }
+  }
+
+  /** 한 구간(ids)에 대한 교정 요청을 보내고 응답(또는 실패 시 null)을 기다린다. */
+  private requestProofreadChunk(
+    docId: string,
+    provider: string,
+    model: string,
+    baseUrl: string | null,
+    ids: string[],
+  ): Promise<ActionScript | null> {
+    return new Promise((resolve) => {
+      this.proofreadResolve = resolve;
+      this.session.startRequest();
+      this.deps.bridge
+        .aiRequestEdit(docId, PROOFREAD_PROMPT, provider, model, null, baseUrl, null, null, null, ids)
+        .then((requestId) => {
+          this.requestId = requestId;
+        })
+        .catch((error) => {
+          this.session.onFailed();
+          this.setActiveStatus(`요청 실패: ${String(error)}`, 'error');
+          this.resolveProofread(null);
+        });
+    });
+  }
+
+  /** 응답에서 교정 이슈(구간 내 REPLACE)만 골라 목록에 추가한다. 반환: 추가한 개수. */
+  private collectIssues(script: ActionScript, allowed: Set<string>): number {
+    let count = 0;
+    for (const edit of script.edits) {
+      if (edit.command !== 'REPLACE' || !(edit.payload.text ?? '').trim()) continue;
+      if (!allowed.has(edit.target_id)) continue;
+      this.appendIssueRow(edit);
+      count += 1;
+    }
+    return count;
+  }
+
+  /** 이슈 한 건을 버블의 목록에 그린다(분류·before/after·적용/무시, 클릭=점프). */
+  private appendIssueRow(edit: Edit): void {
+    const turn = this.active;
+    if (!turn) return;
+    const beforeMap = new Map<string, string>();
+    for (const node of this.context?.content ?? []) beforeMap.set(node.id, node.text);
+
+    const row = el('div', 'hop-ai-issue');
+    row.addEventListener('click', () => this.jumpToTarget(edit.target_id));
+    const reason = el('div', 'hop-ai-issue-reason');
+    reason.textContent = edit.payload.reason || '교정 제안';
+    row.appendChild(reason);
+    const before = el('div', 'hop-ai-diff-before');
+    before.textContent = clip(beforeMap.get(edit.target_id) ?? '', 90);
+    row.appendChild(before);
+    const after = el('div', 'hop-ai-diff-after');
+    after.textContent = clip(edit.payload.text ?? '', 90);
+    row.appendChild(after);
+
+    const actions = el('div', 'hop-ai-issue-actions');
+    const applyBtn = btn('hop-ai-issue-apply', '수정 적용');
+    applyBtn.addEventListener('click', (event) => {
+      (event as Event).stopPropagation?.();
+      this.applyIssue(edit, row, applyBtn);
+    });
+    const ignoreBtn = btn('hop-ai-issue-ignore', '무시');
+    ignoreBtn.addEventListener('click', (event) => {
+      (event as Event).stopPropagation?.();
+      row.classList.add('hop-ai-issue-resolved');
+      applyBtn.disabled = true;
+      ignoreBtn.disabled = true;
+    });
+    actions.append(applyBtn, ignoreBtn);
+    row.appendChild(actions);
+    turn.bodyEl.appendChild(row);
+    this.scrollThreadToEnd();
+  }
+
+  /** 이슈 하나를 적용한다 — 해당 문단만 REPLACE(다른 이슈의 인덱스는 변하지 않는다). */
+  private applyIssue(edit: Edit, row: HTMLElement, applyBtn: HTMLButtonElement): void {
+    if (row.classList.contains('hop-ai-issue-resolved')) return;
+    const result = applyActionScript(this.deps.bridge, { edits: [edit] }, []);
+    if (result.applied === 0) {
+      this.setActiveStatus(
+        `적용하지 못했습니다: ${result.skipped[0]?.reason ?? '알 수 없는 이유'}`,
+        'warn',
+      );
+      return;
+    }
+    this.reflowAndRender();
+    this.deps.bridge.markDocumentDirty?.();
+    row.classList.add('hop-ai-issue-resolved');
+    applyBtn.textContent = '✓ 적용됨';
+    applyBtn.disabled = true;
+    this.setActiveStatus('교정 1건을 적용했습니다.', 'ok');
+  }
+
+  /** 대상 문단/셀 위치로 스크롤하고 잠깐 하이라이트한다(이슈 점프). */
+  private jumpToTarget(targetId: string): void {
+    const canvasView = this.deps.getCanvasView();
+    const rect = this.targetRect(targetId);
+    if (!canvasView || !rect) return;
+    const zoom = canvasView.getViewportManager().getZoom();
+    const page = this.deps.bridge.getPageInfo(rect.pageIndex);
+    const pageTop = canvasView.getVirtualScroll().getPageOffset(rect.pageIndex);
+    const pageWidth = page.width * zoom;
+    const pageLeft = Math.max(0, (this.deps.scrollContent.clientWidth - pageWidth) / 2);
+    const top = pageTop + rect.y * zoom;
+    this.deps.scrollContainer.scrollTo({ top: Math.max(0, top - 80), behavior: 'smooth' });
+    const flash = el('div', 'hop-ai-proofread-flash');
+    flash.style.position = 'absolute';
+    flash.style.left = `${pageLeft}px`;
+    flash.style.top = `${top - 2}px`;
+    flash.style.width = `${Math.max(80, pageWidth)}px`;
+    flash.style.height = `${Math.max(14, rect.height * zoom + 4)}px`;
+    flash.style.pointerEvents = 'none';
+    this.deps.scrollContent.appendChild(flash);
+    setTimeout(() => flash.remove(), 1600);
   }
 
   // ── 대화 버블 ────────────────────────────────────────────────
@@ -1512,11 +1724,84 @@ export class AgentSidebar {
   private renderDiff(script: ActionScript): void {
     if (!this.active) return;
     this.active.bodyEl.replaceChildren();
+    this.diffRows = [];
     const items = buildDiffModel(
       script,
       this.context ?? { document_metadata: { total_sections: 0 }, content: [] },
     );
-    for (const item of items) this.active.bodyEl.appendChild(renderDiffItem(item));
+    // 변경 블록이 2건 이상이면 행마다 개별 포함(✓)/제외(✗) 토글을 단다(1건은 전체
+    // 승인/거부 버튼과 중복이라 생략). 인덱스는 pendingScript.edits와 1:1이다.
+    const perEdit = script.edits.length >= 2;
+    items.forEach((item, index) => {
+      const row = renderDiffItem(item);
+      if (perEdit) row.appendChild(this.buildEditControls(index));
+      row.classList.toggle('hop-ai-diff-item-rejected', this.rejectedEdits.has(index));
+      this.diffRows.push(row);
+      this.active!.bodyEl.appendChild(row);
+    });
+  }
+
+  /** diff 행의 개별 포함(✓)/제외(✗) 컨트롤. */
+  private buildEditControls(index: number): HTMLElement {
+    const wrap = el('div', 'hop-ai-diff-controls');
+    const keep = el('button', 'hop-ai-diff-keep') as HTMLButtonElement;
+    keep.textContent = '✓';
+    keep.title = '이 편집 포함';
+    keep.addEventListener('click', () => this.setEditRejected(index, false));
+    const drop = el('button', 'hop-ai-diff-drop') as HTMLButtonElement;
+    drop.textContent = '✗';
+    drop.title = '이 편집만 제외';
+    drop.addEventListener('click', () => this.setEditRejected(index, true));
+    wrap.append(keep, drop);
+    return wrap;
+  }
+
+  /** rejectedEdits를 제외한 적용 대상 스크립트(제외가 없으면 원본 그대로). */
+  private filteredScript(script: ActionScript): ActionScript {
+    if (!this.rejectedEdits.size) return script;
+    return { ...script, edits: script.edits.filter((_, i) => !this.rejectedEdits.has(i)) };
+  }
+
+  /**
+   * edit 하나를 적용 대상에서 제외/복원한다. 낙관적 적용 경로에선 스냅샷으로 되돌린 뒤
+   * 남은 edit만 다시 적용해, 나머지 미리보기·하이라이트를 그대로 유지한다(AC-491094).
+   */
+  private setEditRejected(index: number, rejected: boolean): void {
+    const script = this.pendingScript;
+    if (!script || !this.session.isPending) return;
+    if (this.rejectedEdits.has(index) === rejected) return;
+    if (rejected) this.rejectedEdits.add(index);
+    else this.rejectedEdits.delete(index);
+    this.diffRows[index]?.classList.toggle('hop-ai-diff-item-rejected', rejected);
+
+    const filtered = this.filteredScript(script);
+    if (this.snapshot) {
+      try {
+        this.reloadSnapshot();
+        clearInlineDiff(this.deps.scrollContent);
+        const result = applyActionScript(this.deps.bridge, filtered, this.pendingInsertImages);
+        this.reflowAndRender();
+        this.applied = result;
+        this.renderDecisionBar(filtered, result.changed);
+      } catch (error) {
+        // 재적용 도중 오류 — 부분 적용 상태로 남기지 않고 전체 롤백한다(AC-95b4b0).
+        this.session.cancel();
+        this.setActiveStatus(`적용 중 오류가 나 전체를 되돌렸습니다: ${String(error)}`, 'error');
+        return;
+      }
+    } else {
+      clearInlineDiff(this.deps.scrollContent);
+      this.renderInlineDiff(filtered);
+    }
+    const total = script.edits.length;
+    const remain = total - this.rejectedEdits.size;
+    this.log(`편집 ${index + 1} ${rejected ? '제외' : '복원'} → ${remain}/${total}건 적용 예정`);
+    this.setActiveStatus(
+      remain === 0
+        ? '모든 편집이 제외되었습니다 — 승인해도 적용되지 않습니다.'
+        : `${remain}/${total}건 적용 예정 — 승인 또는 거절하세요.`,
+      remain === 0 ? 'warn' : 'info',
+    );
   }
 
   /**
@@ -1669,11 +1954,12 @@ export class AgentSidebar {
     this.reloadSnapshot();
     state.edit.payload.text = text;
     clearInlineDiff(this.deps.scrollContent);
-    const result = applyActionScript(this.deps.bridge, script, this.pendingInsertImages);
+    const filtered = this.filteredScript(script);
+    const result = applyActionScript(this.deps.bridge, filtered, this.pendingInsertImages);
     this.reflowAndRender();
     this.applied = result;
     this.renderDiff(script);
-    this.renderDecisionBar(script, result.changed);
+    this.renderDecisionBar(filtered, result.changed);
     state.btns.forEach((b, i) => b.classList.toggle('hop-ai-variation-active', i === index));
     this.setActiveStatus(`대안 ${index + 1} 적용 — 승인 또는 거절하세요.`, 'info');
   }
@@ -1734,6 +2020,8 @@ export class AgentSidebar {
 
   private clearPreview(): void {
     this.pendingScript = null;
+    this.rejectedEdits = new Set();
+    this.diffRows = [];
     clearInlineDiff(this.deps.scrollContent);
     // 변형 대안 버튼 정리.
     this.variationState?.container.remove();
@@ -1886,6 +2174,45 @@ function defaultModel(provider: string): string {
     default:
       return 'gemini-2.5-flash';
   }
+}
+
+/** 교정 패스 한 구간의 최대 글자 수 — 프로바이더 컨텍스트 한도를 넘지 않게 나눈다(AC4). */
+const PROOFREAD_CHUNK_CHARS = 9000;
+
+/** 교정 패스 구간 요청 프롬프트 — REPLACE만, reason 필수, 의미 변경 금지. */
+const PROOFREAD_PROMPT =
+  '당신에게 보이는 문단들(이 구간)을 전수 검사해 맞춤법·문법 오류, 어색한 문장, ' +
+  '용어·표기 일관성 문제를 찾으세요. 문제가 있는 문단마다 REPLACE edit 하나를 만들고, ' +
+  'payload.text에 교정한 전체 문단 텍스트를, payload.reason에 "분류: 무엇을 왜 고쳤는지"를 ' +
+  '한국어 한 문장으로 적으세요(분류는 맞춤법/문법/어색한 표현/일관성 중 하나). ' +
+  'INSERT나 DELETE는 쓰지 말고, 문제 없는 문단은 절대 건드리지 마세요. ' +
+  '내용과 의미는 바꾸지 말고 표현만 교정하세요. 문제가 없으면 edits를 빈 배열로 두세요.';
+
+/**
+ * 컨텍스트 노드를 글자 수 기준 구간으로 나눈다(빈 문단 제외). 한 노드가 한도보다
+ * 길어도 쪼개지 않고 단독 구간으로 보낸다(문단 중간을 자르면 교정 품질이 떨어진다).
+ */
+function chunkContextNodes(nodes: ContentNode[], maxChars: number): ContentNode[][] {
+  const chunks: ContentNode[][] = [];
+  let current: ContentNode[] = [];
+  let size = 0;
+  for (const node of nodes) {
+    if (!node.text.trim()) continue;
+    if (current.length && size + node.text.length > maxChars) {
+      chunks.push(current);
+      current = [];
+      size = 0;
+    }
+    current.push(node);
+    size += node.text.length;
+  }
+  if (current.length) chunks.push(current);
+  return chunks;
+}
+
+/** 표시용 — 앞 `max`자만, 길면 말줄임표. */
+function clip(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max)}…` : text;
 }
 
 function renderDiffItem(item: DiffItem): HTMLElement {
@@ -2054,6 +2381,7 @@ function buildPanel(): PanelParts {
     { action: 'formal', label: '격식있게' },
     { action: 'expand', label: '길게' },
     { action: 'grammar', label: '문법 교정' },
+    { action: 'proofread', label: '전체 교정' },
     { action: 'variations', label: '변형 제안' },
     { action: 'summarize', label: '요약' },
   ];

@@ -61,6 +61,15 @@ export interface WasmEditing {
     charOffset: number,
     count: number,
   ): string;
+  /** 셀/글상자 내부 문단 분할(플랫, reflow 수행). 글상자는 cellIdx가 무시된다. */
+  splitParagraphInCell(
+    sec: number,
+    parentPara: number,
+    controlIdx: number,
+    cellIdx: number,
+    cellParaIdx: number,
+    charOffset: number,
+  ): string;
   // 표 셀 편집(중첩 포함, 스펙 2장). pathJson은 `[{controlIndex,cellIndex,cellParaIndex}, …]`.
   getCellParagraphLengthByPath(sec: number, parentPara: number, pathJson: string): number;
   insertTextInCellByPath(
@@ -83,6 +92,33 @@ export interface WasmEditing {
     charOffset: number,
     count: number,
   ): string;
+  // 기존 표 구조 편집(F-7a3dbe). rhwp가 셀 내용을 보존하며 행/열을 넣고 뺀다.
+  insertTableRow(
+    sec: number,
+    parentPara: number,
+    controlIdx: number,
+    rowIdx: number,
+    below: boolean,
+  ): { ok: boolean; rowCount: number; colCount: number };
+  insertTableColumn(
+    sec: number,
+    parentPara: number,
+    controlIdx: number,
+    colIdx: number,
+    right: boolean,
+  ): { ok: boolean; rowCount: number; colCount: number };
+  deleteTableRow(
+    sec: number,
+    parentPara: number,
+    controlIdx: number,
+    rowIdx: number,
+  ): { ok: boolean; rowCount: number; colCount: number };
+  deleteTableColumn(
+    sec: number,
+    parentPara: number,
+    controlIdx: number,
+    colIdx: number,
+  ): { ok: boolean; rowCount: number; colCount: number };
   // 열 폭 조절용(선택). 표 생성 후 긴 텍스트 열을 넓혀 표가 세로로 덜 늘어나게 한다.
   // WasmBridge가 제공하지만 일부(테스트용) 브리지엔 없을 수 있어 optional.
   getTableProperties?(
@@ -250,7 +286,11 @@ export function applyActionScript(
     // INSERT/REPLACE는 새 텍스트가 반드시 있어야 한다. text가 비면 적용 시 원문이
     // 빈 문단으로 지워지므로(조용한 내용 손실), 적용하지 않고 건너뛴다.
     // 표 생성(type="table")·이미지 삽입(type="image")은 text가 없어도 되므로 예외다.
-    const needsText = edit.command !== 'DELETE' && !isTableEdit(edit) && !isImageEdit(edit);
+    const needsText =
+      edit.command !== 'DELETE' &&
+      !isTableEdit(edit) &&
+      !isImageEdit(edit) &&
+      !isTableStructEdit(edit);
     if (needsText && (edit.payload.text ?? '') === '') {
       skipped.push({
         targetId: edit.target_id,
@@ -277,7 +317,14 @@ export function applyActionScript(
     if (!target) {
       skipped.push({
         targetId: edit.target_id,
-        reason: '문단/표 셀 대상이 아닙니다(글상자 등은 아직 미지원).',
+        reason: '문단/표 셀 대상이 아닙니다.',
+      });
+      return;
+    }
+    if (isTableStructEdit(edit)) {
+      skipped.push({
+        targetId: edit.target_id,
+        reason: '표 구조 편집(table_edit)은 그 표 안의 셀 ID를 target_id로 지정해야 합니다.',
       });
       return;
     }
@@ -287,9 +334,15 @@ export function applyActionScript(
   // 문단 인덱스가 큰 것부터 적용해, 앞선 편집이 뒤 target의 인덱스를 어긋나게
   // 만들지 않도록 한다. 같은 문단에 여러 INSERT_AFTER가 있으면 입력 역순으로
   // 적용해야 문서에 입력 순서대로(정순) 남는다(split→insert가 매번 앞에 끼우므로).
-  located.sort(
-    (a, b) => locatedSec(b) - locatedSec(a) || locatedPara(b) - locatedPara(a) || b.order - a.order,
-  );
+  // 단, 표 구조 편집(table_edit)끼리는 입력 정순 — 행/열 인덱스가 앞 편집의 결과를
+  // 기준으로 누적되기 때문(예: 행 추가 후 그 아래 행 삭제).
+  located.sort((a, b) => {
+    const byPos =
+      locatedSec(b) - locatedSec(a) || locatedPara(b) - locatedPara(a);
+    if (byPos !== 0) return byPos;
+    if (isTableStructEdit(a.edit) && isTableStructEdit(b.edit)) return a.order - b.order;
+    return b.order - a.order;
+  });
 
   // 본문 INSERT/REPLACE의 최종 위치를 추적한다. 적용 순서(내림차순)에서 낮은
   // 문단에 삽입이 일어나면 이미 기록된(더 높은) 위치를 +1 밀어 정합을 유지한다.
@@ -302,7 +355,8 @@ export function applyActionScript(
   for (const item of located) {
     try {
       if (item.kind === 'cell') {
-        applyOneCell(wasm, item.edit, item.cell);
+        if (isTableStructEdit(item.edit)) applyTableEdit(wasm, item.edit, item.cell);
+        else applyOneCell(wasm, item.edit, item.cell);
       } else {
         applyOne(wasm, item, images);
         const { sec, para, edit } = item;
@@ -455,6 +509,86 @@ function isImageEdit(edit: Edit): boolean {
     edit.payload.type === 'image' &&
     typeof edit.payload.image_index === 'number'
   );
+}
+
+/** 기존 표 구조 편집(행/열 추가·삭제, 셀 병합 — F-7a3dbe). target은 그 표의 셀 ID. */
+function isTableStructEdit(edit: Edit): boolean {
+  return edit.payload.type === 'table_edit' && !!edit.payload.table_edit;
+}
+
+/**
+ * 기존 표의 구조를 편집한다. rhwp 네이티브가 셀 내용을 보존하며 행/열을 넣고 빼고,
+ * 잘못된 범위·기존 병합과의 부분 겹침은 rhwp가 오류로 거부한다(→ skipped로 보고,
+ * 문서는 바뀌지 않는다). 최상위 표(경로 1단계)만 지원한다.
+ */
+function applyTableEdit(wasm: WasmEditing, edit: Edit, c: CellTarget): void {
+  const spec = edit.payload.table_edit!;
+  if (c.path.length !== 1) {
+    throw new Error('중첩 표의 구조 편집은 지원하지 않습니다(최상위 표 셀 ID를 지정하세요).');
+  }
+  const { controlIndex: ci } = c.path[0];
+  const requireIdx = (value: number | undefined, name: string): number => {
+    if (typeof value !== 'number' || value < 0) {
+      throw new Error(`table_edit.${name}이(가) 필요합니다(0-기준 정수).`);
+    }
+    return value;
+  };
+  switch (spec.op) {
+    case 'insert_row': {
+      const row = requireIdx(spec.row, 'row');
+      const below = spec.below ?? true;
+      wasm.insertTableRow(c.sec, c.parentPara, ci, row, below);
+      fillNewTableLine(wasm, c.sec, c.parentPara, ci, 'row', below ? row + 1 : row, spec.texts);
+      break;
+    }
+    case 'insert_col': {
+      const col = requireIdx(spec.col, 'col');
+      const right = spec.right ?? true;
+      wasm.insertTableColumn(c.sec, c.parentPara, ci, col, right);
+      fillNewTableLine(wasm, c.sec, c.parentPara, ci, 'col', right ? col + 1 : col, spec.texts);
+      break;
+    }
+    case 'delete_row':
+      wasm.deleteTableRow(c.sec, c.parentPara, ci, requireIdx(spec.row, 'row'));
+      break;
+    case 'delete_col':
+      wasm.deleteTableColumn(c.sec, c.parentPara, ci, requireIdx(spec.col, 'col'));
+      break;
+    case 'merge_cells': {
+      const m = spec.merge;
+      if (!m) throw new Error('table_edit.merge(병합 범위)가 필요합니다.');
+      wasm.mergeTableCells(c.sec, c.parentPara, ci, m.start_row, m.start_col, m.end_row, m.end_col);
+      break;
+    }
+    default:
+      throw new Error(`지원하지 않는 표 편집 동작입니다: ${String(spec.op)}`);
+  }
+}
+
+/** 새로 삽입된 행/열의 셀들에 texts를 순서대로 채운다(셀 위치는 bbox로 정확히 찾는다). */
+function fillNewTableLine(
+  wasm: WasmEditing,
+  sec: number,
+  parentPara: number,
+  controlIdx: number,
+  axis: 'row' | 'col',
+  index: number,
+  texts: string[] | undefined,
+): void {
+  if (!texts?.length || !wasm.getTableCellBboxes) return;
+  let boxes: Array<{ cellIdx: number; col: number; row: number; colSpan: number }>;
+  try {
+    boxes = wasm.getTableCellBboxes(sec, parentPara, controlIdx);
+  } catch {
+    return; // 좌표 조회 실패 — 구조 편집은 이미 성공했으므로 채우기만 생략.
+  }
+  const line = boxes
+    .filter((b) => (axis === 'row' ? b.row === index : b.col === index))
+    .sort((a, b) => (axis === 'row' ? a.col - b.col : a.row - b.row));
+  line.forEach((b, i) => {
+    const text = texts[i];
+    if (text) wasm.insertTextInCell(sec, parentPara, controlIdx, b.cellIdx, 0, 0, text);
+  });
 }
 
 /** `sec[para]`(분할로 생긴 빈 문단)에 첨부 이미지를 그림으로 삽입한다. */
@@ -664,16 +798,35 @@ function styleTableCells(
 function applyOneCell(wasm: WasmEditing, edit: Edit, c: CellTarget): void {
   const text = edit.payload.text ?? '';
 
-  // 최상위 표 셀(경로 1단계)의 값 변경/비우기는 flat API로 처리한다 — by-path와
-  // 달리 셀 reflow가 일어나 긴 텍스트가 줄바꿈되고 셀 높이가 늘어난다.
-  if (c.path.length === 1 && (edit.command === 'REPLACE' || edit.command === 'DELETE')) {
+  // 최상위(경로 1단계) 셀·글상자 편집은 flat API로 처리한다 — by-path와 달리
+  // reflow가 일어나 긴 텍스트가 줄바꿈되고 높이가 늘어나며, rhwp의 flat 경로는
+  // Control::Shape(글상자)·캡션까지 처리하므로 글상자 텍스트 편집(F-21a81b)도 여기로 간다.
+  if (c.path.length === 1) {
     const { controlIndex: ci, cellIndex: ce, cellParaIndex: cp } = c.path[0];
-    const length = wasm.getCellParagraphLength(c.sec, c.parentPara, ci, ce, cp);
-    if (length > 0) wasm.deleteTextInCell(c.sec, c.parentPara, ci, ce, cp, 0, length);
-    if (edit.command === 'REPLACE') {
-      wasm.insertTextInCell(c.sec, c.parentPara, ci, ce, cp, 0, text);
+    switch (edit.command) {
+      case 'REPLACE':
+      case 'DELETE': {
+        const length = wasm.getCellParagraphLength(c.sec, c.parentPara, ci, ce, cp);
+        if (length > 0) wasm.deleteTextInCell(c.sec, c.parentPara, ci, ce, cp, 0, length);
+        if (edit.command === 'REPLACE') {
+          wasm.insertTextInCell(c.sec, c.parentPara, ci, ce, cp, 0, text);
+        }
+        return;
+      }
+      case 'INSERT_AFTER': {
+        // 현재 문단 끝에서 분할 → 새 문단(cp+1)에 텍스트 삽입.
+        const length = wasm.getCellParagraphLength(c.sec, c.parentPara, ci, ce, cp);
+        wasm.splitParagraphInCell(c.sec, c.parentPara, ci, ce, cp, length);
+        wasm.insertTextInCell(c.sec, c.parentPara, ci, ce, cp + 1, 0, text);
+        return;
+      }
+      case 'INSERT_BEFORE': {
+        // 오프셋 0에서 분할 → 빈 문단이 cp에 생기고 원문은 cp+1로 밀린다. cp에 삽입.
+        wasm.splitParagraphInCell(c.sec, c.parentPara, ci, ce, cp, 0);
+        wasm.insertTextInCell(c.sec, c.parentPara, ci, ce, cp, 0, text);
+        return;
+      }
     }
-    return;
   }
 
   const pathJson = JSON.stringify(c.path);

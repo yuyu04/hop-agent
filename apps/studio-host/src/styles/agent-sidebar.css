@@ -686,6 +686,101 @@
   margin-top: 4px;
 }
 
+/* 변경 블록별 개별 포함(✓)/제외(✗) 토글 — 2건 이상일 때 행마다 표시 */
+.hop-ai-diff-controls {
+  display: flex;
+  gap: 4px;
+  justify-content: flex-end;
+  margin-top: 6px;
+}
+.hop-ai-diff-keep,
+.hop-ai-diff-drop {
+  font-size: 11px;
+  line-height: 1;
+  padding: 3px 8px;
+  border-radius: 4px;
+  border: 1px solid #c9ccd2;
+  background: #fff;
+  cursor: pointer;
+}
+.hop-ai-diff-keep:hover {
+  background: #e8f6e8;
+  border-color: #5ca35c;
+}
+.hop-ai-diff-drop:hover {
+  background: #fae8e8;
+  border-color: #c66;
+}
+.hop-ai-diff-item-rejected {
+  opacity: 0.45;
+  border-style: dashed;
+}
+.hop-ai-diff-item-rejected .hop-ai-diff-drop {
+  background: #fae8e8;
+  border-color: #c66;
+}
+
+/* 전체 교정 패스 — 이슈 목록(클릭=점프, 적용/무시) */
+.hop-ai-issue {
+  border: 1px solid #e0e3e8;
+  border-radius: 6px;
+  padding: 8px;
+  background: #fff;
+  cursor: pointer;
+}
+.hop-ai-issue:hover {
+  border-color: #8ab;
+}
+.hop-ai-issue-reason {
+  font-size: 11px;
+  font-weight: 600;
+  color: #1f3864;
+  margin-bottom: 4px;
+}
+.hop-ai-issue-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+  margin-top: 6px;
+}
+.hop-ai-issue-apply,
+.hop-ai-issue-ignore {
+  font-size: 11px;
+  line-height: 1;
+  padding: 4px 10px;
+  border-radius: 4px;
+  border: 1px solid #c9ccd2;
+  background: #fff;
+  cursor: pointer;
+}
+.hop-ai-issue-apply:hover:not(:disabled) {
+  background: #e8f6e8;
+  border-color: #5ca35c;
+}
+.hop-ai-issue-ignore:hover:not(:disabled) {
+  background: #f2f3f5;
+}
+.hop-ai-issue-resolved {
+  opacity: 0.5;
+  border-style: dashed;
+}
+
+/* 이슈 점프 시 해당 줄을 잠깐 비추는 하이라이트 */
+.hop-ai-proofread-flash {
+  z-index: 890;
+  background: rgba(255, 213, 79, 0.45);
+  border-radius: 3px;
+  animation: hop-ai-flash-fade 1.6s ease-out forwards;
+}
+@keyframes hop-ai-flash-fade {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
 /* 페이지 위 인라인 Diff(Cursor식) — 변경 위치 줄 아래에 좁은 before/after 카드 */
 .hop-ai-inline-card {
   z-index: 900;

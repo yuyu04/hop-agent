@@ -34,9 +34,27 @@ class FakeWasm implements WasmEditing {
     this.calls.push(`createTable(${sec},${para},${charOffset},${rows},${cols})`);
     return { ok: true, paraIdx: para, controlIdx: 0 };
   }
+  mergeFails = false;
   mergeTableCells(s: number, pp: number, ci: number, sr: number, sc: number, er: number, ec: number) {
     this.calls.push(`mergeTableCells(${s},${pp},${ci},${sr},${sc},${er},${ec})`);
+    if (this.mergeFails) throw new Error('셀 (0,0) span (2,1)이 병합 범위를 벗어납니다');
     return { ok: true, cellCount: 1 };
+  }
+  insertTableRow(s: number, pp: number, ci: number, row: number, below: boolean) {
+    this.calls.push(`insertTableRow(${s},${pp},${ci},${row},${below})`);
+    return { ok: true, rowCount: 3, colCount: 2 };
+  }
+  insertTableColumn(s: number, pp: number, ci: number, col: number, right: boolean) {
+    this.calls.push(`insertTableColumn(${s},${pp},${ci},${col},${right})`);
+    return { ok: true, rowCount: 2, colCount: 3 };
+  }
+  deleteTableRow(s: number, pp: number, ci: number, row: number) {
+    this.calls.push(`deleteTableRow(${s},${pp},${ci},${row})`);
+    return { ok: true, rowCount: 1, colCount: 2 };
+  }
+  deleteTableColumn(s: number, pp: number, ci: number, col: number) {
+    this.calls.push(`deleteTableColumn(${s},${pp},${ci},${col})`);
+    return { ok: true, rowCount: 2, colCount: 1 };
   }
   tableWidth = 0;
   bboxes: Array<{ cellIdx: number; col: number; row: number; colSpan: number }> = [];
@@ -87,6 +105,10 @@ class FakeWasm implements WasmEditing {
   }
   deleteTextInCell(s: number, pp: number, ci: number, ce: number, cp: number, off: number, count: number): string {
     this.calls.push(`deleteTextInCell(${s},${pp},${ci},${ce},${cp},${off},${count})`);
+    return '';
+  }
+  splitParagraphInCell(s: number, pp: number, ci: number, ce: number, cp: number, off: number): string {
+    this.calls.push(`splitParagraphInCell(${s},${pp},${ci},${ce},${cp},${off})`);
     return '';
   }
   getCellParagraphLengthByPath(s: number, pp: number, pathJson: string): number {
@@ -546,11 +568,10 @@ describe('applyActionScript', () => {
     ]);
   });
 
-  it('INSERT_AFTER into a table cell splits then inserts a new cell paragraph', () => {
+  it('INSERT_AFTER into a top-level table cell splits then inserts via flat reflowing API', () => {
     const wasm = new FakeWasm();
-    const path = '[{"controlIndex":0,"cellIndex":5,"cellParaIndex":0}]';
-    const pathNext = '[{"controlIndex":0,"cellIndex":5,"cellParaIndex":1}]';
-    wasm.lengths[`0.2.${path}`] = 3;
+    // 최상위 셀(path 길이 1)의 INSERT도 flat API — reflow가 일어나고 글상자(Shape)도 처리된다.
+    wasm.lengths['0.2.0.5.0'] = 3;
     const result = applyActionScript(
       wasm,
       script([
@@ -563,9 +584,51 @@ describe('applyActionScript', () => {
     );
     expect(result.applied).toBe(1);
     expect(wasm.calls).toEqual([
-      `getCellParagraphLengthByPath(0,2,${path})`,
-      `splitParagraphInCellByPath(0,2,${path},3)`,
-      `insertTextInCellByPath(0,2,${pathNext},0,"추가 문단")`,
+      'getCellParagraphLength(0,2,0,5,0)',
+      'splitParagraphInCell(0,2,0,5,0,3)',
+      'insertTextInCell(0,2,0,5,1,0,"추가 문단")',
+    ]);
+  });
+
+  it('REPLACE on a textbox paragraph edits via the same flat cell path (F-21a81b)', () => {
+    const wasm = new FakeWasm();
+    // 글상자 문단은 cell[0] 고정의 셀 형식 ID로 직렬화된다(레이아웃 런의 CellContext).
+    // flat API는 rhwp에서 Control::Shape(글상자)로 라우팅되어 reflow까지 수행한다.
+    wasm.lengths['0.0.2.0.0'] = 6;
+    const result = applyActionScript(
+      wasm,
+      script([
+        {
+          command: 'REPLACE',
+          target_id: 'sec[0].p[0].tbl[2].cell[0].p[0]',
+          payload: { type: 'paragraph', text: '새 글상자 문구' },
+        },
+      ]),
+    );
+    expect(result.applied).toBe(1);
+    expect(wasm.calls).toEqual([
+      'getCellParagraphLength(0,0,2,0,0)',
+      'deleteTextInCell(0,0,2,0,0,0,6)',
+      'insertTextInCell(0,0,2,0,0,0,"새 글상자 문구")',
+    ]);
+  });
+
+  it('INSERT_BEFORE into a top-level cell/textbox splits at offset 0 via flat API', () => {
+    const wasm = new FakeWasm();
+    const result = applyActionScript(
+      wasm,
+      script([
+        {
+          command: 'INSERT_BEFORE',
+          target_id: 'sec[0].p[0].tbl[2].cell[0].p[0]',
+          payload: { text: '앞 문구' },
+        },
+      ]),
+    );
+    expect(result.applied).toBe(1);
+    expect(wasm.calls).toEqual([
+      'splitParagraphInCell(0,0,2,0,0,0)',
+      'insertTextInCell(0,0,2,0,0,0,"앞 문구")',
     ]);
   });
 
@@ -588,6 +651,113 @@ describe('applyActionScript', () => {
       `splitParagraphInCellByPath(0,0,${path},0)`,
       `insertTextInCellByPath(0,0,${path},0,"앞에 추가")`,
     ]);
+  });
+
+  // ── 표 구조 편집 (F-7a3dbe) ─────────────────────────────────
+
+  it('table_edit insert_row inserts below and fills the new row cells via bboxes', () => {
+    const wasm = new FakeWasm();
+    // 2×2 표에 행 추가 후의 셀 좌표(새 행 row=1, 셀 인덱스는 row-major가 아닐 수 있어 bbox로 찾는다).
+    wasm.bboxes = [
+      { cellIdx: 0, col: 0, row: 0, colSpan: 1 },
+      { cellIdx: 1, col: 1, row: 0, colSpan: 1 },
+      { cellIdx: 4, col: 0, row: 1, colSpan: 1 },
+      { cellIdx: 5, col: 1, row: 1, colSpan: 1 },
+    ];
+    const result = applyActionScript(
+      wasm,
+      script([
+        {
+          command: 'REPLACE',
+          target_id: 'sec[0].p[2].tbl[0].cell[0].p[0]',
+          payload: {
+            type: 'table_edit',
+            table_edit: { op: 'insert_row', row: 0, below: true, texts: ['새 항목', '새 값'] },
+          },
+        },
+      ]),
+    );
+    expect(result.applied).toBe(1);
+    expect(wasm.calls).toEqual([
+      'insertTableRow(0,2,0,0,true)',
+      'getTableCellBboxes(0,2,0)',
+      'insertTextInCell(0,2,0,4,0,0,"새 항목")',
+      'insertTextInCell(0,2,0,5,0,0,"새 값")',
+    ]);
+  });
+
+  it('table_edit delete_col and merge_cells call the structure primitives', () => {
+    const wasm = new FakeWasm();
+    const result = applyActionScript(
+      wasm,
+      script([
+        {
+          command: 'REPLACE',
+          target_id: 'sec[0].p[2].tbl[0].cell[0].p[0]',
+          payload: { type: 'table_edit', table_edit: { op: 'delete_col', col: 2 } },
+        },
+        {
+          command: 'REPLACE',
+          target_id: 'sec[0].p[2].tbl[0].cell[0].p[0]',
+          payload: {
+            type: 'table_edit',
+            table_edit: {
+              op: 'merge_cells',
+              merge: { start_row: 0, start_col: 0, end_row: 1, end_col: 0 },
+            },
+          },
+        },
+      ]),
+    );
+    expect(result.applied).toBe(2);
+    // 표 구조 편집끼리는 입력 정순으로 적용된다(인덱스가 앞 편집 결과 기준).
+    expect(wasm.calls).toEqual([
+      'deleteTableColumn(0,2,0,2)',
+      'mergeTableCells(0,2,0,0,0,1,0)',
+    ]);
+  });
+
+  it('table_edit merge conflicting with an existing merge is skipped and reported (AC4)', () => {
+    const wasm = new FakeWasm();
+    wasm.mergeFails = true; // rhwp가 부분 겹침을 거부하는 상황.
+    const result = applyActionScript(
+      wasm,
+      script([
+        {
+          command: 'REPLACE',
+          target_id: 'sec[0].p[2].tbl[0].cell[0].p[0]',
+          payload: {
+            type: 'table_edit',
+            table_edit: {
+              op: 'merge_cells',
+              merge: { start_row: 1, start_col: 0, end_row: 1, end_col: 1 },
+            },
+          },
+        },
+      ]),
+    );
+    expect(result.applied).toBe(0);
+    expect(result.skipped).toHaveLength(1);
+    expect(result.skipped[0].reason).toContain('병합 범위');
+    // 구조 호출 외 다른 편집 프리미티브는 호출되지 않는다(문서 무변경).
+    expect(wasm.calls).toEqual(['mergeTableCells(0,2,0,1,0,1,1)']);
+  });
+
+  it('table_edit on a body paragraph target is rejected with guidance', () => {
+    const wasm = new FakeWasm();
+    const result = applyActionScript(
+      wasm,
+      script([
+        {
+          command: 'REPLACE',
+          target_id: 'sec[0].p[2]',
+          payload: { type: 'table_edit', table_edit: { op: 'delete_row', row: 0 } },
+        },
+      ]),
+    );
+    expect(result.applied).toBe(0);
+    expect(result.skipped[0].reason).toContain('셀 ID');
+    expect(wasm.calls).toEqual([]);
   });
 
   it('applies multiple INSERT_AFTER on the same paragraph in reverse so doc order matches input', () => {

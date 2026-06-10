@@ -27,7 +27,15 @@ pub struct DocumentMetadata {
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ContentNode {
-    Paragraph { id: String, text: String },
+    Paragraph {
+        id: String,
+        text: String,
+        /// 휴리스틱으로 추정한 제목 수준(1~3). rhwp가 문단 스타일을 노출하지 않아
+        /// 글자 크기·굵기(레이아웃 런)·번호 패턴으로 추정한다. 확신 없으면 None —
+        /// LLM이 목차 생성·장별 요약의 구조 근거로 쓴다(F-0858f2).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        heading: Option<u8>,
+    },
 }
 
 impl ContentNode {
@@ -61,12 +69,13 @@ pub fn build_windowed_context(
     selection_only: bool,
 ) -> Result<(DocumentContext, HashSet<String>), String> {
     let (paragraphs, total_sections) = collect_paragraphs(core)?;
+    let headings = detect_headings(&paragraphs, &collect_body_font_info(core));
     let total_chars: usize = paragraphs.iter().map(|(_, _, text)| text.chars().count()).sum();
     let cursor_path = cursor.map(|(sec, para)| format!("sec[{}].p[{}]", sec, para));
 
     let windowed = selection_only || total_chars > WINDOW_CHAR_THRESHOLD;
-    let body: Vec<(String, String)> = if !windowed {
-        paragraphs.iter().map(body_node).collect()
+    let body: Vec<Node> = if !windowed {
+        paragraphs.iter().map(|p| body_node(p, &headings)).collect()
     } else {
         // 커서를 찾지 못하면 문서 앞쪽(0번)을 기준으로 윈도우를 잡는다.
         let anchor = cursor
@@ -74,18 +83,56 @@ pub fn build_windowed_context(
             .unwrap_or(0);
         let start = anchor.saturating_sub(WINDOW_RADIUS);
         let end = (anchor + WINDOW_RADIUS + 1).min(paragraphs.len());
-        paragraphs[start..end].iter().map(body_node).collect()
+        paragraphs[start..end].iter().map(|p| body_node(p, &headings)).collect()
     };
 
     // 표 셀(중첩 포함, 스펙 2장)은 본문 윈도우와 무관하게 항상 포함한다 — 편집 핵심 타깃.
     let mut nodes = body;
-    nodes.extend(collect_cells(core));
+    nodes.extend(cell_nodes(core));
 
     Ok(assemble(nodes, total_sections, cursor_path))
 }
 
-fn body_node(p: &Paragraph) -> (String, String) {
-    (format!("sec[{}].p[{}]", p.0, p.1), p.2.clone())
+/// 직렬화 노드: (id, text, 추정 헤딩 수준).
+type Node = (String, String, Option<u8>);
+
+fn body_node(p: &Paragraph, headings: &HashMap<(usize, usize), u8>) -> Node {
+    (
+        format!("sec[{}].p[{}]", p.0, p.1),
+        p.2.clone(),
+        headings.get(&(p.0, p.1)).copied(),
+    )
+}
+
+/// 표 셀 노드(헤딩 없음).
+fn cell_nodes(core: &DocumentCore) -> Vec<Node> {
+    collect_cells(core).into_iter().map(|(id, text)| (id, text, None)).collect()
+}
+
+/// 전체 문서(본문 전부 + 표 셀) 컨텍스트 — 교정 패스 등 전수 스캔용(Sliding Window 없음).
+/// 긴 문서는 호출 측(프런트)이 노드를 구간으로 나눠 `target_ids`로 스코프 요청한다.
+pub fn build_full_context(
+    core: &DocumentCore,
+) -> Result<(DocumentContext, HashSet<String>), String> {
+    let (paragraphs, total_sections) = collect_paragraphs(core)?;
+    let headings = detect_headings(&paragraphs, &collect_body_font_info(core));
+    let mut nodes: Vec<Node> = paragraphs.iter().map(|p| body_node(p, &headings)).collect();
+    nodes.extend(cell_nodes(core));
+    Ok(assemble(nodes, total_sections, None))
+}
+
+/// 지정한 ID들만 직렬화한다(구간 교정 등 스코프 요청용). 화이트리스트도 같은 ID들로
+/// 좁혀지므로 LLM은 구간 밖 문단을 편집 대상으로 삼을 수 없다(스펙 7장과 일관).
+pub fn build_scoped_context(
+    core: &DocumentCore,
+    ids: &HashSet<String>,
+) -> Result<(DocumentContext, HashSet<String>), String> {
+    let (paragraphs, total_sections) = collect_paragraphs(core)?;
+    let headings = detect_headings(&paragraphs, &collect_body_font_info(core));
+    let mut nodes: Vec<Node> = paragraphs.iter().map(|p| body_node(p, &headings)).collect();
+    nodes.extend(cell_nodes(core));
+    nodes.retain(|(id, _, _)| ids.contains(id));
+    Ok(assemble(nodes, total_sections, None))
 }
 
 /// `sec[<s>].p[<p>]` 형식의 커서 경로를 `(section, paragraph)`로 파싱한다.
@@ -145,18 +192,18 @@ fn collect_paragraphs(core: &DocumentCore) -> Result<(Vec<Paragraph>, u32), Stri
     Ok((out, total_sections))
 }
 
-/// `(id, text)` 노드 목록으로 `DocumentContext` + 화이트리스트를 조립한다.
+/// `(id, text, heading)` 노드 목록으로 `DocumentContext` + 화이트리스트를 조립한다.
 fn assemble(
-    nodes: Vec<(String, String)>,
+    nodes: Vec<Node>,
     total_sections: u32,
     cursor_path: Option<String>,
 ) -> (DocumentContext, HashSet<String>) {
     let mut content = Vec::with_capacity(nodes.len());
     let mut whitelist = HashSet::with_capacity(nodes.len());
 
-    for (id, text) in nodes {
+    for (id, text, heading) in nodes {
         whitelist.insert(id.clone());
-        content.push(ContentNode::Paragraph { id, text });
+        content.push(ContentNode::Paragraph { id, text, heading });
     }
 
     let context = DocumentContext {
@@ -167,6 +214,200 @@ fn assemble(
         content,
     };
     (context, whitelist)
+}
+
+/// 본문 문단별 폰트 신호: (글자 수 가중 평균 크기, 과반 굵음 여부). 레이아웃 런에서
+/// 수집한다 — rhwp가 문단 스타일을 노출하지 않아 렌더 런의 fontSize/bold를 쓴다.
+/// 레이아웃이 없으면(문서 미배치) 빈 맵 → 헤딩도 비활성(오분류 강제 금지, AC4).
+fn collect_body_font_info(core: &DocumentCore) -> HashMap<(usize, usize), (f64, bool)> {
+    struct Acc {
+        weighted: f64,
+        chars: f64,
+        bold_chars: f64,
+    }
+    let mut acc: HashMap<(usize, usize), Acc> = HashMap::new();
+    for page in 0..core.page_count() {
+        let Ok(layout) = core.get_page_text_layout_native(page) else { continue };
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(&layout) else { continue };
+        let Some(runs) = value.get("runs").and_then(|r| r.as_array()) else { continue };
+        for run in runs {
+            if run.get("cellPath").is_some() {
+                continue; // 셀 런은 헤딩 후보가 아니다.
+            }
+            let (Some(sec), Some(para), Some(size)) = (
+                run.get("secIdx").and_then(|v| v.as_u64()),
+                run.get("paraIdx").and_then(|v| v.as_u64()),
+                run.get("fontSize").and_then(|v| v.as_f64()),
+            ) else {
+                continue;
+            };
+            let chars = run
+                .get("text")
+                .and_then(|t| t.as_str())
+                .map(|s| s.chars().filter(|c| !c.is_whitespace()).count())
+                .unwrap_or(0) as f64;
+            if chars == 0.0 || size <= 0.0 {
+                continue;
+            }
+            let bold = run.get("bold").and_then(|v| v.as_bool()).unwrap_or(false);
+            let entry = acc
+                .entry((sec as usize, para as usize))
+                .or_insert(Acc { weighted: 0.0, chars: 0.0, bold_chars: 0.0 });
+            entry.weighted += size * chars;
+            entry.chars += chars;
+            if bold {
+                entry.bold_chars += chars;
+            }
+        }
+    }
+    acc.into_iter()
+        .map(|(key, a)| (key, (a.weighted / a.chars, a.bold_chars * 2.0 >= a.chars)))
+        .collect()
+}
+
+/// 헤딩 후보의 최대 길이(자). 제목은 짧다 — 이보다 길면 본문으로 본다.
+const HEADING_MAX_CHARS: usize = 60;
+
+/// 글자 크기·굵기·번호 패턴 휴리스틱으로 본문 문단의 헤딩 수준(1~3)을 추정한다.
+///
+/// 보수적 규칙(AC4 — 오분류 강제 금지): 폰트 신호(과반 굵음 또는 중앙값 대비 1.1배
+/// 이상)가 있어야만 헤딩이다. 모든 문단이 같은 서식이면 신호가 없어 빈 결과가 된다.
+/// 수준은 번호 패턴 깊이를 우선하고, 없으면 크기 비율로 정한다.
+fn detect_headings(
+    paragraphs: &[Paragraph],
+    fonts: &HashMap<(usize, usize), (f64, bool)>,
+) -> HashMap<(usize, usize), u8> {
+    let mut sizes: Vec<f64> = paragraphs
+        .iter()
+        .filter(|(_, _, text)| !text.trim().is_empty())
+        .filter_map(|(sec, para, _)| fonts.get(&(*sec, *para)).map(|(size, _)| *size))
+        .collect();
+    if sizes.is_empty() {
+        return HashMap::new();
+    }
+    sizes.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let median = sizes[sizes.len() / 2];
+
+    let mut out = HashMap::new();
+    for (sec, para, text) in paragraphs {
+        let trimmed = text.trim();
+        if trimmed.is_empty() || trimmed.chars().count() > HEADING_MAX_CHARS {
+            continue;
+        }
+        let Some((size, bold)) = fonts.get(&(*sec, *para)) else { continue };
+        let ratio = if median > 0.0 { size / median } else { 1.0 };
+        if !*bold && ratio < 1.1 {
+            continue; // 폰트 신호 없음 — 번호 패턴만으로는 헤딩으로 단정하지 않는다.
+        }
+        let level = match numbering_depth(trimmed) {
+            Some(depth) => depth,
+            None if ratio >= 1.5 => 1,
+            None if ratio >= 1.25 => 2,
+            None => 3,
+        };
+        out.insert((*sec, *para), level.clamp(1, 3));
+    }
+    out
+}
+
+/// 번호 패턴의 깊이를 추정한다(없으면 None).
+/// 1수준: "제1장/편/부", "Ⅰ." 등 로마숫자, "1. "  ·  2수준: "제1절/관", "1.1", "가."
+/// 3수준: "1.1.1", "1)", "(1)".
+fn numbering_depth(text: &str) -> Option<u8> {
+    let t = text.trim_start();
+    // 제N장(1) / 제N절(2)
+    if let Some(rest) = t.strip_prefix('제') {
+        let rest = rest.trim_start();
+        let digits = rest.chars().take_while(|c| c.is_ascii_digit()).count();
+        if digits > 0 {
+            let after = rest[digits..].trim_start();
+            if after.starts_with('장') || after.starts_with('편') || after.starts_with('부') {
+                return Some(1);
+            }
+            if after.starts_with('절') || after.starts_with('관') {
+                return Some(2);
+            }
+        }
+    }
+    // 로마 숫자(Ⅰ~Ⅻ, U+2160~) → 1수준
+    if let Some(first) = t.chars().next() {
+        if ('\u{2160}'..='\u{216B}').contains(&first) {
+            return Some(1);
+        }
+    }
+    // 가./나./… → 2수준
+    let mut chars = t.chars();
+    if let (Some(first), Some('.')) = (chars.next(), chars.next()) {
+        if matches!(
+            first,
+            '가' | '나' | '다' | '라' | '마' | '바' | '사' | '아' | '자' | '차' | '카' | '타' | '파' | '하'
+        ) {
+            return Some(2);
+        }
+    }
+    // (1) → 3수준
+    if let Some(rest) = t.strip_prefix('(') {
+        let digits = rest.chars().take_while(|c| c.is_ascii_digit()).count();
+        if digits > 0 && rest[digits..].starts_with(')') {
+            return Some(3);
+        }
+    }
+    // "1." / "1.1" / "1.1.1" / "1)" — 숫자 그룹을 점으로 이어 센다.
+    dotted_number_depth(t)
+}
+
+/// `1.` `1.1` `1.1.1` `1)` 패턴의 그룹 수(최대 3). 연도("1979년")나 소수("1.5억")처럼
+/// 구분자 뒤에 본문이 바로 붙는 경우는 번호로 보지 않는다.
+fn dotted_number_depth(t: &str) -> Option<u8> {
+    let mut rest = t;
+    let mut depth: u8 = 0;
+    let mut separators = 0usize;
+    let mut trailing_separator = false;
+    let mut paren = false;
+    loop {
+        let digits = rest.chars().take_while(|c| c.is_ascii_digit()).count();
+        if digits == 0 {
+            break;
+        }
+        depth += 1;
+        rest = &rest[digits..];
+        if let Some(r) = rest.strip_prefix('.') {
+            rest = r;
+            separators += 1;
+            trailing_separator = true;
+        } else if let Some(r) = rest.strip_prefix(')') {
+            rest = r;
+            separators += 1;
+            trailing_separator = true;
+            paren = true;
+            break;
+        } else {
+            trailing_separator = false;
+            break;
+        }
+    }
+    if depth == 0 || separators == 0 {
+        return None; // "1979년" — 구분자 없는 순수 숫자.
+    }
+    // "1)"은 한국 문서에서 보통 3수준 목록 번호다(1. → 가. → 1)).
+    if paren && depth == 1 {
+        return Some(3);
+    }
+    // 번호 뒤에는 공백/끝이 와야 한다("1.5억"의 '억'처럼 본문이 붙으면 소수다).
+    let next_ok = match rest.chars().next() {
+        None => true,
+        Some(c) => c.is_whitespace(),
+    };
+    if !next_ok && !trailing_separator {
+        return None;
+    }
+    if !next_ok && trailing_separator {
+        // "1.제목"처럼 점 직후 글자가 붙은 경우 — 한국 문서에서 흔한 "1.개요" 형태는 허용.
+        if rest.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+            return None;
+        }
+    }
+    Some(depth.min(3))
 }
 
 /// 텍스트 레이아웃 JSON(`get_page_text_layout_native`)에서 표 셀(중첩 포함) 문단을
@@ -314,7 +555,7 @@ mod tests {
         core.insert_text_native(0, 0, 0, "추진 배경").unwrap();
 
         let (context, whitelist) = build_windowed_context(&core, None, false).unwrap();
-        let ContentNode::Paragraph { id, text } = &context.content[0];
+        let ContentNode::Paragraph { id, text, .. } = &context.content[0];
         assert_eq!(id, "sec[0].p[0]");
         assert_eq!(text, "추진 배경");
         assert!(whitelist.contains("sec[0].p[0]"));
@@ -416,6 +657,260 @@ mod tests {
             context.document_metadata.current_cursor_path.as_deref(),
             Some("sec[0].p[15]")
         );
+    }
+
+    #[test]
+    fn numbering_depth_recognizes_korean_patterns() {
+        assert_eq!(numbering_depth("제1장 총칙"), Some(1));
+        assert_eq!(numbering_depth("제 2 절 정의"), Some(2));
+        assert_eq!(numbering_depth("Ⅲ. 추진 체계"), Some(1));
+        assert_eq!(numbering_depth("1. 서론"), Some(1));
+        assert_eq!(numbering_depth("1.1 연구 배경"), Some(2));
+        assert_eq!(numbering_depth("2.3.1 세부 과제"), Some(3));
+        assert_eq!(numbering_depth("가. 사업 개요"), Some(2));
+        assert_eq!(numbering_depth("1) 첫째 항목"), Some(3));
+        assert_eq!(numbering_depth("(1) 첫째"), Some(3));
+        assert_eq!(numbering_depth("1.개요"), Some(1)); // 점 직후 글자(흔한 표기)
+    }
+
+    #[test]
+    fn numbering_depth_rejects_years_and_decimals() {
+        assert_eq!(numbering_depth("1979년에 설립되었다"), None);
+        assert_eq!(numbering_depth("1.5억 원 규모"), None);
+        assert_eq!(numbering_depth("총 525,000,000원"), None);
+        assert_eq!(numbering_depth("일반 본문 문장이다."), None);
+    }
+
+    /// (sec, para) → (size, bold) 폰트 맵을 만든다.
+    fn fonts(entries: &[(usize, f64, bool)]) -> HashMap<(usize, usize), (f64, bool)> {
+        entries.iter().map(|(p, size, bold)| ((0, *p), (*size, *bold))).collect()
+    }
+
+    fn paras(texts: &[&str]) -> Vec<Paragraph> {
+        texts.iter().enumerate().map(|(i, t)| (0, i, t.to_string())).collect()
+    }
+
+    #[test]
+    fn detect_headings_uses_font_size_bold_and_numbering() {
+        let paragraphs = paras(&[
+            "사업 추진 계획",      // 큰 글씨 → h1
+            "1. 추진 배경",        // 굵음 + 번호 → h1
+            "본문 설명 문장이 이어진다. 충분히 평범한 크기다.",
+            "1.1 세부 현황",       // 굵음 + 번호 깊이 2 → h2
+            "또 다른 본문 문장.",
+        ]);
+        let font_map = fonts(&[
+            (0, 18.0, true),
+            (1, 14.0, true),
+            (2, 10.0, false),
+            (3, 11.0, true),
+            (4, 10.0, false),
+        ]);
+        let headings = detect_headings(&paragraphs, &font_map);
+        assert_eq!(headings.get(&(0, 0)), Some(&1)); // 크기 1.8배 → h1
+        assert_eq!(headings.get(&(0, 1)), Some(&1)); // 번호 깊이 1
+        assert_eq!(headings.get(&(0, 3)), Some(&2)); // 번호 깊이 2
+        assert!(!headings.contains_key(&(0, 2)));
+        assert!(!headings.contains_key(&(0, 4)));
+    }
+
+    #[test]
+    fn detect_headings_yields_nothing_for_uniform_formatting() {
+        // 모든 문단이 같은 크기·비굵음이면(번호 패턴이 있어도) 헤딩을 강제하지 않는다(AC4).
+        let paragraphs = paras(&["1. 항목 하나", "2. 항목 둘", "일반 문장"]);
+        let font_map = fonts(&[(0, 10.0, false), (1, 10.0, false), (2, 10.0, false)]);
+        assert!(detect_headings(&paragraphs, &font_map).is_empty());
+        // 폰트 정보 자체가 없으면(레이아웃 미배치) 역시 빈 결과.
+        assert!(detect_headings(&paragraphs, &HashMap::new()).is_empty());
+    }
+
+    #[test]
+    fn detect_headings_ignores_long_paragraphs() {
+        let long = "아주 긴 문단 ".repeat(10); // 60자 초과 — 굵어도 제목이 아니다.
+        let paragraphs = paras(&[&long, "본문"]);
+        let font_map = fonts(&[(0, 14.0, true), (1, 10.0, false)]);
+        assert!(detect_headings(&paragraphs, &font_map).is_empty());
+    }
+
+    #[test]
+    fn heading_field_serializes_only_when_present() {
+        let node = ContentNode::Paragraph {
+            id: "sec[0].p[0]".to_string(),
+            text: "1. 서론".to_string(),
+            heading: Some(1),
+        };
+        let json = serde_json::to_string(&node).unwrap();
+        assert!(json.contains("\"heading\":1"));
+        let plain = ContentNode::Paragraph {
+            id: "sec[0].p[1]".to_string(),
+            text: "본문".to_string(),
+            heading: None,
+        };
+        assert!(!serde_json::to_string(&plain).unwrap().contains("heading"));
+    }
+
+    /// 글상자(textbox) 문단이 기존 셀 경로 파이프라인으로 직렬화·편집·저장되는지
+    /// 검증한다(F-21a81b). 글상자 런은 layout_textbox_content가 cell_index=0인
+    /// CellContext를 달아 주므로 표 셀과 같은 `sec[S].p[P].tbl[C].cell[0].p[I]` ID가 된다.
+    #[test]
+    fn textbox_text_serializes_and_edits_via_cell_path() {
+        let mut core = blank_core();
+        core.insert_text_native(0, 0, 0, "본문").unwrap();
+        let result = core
+            .create_shape_control_native(
+                0, 0, 0, 8504, 8504, 0, 0, true, "Square", "textbox", false, false, &[],
+            )
+            .unwrap();
+        let ctrl = serde_json::from_str::<serde_json::Value>(&result)
+            .ok()
+            .and_then(|v| v.get("controlIdx").and_then(|c| c.as_u64()))
+            .unwrap() as usize;
+
+        // 직렬화: 글상자 문단이 셀 경로 ID로 나타난다.
+        let textbox_id = format!("sec[0].p[0].tbl[{}].cell[0].p[0]", ctrl);
+        let (context, whitelist) = build_full_context(&core).unwrap();
+        assert!(
+            whitelist.contains(&textbox_id),
+            "글상자 ID 직렬화 누락: {:?}",
+            context.content.iter().map(|n| n.id().to_string()).collect::<Vec<_>>()
+        );
+
+        // 편집(REPLACE 흐름): 길이 조회 → 삭제 → 삽입 — 표 셀과 같은 flat API.
+        core.insert_text_in_cell_native(0, 0, ctrl, 0, 0, 0, "임시").unwrap();
+        let len = core.get_cell_paragraph_length_native(0, 0, ctrl, 0, 0).unwrap();
+        assert_eq!(len, 2);
+        core.delete_text_in_cell_native(0, 0, ctrl, 0, 0, 0, len).unwrap();
+        core.insert_text_in_cell_native(0, 0, ctrl, 0, 0, 0, "글상자 내용").unwrap();
+
+        let (context, _) = build_full_context(&core).unwrap();
+        let node_text = context
+            .content
+            .iter()
+            .find(|n| n.id() == textbox_id)
+            .map(|n| match n {
+                ContentNode::Paragraph { text, .. } => text.clone(),
+            });
+        assert_eq!(node_text.as_deref(), Some("글상자 내용"));
+
+        // 저장 라운드트립: HWP로 내보낸 뒤 다시 파싱해도 글상자 텍스트가 유지된다(AC4 회귀 프록시).
+        let bytes = core.export_hwp_native().unwrap();
+        let reloaded = crate::state::editable_core_from_bytes(
+            &bytes,
+            "문서 파싱 실패",
+            "편집 가능 문서 변환 실패",
+        )
+        .unwrap();
+        let all_text = extract_all_text(&reloaded).unwrap();
+        assert!(all_text.contains("글상자 내용"), "저장 후 글상자 텍스트 소실: {}", all_text);
+    }
+
+    /// 표 셀 INSERT(flat split+insert — ai-apply path-1 경로)와 글상자 편집 후 저장한
+    /// HWP가 구조 검증을 통과하는지 확인용 파일을 만든다. hwp_table_check.py가 이
+    /// 파일에서 exit 0이어야 한다(표 변경 검증 게이트).
+    #[test]
+    fn export_cell_split_doc_for_table_check() {
+        let mut core = blank_core();
+        core.insert_text_native(0, 0, 0, "본문").unwrap();
+        // 표 2×2 생성 + 셀 채우기 + 셀 문단 분할(INSERT_AFTER의 flat 경로) 후 삽입.
+        let result = core.create_table_native(0, 0, 0, 2, 2).unwrap();
+        let ctrl = serde_json::from_str::<serde_json::Value>(&result)
+            .ok()
+            .and_then(|v| v.get("controlIdx").and_then(|c| c.as_u64()))
+            .unwrap() as usize;
+        let table_para = serde_json::from_str::<serde_json::Value>(&result)
+            .ok()
+            .and_then(|v| v.get("paraIdx").and_then(|c| c.as_u64()))
+            .unwrap() as usize;
+        core.insert_text_in_cell_native(0, table_para, ctrl, 0, 0, 0, "첫 셀").unwrap();
+        let len = core.get_cell_paragraph_length_native(0, table_para, ctrl, 0, 0).unwrap();
+        core.split_paragraph_in_cell_native(0, table_para, ctrl, 0, 0, len).unwrap();
+        core.insert_text_in_cell_native(0, table_para, ctrl, 0, 1, 0, "둘째 문단").unwrap();
+        // 글상자도 하나 만들어 편집(F-21a81b 경로).
+        let shape = core
+            .create_shape_control_native(
+                0, table_para, 0, 8504, 8504, 0, 0, true, "Square", "textbox", false, false, &[],
+            )
+            .unwrap();
+        let shape_ctrl = serde_json::from_str::<serde_json::Value>(&shape)
+            .ok()
+            .and_then(|v| v.get("controlIdx").and_then(|c| c.as_u64()))
+            .unwrap() as usize;
+        core.insert_text_in_cell_native(0, table_para, shape_ctrl, 0, 0, 0, "글상자 문구")
+            .unwrap();
+
+        // 실제 저장 경로(commit_staged_hwp_save)처럼 표 CTRL_HEADER 후처리까지 적용한다.
+        let bytes = crate::hwp_table_fix::fix_table_headers(core.export_hwp_native().unwrap());
+        let path = std::env::temp_dir().join("hop_ai_cell_split_check.hwp");
+        std::fs::write(&path, &bytes).unwrap();
+        // 재파싱으로 1차 검증(외부 스크립트는 별도 게이트로 실행).
+        let reloaded = crate::state::editable_core_from_bytes(&bytes, "파싱 실패", "변환 실패").unwrap();
+        let text = extract_all_text(&reloaded).unwrap();
+        assert!(text.contains("첫 셀") && text.contains("둘째 문단") && text.contains("글상자 문구"));
+    }
+
+    /// 표 구조 편집(F-7a3dbe): 행/열 추가·삭제·병합이 셀 내용을 보존하고(AC1·AC2),
+    /// 기존 병합과 부분 겹치는 병합은 거부되며(AC4), 저장 파일이 구조 검증을 통과한다(AC3).
+    /// hwp_table_check.py가 내보낸 파일에서 exit 0이어야 한다.
+    #[test]
+    fn table_structure_edits_preserve_cells_and_roundtrip() {
+        let mut core = blank_core();
+        core.insert_text_native(0, 0, 0, "본문").unwrap();
+        let result = core.create_table_native(0, 0, 0, 2, 2).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&result).unwrap();
+        let ctrl = v.get("controlIdx").and_then(|c| c.as_u64()).unwrap() as usize;
+        let tp = v.get("paraIdx").and_then(|c| c.as_u64()).unwrap() as usize;
+        for (idx, text) in ["값0", "값1", "값2", "값3"].iter().enumerate() {
+            core.insert_text_in_cell_native(0, tp, ctrl, idx, 0, 0, text).unwrap();
+        }
+
+        // 행 추가(0행 아래) → 그 행 삭제 → 열 추가(1열 오른쪽) → 새 열 세로 병합.
+        core.insert_table_row_native(0, tp, ctrl, 0, true).unwrap();
+        core.delete_table_row_native(0, tp, ctrl, 1).unwrap();
+        core.insert_table_column_native(0, tp, ctrl, 1, true).unwrap();
+        core.merge_table_cells_native(0, tp, ctrl, 0, 2, 1, 2).unwrap();
+
+        // 기존 병합(0,2)-(1,2)과 부분 겹치는 병합은 거부된다(AC4) — 문서 무변경.
+        assert!(core.merge_table_cells_native(0, tp, ctrl, 1, 1, 1, 2).is_err());
+
+        // 구조 편집 후에도 기존 셀 내용이 모두 남아 있다(AC1).
+        let text = extract_all_text(&core).unwrap();
+        for value in ["값0", "값1", "값2", "값3"] {
+            assert!(text.contains(value), "셀 내용 소실: {} not in {}", value, text);
+        }
+
+        // 실제 저장 경로(표 CTRL_HEADER 후처리 포함)로 내보내 검증 파일을 만든다(AC3 게이트).
+        let bytes = crate::hwp_table_fix::fix_table_headers(core.export_hwp_native().unwrap());
+        let path = std::env::temp_dir().join("hop_ai_table_struct_check.hwp");
+        std::fs::write(&path, &bytes).unwrap();
+        let reloaded =
+            crate::state::editable_core_from_bytes(&bytes, "파싱 실패", "변환 실패").unwrap();
+        let round = extract_all_text(&reloaded).unwrap();
+        for value in ["값0", "값1", "값2", "값3"] {
+            assert!(round.contains(value), "저장 후 셀 내용 소실: {}", value);
+        }
+    }
+
+    #[test]
+    fn full_context_ignores_window_threshold() {
+        // 33,000자(임계치 초과)여도 전체 컨텍스트는 모든 문단을 직렬화한다.
+        let core = doc_with_paragraphs(30, 1100);
+        let (context, whitelist) = build_full_context(&core).unwrap();
+        assert_eq!(context.content.len(), 30);
+        assert_eq!(whitelist.len(), 30);
+        assert!(whitelist.contains("sec[0].p[0]"));
+        assert!(whitelist.contains("sec[0].p[29]"));
+    }
+
+    #[test]
+    fn scoped_context_serializes_only_requested_ids() {
+        let core = doc_with_paragraphs(10, 10);
+        let ids: HashSet<String> =
+            ["sec[0].p[2]", "sec[0].p[5]"].iter().map(|s| s.to_string()).collect();
+        let (context, whitelist) = build_scoped_context(&core, &ids).unwrap();
+        assert_eq!(context.content.len(), 2);
+        assert_eq!(context.content[0].id(), "sec[0].p[2]");
+        assert_eq!(context.content[1].id(), "sec[0].p[5]");
+        assert_eq!(whitelist, ids);
     }
 
     #[test]

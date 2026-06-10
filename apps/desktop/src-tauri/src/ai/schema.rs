@@ -34,6 +34,31 @@ pub struct TableData {
     pub col_weights: Vec<u32>,
 }
 
+/// 기존 표의 구조 편집 스펙(행/열 추가·삭제, 셀 병합). target_id는 그 표의 셀 ID.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TableEditSpec {
+    /// "insert_row" | "insert_col" | "delete_row" | "delete_col" | "merge_cells"
+    pub op: String,
+    /// 기준 행(0-기준). insert_row/delete_row에서 사용.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub row: Option<u32>,
+    /// 기준 열(0-기준). insert_col/delete_col에서 사용.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub col: Option<u32>,
+    /// insert_row: 기준 행 아래에 넣을지(기본 true).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub below: Option<bool>,
+    /// insert_col: 기준 열 오른쪽에 넣을지(기본 true).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub right: Option<bool>,
+    /// merge_cells: 병합 범위(0-기준, 끝 포함).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub merge: Option<MergeSpec>,
+    /// insert_row/insert_col: 새 행/열의 셀 텍스트(왼→오 / 위→아래 순, 선택).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub texts: Vec<String>,
+}
+
 /// 이미지 크롭 영역(0~1 비율).
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct CropSpec {
@@ -72,6 +97,9 @@ pub struct EditPayload {
     pub crop: Option<CropSpec>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub table_data: Option<TableData>,
+    /// type="table_edit"일 때: 기존 표의 구조 편집(행/열 추가·삭제, 셀 병합).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub table_edit: Option<TableEditSpec>,
     /// INSERT 시 참이면 새 페이지에서 시작(본문 문단에만 적용).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub page_break: Option<bool>,
@@ -79,6 +107,11 @@ pub struct EditPayload {
     /// text에는 추천안(보통 variations[0])을 넣고, UI에서 다른 안을 고를 수 있다.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub variations: Vec<String>,
+    /// 교정 패스에서 이 편집이 고치는 이슈 설명(예: "맞춤법: '됬다'→'됐다'").
+    /// 일반 편집에서는 생략된다. mod.rs가 파싱 결과를 재직렬화해 프런트로 보내므로
+    /// 여기 없는 필드는 떨어져 나간다 — 그래서 스키마에 명시한다(col_weights와 동일 이유).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 /// 단일 편집 항목.
@@ -181,7 +214,7 @@ pub fn action_script_schema() -> Value {
                         "payload": {
                             "type": "object",
                             "properties": {
-                                "type": { "type": "string", "enum": ["paragraph", "table", "image"] },
+                                "type": { "type": "string", "enum": ["paragraph", "table", "image", "table_edit"] },
                                 "text": { "type": "string" },
                                 "style": {
                                     "type": "string",
@@ -210,6 +243,37 @@ pub fn action_script_schema() -> Value {
                                     "type": "array",
                                     "description": "다시쓰기 대안 2~3개(선택). 사용자가 여러 안을 원할 때만 채운다. text에는 추천안(보통 첫 번째)을 넣는다.",
                                     "items": { "type": "string" }
+                                },
+                                "reason": {
+                                    "type": "string",
+                                    "description": "교정 패스에서만: 이 편집이 고치는 이슈를 '분류: 설명' 형식 한국어 한 문장으로(분류는 맞춤법/문법/어색한 표현/일관성 중 하나). 일반 편집에서는 생략."
+                                },
+                                "table_edit": {
+                                    "type": "object",
+                                    "description": "type=\"table_edit\"일 때: 기존 표의 구조 편집. target_id는 그 표 안의 아무 셀 ID(예: sec[0].p[2].tbl[0].cell[0].p[0]). command는 REPLACE를 쓴다.",
+                                    "properties": {
+                                        "op": { "type": "string", "enum": ["insert_row", "insert_col", "delete_row", "delete_col", "merge_cells"] },
+                                        "row": { "type": "integer", "description": "기준 행(0-기준) — insert_row/delete_row" },
+                                        "col": { "type": "integer", "description": "기준 열(0-기준) — insert_col/delete_col" },
+                                        "below": { "type": "boolean", "description": "insert_row: 기준 행 아래에 삽입(기본 true)" },
+                                        "right": { "type": "boolean", "description": "insert_col: 기준 열 오른쪽에 삽입(기본 true)" },
+                                        "merge": {
+                                            "type": "object",
+                                            "description": "merge_cells: 병합 범위(0-기준, 끝 포함)",
+                                            "properties": {
+                                                "start_row": { "type": "integer" },
+                                                "start_col": { "type": "integer" },
+                                                "end_row": { "type": "integer" },
+                                                "end_col": { "type": "integer" }
+                                            }
+                                        },
+                                        "texts": {
+                                            "type": "array",
+                                            "description": "insert_row/insert_col: 새 행/열에 채울 셀 텍스트(순서대로, 선택)",
+                                            "items": { "type": "string" }
+                                        }
+                                    },
+                                    "required": ["op"]
                                 },
                                 "table_data": {
                                     "type": "object",
@@ -365,6 +429,46 @@ mod tests {
         let raw2 = r#"{"edits":[{"command":"DELETE","target_id":"sec[0].p[0]","payload":{}}]}"#;
         let s2 = parse_action_script(raw2).unwrap();
         assert!(!serde_json::to_string(&s2).unwrap().contains("variations"));
+    }
+
+    #[test]
+    fn parses_reason_and_round_trips() {
+        // 교정 패스의 payload.reason은 재직렬화(emit_validated)에서 살아남아야 한다.
+        let raw = r#"{"edits":[
+            {"command":"REPLACE","target_id":"sec[0].p[1]",
+             "payload":{"type":"paragraph","text":"됐다","reason":"맞춤법: '됬다'→'됐다'"}}
+        ]}"#;
+        let script = parse_action_script(raw).unwrap();
+        assert_eq!(script.edits[0].payload.reason.as_deref(), Some("맞춤법: '됬다'→'됐다'"));
+        let json = serde_json::to_string(&script).unwrap();
+        assert!(json.contains("reason"));
+        // reason 없는 일반 편집은 직렬화에서 생략된다.
+        let raw2 = r#"{"edits":[{"command":"DELETE","target_id":"sec[0].p[0]","payload":{}}]}"#;
+        let s2 = parse_action_script(raw2).unwrap();
+        assert!(!serde_json::to_string(&s2).unwrap().contains("reason"));
+    }
+
+    #[test]
+    fn parses_table_edit_and_round_trips() {
+        // 표 구조 편집 payload는 재직렬화(emit_validated)에서 살아남아야 한다.
+        let raw = r#"{"edits":[
+            {"command":"REPLACE","target_id":"sec[0].p[2].tbl[0].cell[0].p[0]",
+             "payload":{"type":"table_edit","table_edit":{"op":"insert_row","row":1,"below":true,"texts":["가","나"]}}}
+        ]}"#;
+        let script = parse_action_script(raw).unwrap();
+        let spec = script.edits[0].payload.table_edit.as_ref().unwrap();
+        assert_eq!(spec.op, "insert_row");
+        assert_eq!(spec.row, Some(1));
+        assert_eq!(spec.texts, vec!["가", "나"]);
+        let json = serde_json::to_string(&script).unwrap();
+        assert!(json.contains("table_edit") && json.contains("insert_row"));
+        // merge 범위도 라운드트립된다.
+        let raw2 = r#"{"edits":[
+            {"command":"REPLACE","target_id":"sec[0].p[2].tbl[0].cell[0].p[0]",
+             "payload":{"type":"table_edit","table_edit":{"op":"merge_cells","merge":{"start_row":0,"start_col":0,"end_row":1,"end_col":0}}}}
+        ]}"#;
+        let s2 = parse_action_script(raw2).unwrap();
+        assert!(serde_json::to_string(&s2).unwrap().contains("merge_cells"));
     }
 
     #[test]

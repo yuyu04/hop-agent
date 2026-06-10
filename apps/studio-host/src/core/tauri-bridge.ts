@@ -102,15 +102,18 @@ export interface AiImageInput {
 }
 
 export interface AiBridgeApi {
-  /** 현재 문서를 직렬화한 LLM 컨텍스트를 반환한다(스펙 2장). `cursorPath`는 Sliding Window 기준(4장). */
+  /** 현재 문서를 직렬화한 LLM 컨텍스트를 반환한다(스펙 2장). `cursorPath`는 Sliding Window 기준(4장).
+   *  `fullDocument`가 참이면 윈도우 없이 전체(본문+표 셀)를 직렬화한다(교정 패스 등 전수 스캔용). */
   aiGetDocumentContext(
     docId: string,
     currentSelectionOnly: boolean,
     cursorPath?: string | null,
+    fullDocument?: boolean,
   ): Promise<DocumentContext>;
   /** 편집 요청을 시작하고 request_id를 반환한다. 결과는 `hop-ai-*` 이벤트로 전달된다.
    *  `baseUrl`은 `openai-compat`(커스텀 OpenAI 호환 엔드포인트)에서만 쓰인다.
-   *  `images`는 vision 지원 provider에 전달되는 첨부 이미지(base64). */
+   *  `images`는 vision 지원 provider에 전달되는 첨부 이미지(base64).
+   *  `targetIds`가 있으면 그 노드들만 직렬화·허용하는 스코프 요청이 된다(구간 교정용). */
   aiRequestEdit(
     docId: string,
     userPrompt: string,
@@ -121,6 +124,7 @@ export interface AiBridgeApi {
     images?: AiImageInput[] | null,
     documents?: AiImageInput[] | null,
     filePaths?: string[] | null,
+    targetIds?: string[] | null,
   ): Promise<string>;
   /** HWP/HWPX 파일의 평문 텍스트를 추출한다(첨부용). */
   aiExtractText(path: string): Promise<string>;
@@ -333,11 +337,13 @@ export class TauriBridge extends WasmBridge implements DesktopBridgeApi, AiBridg
     docId: string,
     currentSelectionOnly: boolean,
     cursorPath?: string | null,
+    fullDocument?: boolean,
   ): Promise<DocumentContext> {
     return this.invoke<DocumentContext>('ai_get_document_context', {
       docId,
       currentSelectionOnly,
       cursorPath: cursorPath ?? null,
+      fullDocument: fullDocument ?? null,
     });
   }
 
@@ -351,6 +357,7 @@ export class TauriBridge extends WasmBridge implements DesktopBridgeApi, AiBridg
     images?: AiImageInput[] | null,
     documents?: AiImageInput[] | null,
     filePaths?: string[] | null,
+    targetIds?: string[] | null,
   ): Promise<string> {
     return this.invoke<string>('ai_request_edit', {
       docId,
@@ -362,6 +369,7 @@ export class TauriBridge extends WasmBridge implements DesktopBridgeApi, AiBridg
       images: images ?? null,
       documents: documents ?? null,
       filePaths: filePaths ?? null,
+      targetIds: targetIds ?? null,
     });
   }
 

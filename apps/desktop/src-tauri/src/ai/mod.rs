@@ -113,6 +113,7 @@ pub fn ai_get_document_context(
     doc_id: String,
     current_selection_only: bool,
     cursor_path: Option<String>,
+    full_document: Option<bool>,
     state: State<'_, AppState>,
 ) -> Result<serialize::DocumentContext, String> {
     let cursor = cursor_path.as_deref().and_then(serialize::parse_cursor_path);
@@ -121,8 +122,13 @@ pub fn ai_get_document_context(
         .lock()
         .map_err(|_| "문서 세션 잠금 실패".to_string())?;
     let core = sessions.session_mut(&doc_id)?.ensure_core_loaded()?;
-    let (context, _whitelist) =
-        serialize::build_windowed_context(core, cursor, current_selection_only)?;
+    // full_document=true(교정 패스 등 전수 스캔)는 Sliding Window를 우회한다 —
+    // 호출 측이 노드를 구간으로 나눠 ai_request_edit의 target_ids로 스코프 요청한다.
+    let (context, _whitelist) = if full_document.unwrap_or(false) {
+        serialize::build_full_context(core)?
+    } else {
+        serialize::build_windowed_context(core, cursor, current_selection_only)?
+    };
     Ok(context)
 }
 
@@ -140,6 +146,7 @@ pub fn ai_request_edit(
     images: Option<Vec<ImageInput>>,
     documents: Option<Vec<ImageInput>>,
     file_paths: Option<Vec<String>>,
+    target_ids: Option<Vec<String>>,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
     // 민감 문서는 외부 provider 전송을 차단한다(스펙 6장 — 공문서 보호).
@@ -161,7 +168,14 @@ pub fn ai_request_edit(
             .lock()
             .map_err(|_| "문서 세션 잠금 실패".to_string())?;
         let core = sessions.session_mut(&doc_id)?.ensure_core_loaded()?;
-        let (context, whitelist) = serialize::build_windowed_context(core, cursor, false)?;
+        // target_ids가 있으면(구간 교정 등) 그 ID들만 직렬화·허용한다(스코프 요청).
+        let scope: Option<std::collections::HashSet<String>> = target_ids
+            .filter(|ids| !ids.is_empty())
+            .map(|ids| ids.into_iter().collect());
+        let (context, whitelist) = match &scope {
+            Some(ids) => serialize::build_scoped_context(core, ids)?,
+            None => serialize::build_windowed_context(core, cursor, false)?,
+        };
         let json = serde_json::to_string(&context)
             .map_err(|e| format!("문서 컨텍스트 직렬화 실패: {}", e))?;
         (json, whitelist)
@@ -490,6 +504,9 @@ fn system_prompt() -> String {
      표 셀은 `sec[s].p[p].tbl[c].cell[k].p[i]` 형식의 ID로 제공됩니다. 표 안의 값을 \
      바꿀 때는 그 셀 ID로 REPLACE, 셀 안에 내용을 새로 추가할 때는 그 셀 ID로 \
      INSERT_BEFORE/INSERT_AFTER를 쓰세요. \
+     글상자(텍스트 상자)·도형 안의 텍스트와 캡션도 같은 셀 형식 ID(`cell[0]`)로 제공됩니다 — \
+     그 안의 문구를 바꿀 때도 그 ID로 REPLACE 하면 됩니다. 단, 글상자 안에는 표·이미지·긴 \
+     본문을 넣지 마세요(짧은 문구 전용 상자입니다). \
      긴 새 내용(예: 사업계획서 본문, 새 절)이나 새 표를 추가할 때는 반드시 \
      '표 바깥 본문 문단' ID에 INSERT_AFTER 하세요. 본문 문단 ID는 `.tbl`이 없는 \
      `sec[s].p[p]` 형식입니다(예: sec[0].p[0]). \
@@ -536,6 +553,14 @@ fn system_prompt() -> String {
      (예 2)로 두면 긴 내용이 가로로 펼쳐져 표가 세로로 덜 늘어나고 여러 쪽으로 쪼개지지 \
      않습니다. 예: 5열(비용항목/세목/증액여부/전용여부/세목별 사용 용도 및 제한 내용)이면 \
      머리글 한 줄 + col_weights=[3,3,2,2,10] 로 마지막 긴 열을 가장 넓게. \
+     [표 구조 편집] 이미 있는 표에 행/열을 추가·삭제하거나 셀을 병합하려면, 그 표 안의 \
+     아무 셀 ID를 target_id로 잡고 command=REPLACE, payload.type=\"table_edit\", \
+     payload.table_edit={op,...}을 쓰세요. op: insert_row(row,below,texts) / \
+     insert_col(col,right,texts) / delete_row(row) / delete_col(col) / \
+     merge_cells(merge={start_row,start_col,end_row,end_col}). 행/열 번호는 0-기준이고 \
+     texts에는 새 행/열의 셀 내용을 순서대로 넣을 수 있습니다. 기존 셀 내용은 보존되므로 \
+     표 전체를 다시 만들지 말고 구조 편집을 우선 쓰세요. 기존 병합 영역과 부분적으로 \
+     겹치는 병합·삭제는 적용되지 않습니다(범위를 병합 경계에 맞추세요). \
      문서가 양식/템플릿(라벨 칸 + 빈 입력 칸으로 된 표)인 경우: '사 업 명', '과 제 명' \
      같은 라벨 셀은 그대로 두고, 그 옆/아래의 빈 셀(텍스트가 비어 있는 셀)을 요청 내용으로 \
      REPLACE 하여 채우세요. 라벨과 표 구조를 바꾸지 말고 기존 서식을 유지하세요. \
@@ -561,6 +586,14 @@ fn system_prompt() -> String {
      crop 좌표는 당신이 보이는 이미지를 보고 직접 정하고, 사용자에게 '잘라 넣을지' 되묻지 \
      마세요(이미 그렇게 하기로 했습니다). 일반 첨부 이미지나 URL 이미지를 통째로 넣을 때만 \
      crop을 생략하세요. \
+     [문서 개요] 컨텍스트의 본문 문단에는 heading 필드(1~3)가 있을 수 있습니다 — 글자 \
+     크기·굵기·번호 패턴으로 추정한 제목 수준입니다(1=장, 2=절, 3=소항목). \
+     사용자가 '목차'를 요청하면 heading이 있는 문단들의 텍스트로 목차를 만들어 문서 맨 앞 \
+     (첫 본문 문단 ID에 INSERT_BEFORE)에 넣으세요 — '목차' 제목 문단(style=heading) 하나 + \
+     항목 문단들(style=body, 2·3수준은 앞에 공백 2·4칸 들여쓰기). heading 문단이 하나도 \
+     없으면 목차를 만들지 말고 message로 '구조를 인식할 수 없다'고 답하세요. \
+     사용자가 특정 장/절(예: '3장', '추진 체계 부분')의 요약·질문을 요청하면, 그 heading \
+     문단부터 다음 같은 수준 heading 직전까지의 문단들만 근거로 삼아 답하세요. \
      사용자가 텍스트 일부를 '선택'해 보냈다면(프롬프트에 [사용자가 선택한 텍스트] 블록이 있으면) \
      그 선택 부분만 대상으로 삼아 해당 텍스트가 포함된 문단을 REPLACE하고, 선택 밖 내용은 \
      건드리지 마세요. \
@@ -629,6 +662,16 @@ mod tests {
         assert!(prompt.contains("양식/템플릿"));
         assert!(prompt.contains("라벨"));
         assert!(prompt.contains("빈 셀"));
+    }
+
+    #[test]
+    fn system_prompt_guides_outline_toc_and_chapter_summary() {
+        let prompt = system_prompt();
+        assert!(prompt.contains("heading"));
+        assert!(prompt.contains("목차"));
+        assert!(prompt.contains("INSERT_BEFORE"));
+        // 헤딩이 없으면 목차를 강제하지 않는다(AC4와 일관).
+        assert!(prompt.contains("구조를 인식할 수 없다"));
     }
 
 }

@@ -683,6 +683,7 @@ describe('TauriBridge AI commands', () => {
       docId: 'doc-1',
       currentSelectionOnly: false,
       cursorPath: null,
+      fullDocument: null,
     });
   });
 
@@ -695,6 +696,7 @@ describe('TauriBridge AI commands', () => {
       docId: 'doc-1',
       currentSelectionOnly: true,
       cursorPath: 'sec[0].p[3]',
+      fullDocument: null,
     });
   });
 
@@ -713,6 +715,7 @@ describe('TauriBridge AI commands', () => {
       images: null,
       documents: null,
       filePaths: null,
+      targetIds: null,
     });
   });
 
@@ -738,6 +741,7 @@ describe('TauriBridge AI commands', () => {
       images: null,
       documents: null,
       filePaths: null,
+      targetIds: null,
     });
   });
 
