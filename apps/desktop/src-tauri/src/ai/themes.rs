@@ -23,6 +23,7 @@ const DEFAULT_THEMES: &[(&str, &str)] = &[
     ("촘촘하게.json", include_str!("themes_default/compact.json")),
     ("여유있게.json", include_str!("themes_default/airy.json")),
     ("문서스타일.json", include_str!("themes_default/docstyle.json")),
+    ("문서에맞춤.json", include_str!("themes_default/match-document.json")),
 ];
 
 /// 테마 폴더를 보장하고, 비어 있으면 기본 테마를 기록한다.

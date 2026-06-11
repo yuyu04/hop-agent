@@ -1046,6 +1046,58 @@ describe('applyActionScript', () => {
     expect(wasm.calls).toEqual([]);
   });
 
+  it('match-document theme leaves inserted body paragraphs untouched (inherits surroundings)', () => {
+    const wasm = new FakeWasm();
+    wasm.lengths['0.1'] = 5;
+    const theme = compileTheme({
+      id: 'match',
+      noDefaults: true,
+      styles: { heading: { bold: true, beforePt: 16, afterPt: 6 }, body: {} },
+    });
+    applyActionScript(
+      wasm,
+      script([
+        // style 미지정 → body 기본 → 빈 사양 → 서식 호출 0건(분할 상속 유지).
+        { command: 'INSERT_AFTER', target_id: 'sec[0].p[1]', payload: { text: '이어지는 본문' } },
+      ]),
+      [],
+      theme,
+    );
+    expect(wasm.calls).toEqual([
+      'getParagraphLength(0,1)',
+      'splitParagraph(0,1,5)',
+      'insertText(0,2,0,"이어지는 본문")',
+    ]);
+  });
+
+  it('match-document theme applies only bold+spacing to headings (size/font inherited)', () => {
+    const wasm = new FakeWasm();
+    wasm.lengths['0.1'] = 5;
+    const theme = compileTheme({
+      id: 'match',
+      noDefaults: true,
+      styles: { heading: { bold: true, beforePt: 16, afterPt: 6 }, body: {} },
+    });
+    applyActionScript(
+      wasm,
+      script([
+        {
+          command: 'INSERT_AFTER',
+          target_id: 'sec[0].p[1]',
+          payload: { text: '다음 장', style: 'heading' },
+        },
+      ]),
+      [],
+      theme,
+    );
+    expect(wasm.calls).toContain('applyCharFormat(0,2,0,4,{"bold":true})');
+    expect(
+      wasm.calls.some((c) => c.includes('"spacingBefore":3200') && c.includes('"spacingAfter":1200')),
+    ).toBe(true);
+    // 글꼴 크기·줄간격은 건드리지 않는다.
+    expect(wasm.calls.some((c) => c.includes('fontSize') || c.includes('lineSpacing'))).toBe(false);
+  });
+
   it('uses the named document style when the theme maps a role to one', () => {
     const wasm = new FakeWasm();
     wasm.lengths['0.1'] = 5;

@@ -40,6 +40,21 @@ describe('compileTheme', () => {
     expect(compiled.styles.heading.char).toMatchObject({ bold: true });
   });
 
+  it('noDefaults skips merging so unspecified styles apply nothing (inherit mode)', () => {
+    const compiled = compileTheme({
+      id: 'match',
+      noDefaults: true,
+      styles: { heading: { bold: true, beforePt: 16 }, body: {} },
+    });
+    // body는 빈 사양 — char/para 모두 없음 → 주변 문단 서식 상속.
+    expect(compiled.styles.body).toEqual({});
+    // 명시 안 한 caption 같은 역할은 아예 항목이 없다(아무것도 안 입힘).
+    expect(compiled.styles.caption).toBeUndefined();
+    // heading은 적은 것만: 굵게 + 위 간격. 크기·줄간격은 상속.
+    expect(compiled.styles.heading.char).toEqual({ bold: true });
+    expect(compiled.styles.heading.para).toEqual({ spacingBefore: 3200 });
+  });
+
   it('falls back to the default theme for null and fills table settings', () => {
     const compiled = compileTheme(null);
     expect(compiled.name).toBe('기본');

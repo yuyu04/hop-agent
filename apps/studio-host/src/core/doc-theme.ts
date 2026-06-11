@@ -36,6 +36,10 @@ export interface DocTheme {
   id?: string;
   name?: string;
   description?: string;
+  /** true면 기본 테마와 병합하지 않는다 — 적지 않은 스타일/속성은 '아무것도 입히지
+   *  않음'이 되어, 분할(split)로 상속된 주변 문단 서식이 그대로 유지된다.
+   *  기존 문서에 이어 쓸 때(문서에 맞춤) 사용. */
+  noDefaults?: boolean;
   styles?: Record<string, DocThemeStyle>;
   table?: {
     /** 표가 든 문단의 위/아래 간격(pt). */
@@ -114,15 +118,18 @@ function compileStyle(style: DocThemeStyle): {
  */
 export function compileTheme(raw: DocTheme | null | undefined): CompiledTheme {
   const styles: CompiledTheme['styles'] = {};
+  const noDefaults = raw?.noDefaults === true;
   const names = new Set([
-    ...Object.keys(DEFAULT_THEME.styles ?? {}),
+    ...(noDefaults ? [] : Object.keys(DEFAULT_THEME.styles ?? {})),
     ...Object.keys(raw?.styles ?? {}),
   ]);
   for (const name of names) {
-    const merged: DocThemeStyle = {
-      ...(DEFAULT_THEME.styles?.[name] ?? {}),
-      ...(raw?.styles?.[name] ?? {}),
-    };
+    const merged: DocThemeStyle = noDefaults
+      ? { ...(raw?.styles?.[name] ?? {}) }
+      : {
+          ...(DEFAULT_THEME.styles?.[name] ?? {}),
+          ...(raw?.styles?.[name] ?? {}),
+        };
     styles[name] = compileStyle(merged);
   }
   const paraSpacingPt =

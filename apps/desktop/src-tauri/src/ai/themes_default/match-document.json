@@ -1,0 +1,13 @@
+{
+  "name": "문서에 맞춤",
+  "description": "기존 문서에 이어 쓸 때 추천 — 본문은 주변 문단의 글꼴·크기·줄간격을 그대로 상속하고(아무것도 덮어쓰지 않음), 제목류만 굵게 + 문단 간격을 얹어 구분합니다. 새 문서를 백지에서 만들 때는 '기본' 테마를 쓰세요.",
+  "noDefaults": true,
+  "styles": {
+    "title":      { "bold": true, "align": "center", "beforePt": 8, "afterPt": 14 },
+    "heading":    { "bold": true, "beforePt": 16, "afterPt": 6 },
+    "subheading": { "bold": true, "beforePt": 12, "afterPt": 4 },
+    "body":       {},
+    "emphasis":   { "bold": true }
+  },
+  "table": { "paraSpacingPt": 8, "headerFill": "#E8EEF6" }
+}
