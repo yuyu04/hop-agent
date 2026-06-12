@@ -140,6 +140,22 @@ class FakeWasm implements WasmEditing {
     this.calls.push(`applyStyle(${sec},${para},${styleId})`);
     return { ok: true };
   }
+  /** 서식 복제용: 참조 문단의 스타일/글자/문단 속성(테스트 설정). 키 `${sec}.${para}`. */
+  styleAt: Record<string, { id: number; name: string }> = {};
+  charPropsAt: Record<string, Record<string, unknown>> = {};
+  paraPropsAt: Record<string, Record<string, unknown>> = {};
+  getStyleAt(sec: number, para: number) {
+    this.calls.push(`getStyleAt(${sec},${para})`);
+    return this.styleAt[`${sec}.${para}`] ?? { id: 0, name: '바탕글' };
+  }
+  getCharPropertiesAt(sec: number, para: number, off: number) {
+    this.calls.push(`getCharPropertiesAt(${sec},${para},${off})`);
+    return this.charPropsAt[`${sec}.${para}`] ?? {};
+  }
+  getParaPropertiesAt(sec: number, para: number) {
+    this.calls.push(`getParaPropertiesAt(${sec},${para})`);
+    return this.paraPropsAt[`${sec}.${para}`] ?? {};
+  }
   setFieldValue(fieldId: number, value: string) {
     this.calls.push(`setFieldValue(${fieldId},"${value}")`);
     return { ok: true, fieldId, oldValue: '', newValue: value };
@@ -1143,6 +1159,60 @@ describe('applyActionScript', () => {
     // '개요 1'이 문서에 없음 → 기본 수치 서식으로 폴백.
     expect(wasm.calls.some((c) => c.startsWith('applyStyle'))).toBe(false);
     expect(wasm.calls.some((c) => c.startsWith('applyCharFormat'))).toBe(true);
+  });
+
+  // ── 서식 인식 작성: copy_format_from (F-c166cf) ─────────────
+
+  it('copies style + char + para format from a reference paragraph', () => {
+    const wasm = new FakeWasm();
+    wasm.lengths['0.1'] = 5;
+    // 참조 문단 sec[1].p[3]: '본문2' 스타일(id 4) + 11pt + 양쪽정렬 160%.
+    wasm.styleAt['1.3'] = { id: 4, name: '본문2' };
+    wasm.charPropsAt['1.3'] = { fontSize: 1100, bold: false, textColor: '#222222', fontFamily: '함초롬바탕' };
+    wasm.paraPropsAt['1.3'] = { alignment: 'justify', lineSpacing: 160, lineSpacingType: 'Percent', spacingAfter: 8 };
+    applyActionScript(
+      wasm,
+      script([
+        {
+          command: 'INSERT_AFTER',
+          target_id: 'sec[0].p[1]',
+          payload: { text: '이어지는 본문', copy_format_from: 'sec[1].p[3]' },
+        },
+      ]),
+    );
+    // 새 문단(sec0 p2)에 참조의 스타일 적용 + 글자서식 + 정렬/줄간격 복제.
+    expect(wasm.calls).toContain('applyStyle(0,2,4)');
+    // 글자 서식: 복제 가능한 키만(fontFamily는 fontId 매핑 없어 제외).
+    const charCall = wasm.calls.find((c) => c.startsWith('applyCharFormat'));
+    expect(charCall).toContain('"fontSize":1100');
+    expect(charCall).toContain('"textColor":"#222222"');
+    expect(charCall).not.toContain('fontFamily');
+    // 문단 서식: 정렬·줄간격만(간격/여백은 단위 달라 제외).
+    const paraCall = wasm.calls.find((c) => c.startsWith('applyParaFormat'));
+    expect(paraCall).toContain('"alignment":"justify"');
+    expect(paraCall).toContain('"lineSpacing":160');
+    expect(paraCall).not.toContain('spacingAfter');
+    // copy_format_from이 테마 semantic 스타일보다 우선 — 테마 적용 안 함.
+    expect(wasm.calls.some((c) => c.includes('"fontSize":1000'))).toBe(false);
+  });
+
+  it('falls back to theme styling when copy_format_from reference is not a paragraph', () => {
+    const wasm = new FakeWasm();
+    wasm.lengths['0.1'] = 5;
+    applyActionScript(
+      wasm,
+      script([
+        {
+          command: 'INSERT_AFTER',
+          target_id: 'sec[0].p[1]',
+          // 셀 참조는 1차 미지원 → 테마(body) 폴백.
+          payload: { text: '본문', copy_format_from: 'sec[0].p[2].tbl[0].cell[0].p[0]' },
+        },
+      ]),
+    );
+    // 참조 서식 읽기 호출 없음, 테마 body 수치(10pt/180%)로 폴백.
+    expect(wasm.calls.some((c) => c.startsWith('getStyleAt'))).toBe(false);
+    expect(wasm.calls.some((c) => c.includes('"fontSize":1000'))).toBe(true);
   });
 
   // ── 누름틀 템플릿 채우기 (F-10a6a5) ─────────────────────────

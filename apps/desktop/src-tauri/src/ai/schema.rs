@@ -166,6 +166,11 @@ pub struct EditPayload {
     /// 여기 없는 필드는 떨어져 나간다 — 그래서 스키마에 명시한다(col_weights와 동일 이유).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// 서식 인식 작성(F-c166cf): 새 문단을 넣을 때 '이 기존 문단과 똑같은 서식으로'를
+    /// 지정하는 참조 문단 ID(예: sec[1].p[3]). 적용 시 그 문단의 스타일·글자 서식·정렬을
+    /// 새 문단에 복제해 기존 문서와 톤을 맞춘다. 테마 수치보다 우선한다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub copy_format_from: Option<String>,
 }
 
 /// 단일 편집 항목.
@@ -301,6 +306,10 @@ pub fn action_script_schema() -> Value {
                                 "reason": {
                                     "type": "string",
                                     "description": "교정 패스에서만: 이 편집이 고치는 이슈를 '분류: 설명' 형식 한국어 한 문장으로(분류는 맞춤법/문법/어색한 표현/일관성 중 하나). 일반 편집에서는 생략."
+                                },
+                                "copy_format_from": {
+                                    "type": "string",
+                                    "description": "새 문단을 넣을 때 '이 기존 문단과 똑같은 서식으로' 만들 참조 문단 ID(예: sec[1].p[3]). 기존 문서에 이어 쓰거나 같은 양식을 반복할 때, 가장 비슷한 종류의 기존 본문 문단을 지정하면 그 스타일·글자 모양·정렬이 새 문단에 복제된다."
                                 },
                                 "chart_data": {
                                     "type": "object",
@@ -561,6 +570,21 @@ mod tests {
         ]}"#;
         let s2 = parse_action_script(raw2).unwrap();
         assert!(serde_json::to_string(&s2).unwrap().contains("merge_cells"));
+    }
+
+    #[test]
+    fn parses_copy_format_from_and_round_trips() {
+        let raw = r#"{"edits":[
+            {"command":"INSERT_AFTER","target_id":"sec[1].p[5]",
+             "payload":{"type":"paragraph","text":"새 항목","copy_format_from":"sec[1].p[3]"}}
+        ]}"#;
+        let script = parse_action_script(raw).unwrap();
+        assert_eq!(
+            script.edits[0].payload.copy_format_from.as_deref(),
+            Some("sec[1].p[3]")
+        );
+        // 재직렬화(emit_validated)에서 살아남아 프런트로 전달된다.
+        assert!(serde_json::to_string(&script).unwrap().contains("copy_format_from"));
     }
 
     #[test]

@@ -207,6 +207,12 @@ export interface WasmEditing {
   getStyleList?(): Array<{ id: number; name: string; englishName: string }>;
   /** 문단에 문서 스타일을 적용한다(Ctrl+숫자와 동일 — 글자+문단 모양 일괄). */
   applyStyle?(sec: number, para: number, styleId: number): { ok: boolean };
+  /** 문단에 적용된 문서 스타일(id+이름). 서식 복제(copy_format_from)에 쓴다. */
+  getStyleAt?(sec: number, para: number): { id: number; name: string };
+  /** 문단의 글자 서식 속성(글꼴·크기·굵기·색 등). 서식 복제에 쓴다. */
+  getCharPropertiesAt?(sec: number, para: number, charOffset: number): Record<string, unknown>;
+  /** 문단의 문단 서식 속성(정렬·줄간격·여백 등). 서식 복제에 쓴다. */
+  getParaPropertiesAt?(sec: number, para: number): Record<string, unknown>;
   /** 본문 문단의 글자 서식(굵게·크기·색 등)을 [start,end) 범위에 적용. propsJson은 CharProperties. */
   applyCharFormat?(sec: number, para: number, startOffset: number, endOffset: number, propsJson: string): string;
   /** 본문 문단의 [start,end) 텍스트를 읽는다(부분 서식의 대상 위치 탐색용). */
@@ -593,6 +599,86 @@ function applyNamedDocStyle(wasm: WasmEditing, sec: number, para: number, styleN
   }
 }
 
+/** applyCharFormat이 이해하는 글자 서식 키(getCharPropertiesAt와 이름·단위 동일). */
+const COPYABLE_CHAR_KEYS = ['bold', 'italic', 'underline', 'strikethrough', 'fontSize', 'textColor'];
+/** 단위 변환 없이 그대로 복제해도 안전한 문단 서식 키(정렬·줄간격 — 간격/여백은 단위가 달라 제외). */
+const COPYABLE_PARA_KEYS = ['alignment', 'lineSpacing', 'lineSpacingType'];
+
+/**
+ * 새 문단(sec,para)의 서식을 결정한다(F-c166cf). copy_format_from이 있으면 그 참조
+ * 문단의 실제 서식(스타일·글자 모양·정렬)을 복제하고 — 기존 문서 톤과 일치 — 없으면
+ * 테마 기반 semantic 스타일(applyParaStyle)로 폴백한다.
+ */
+function applyParagraphFormatting(
+  wasm: WasmEditing,
+  sec: number,
+  para: number,
+  text: string,
+  edit: Edit,
+  fallbackStyle?: string,
+): void {
+  const ref = edit.payload.copy_format_from?.trim();
+  if (ref && copyFormatFrom(wasm, sec, para, text, ref)) return;
+  applyParaStyle(wasm, sec, para, text, fallbackStyle);
+}
+
+/**
+ * 참조 문단(refId, 본문 sec[s].p[p])의 서식을 (sec,para)에 복제한다. 성공 시 true.
+ * ① 문서 스타일(applyStyle — Ctrl+숫자처럼 글자+문단 모양 일괄) ② 글자 서식 ③ 정렬·줄간격.
+ * 셀 참조 등은 현재 미지원(false 반환 → 테마 폴백).
+ */
+function copyFormatFrom(
+  wasm: WasmEditing,
+  sec: number,
+  para: number,
+  text: string,
+  refId: string,
+): boolean {
+  const refPara = parseParagraphTarget(refId);
+  if (!refPara) return false; // 셀 참조 등 — 폴백.
+  let applied = false;
+  try {
+    // ① 문서 스타일 복제(바탕글 0이 아니면) — 가장 강력하고 단위 문제 없음.
+    if (wasm.getStyleAt && wasm.applyStyle) {
+      const style = wasm.getStyleAt(refPara.sec, refPara.para);
+      if (style && style.id > 0) {
+        if (wasm.applyStyle(sec, para, style.id).ok) applied = true;
+      }
+    }
+    // ② 글자 서식 복제(직접 꾸민 부분 보강) — 키·단위가 applyCharFormat과 동일.
+    const len = [...text].length;
+    if (wasm.getCharPropertiesAt && wasm.applyCharFormat && len > 0) {
+      const cp = wasm.getCharPropertiesAt(refPara.sec, refPara.para, 0);
+      const charProps = pickKeys(cp, COPYABLE_CHAR_KEYS);
+      if (Object.keys(charProps).length) {
+        wasm.applyCharFormat(sec, para, 0, len, JSON.stringify(charProps));
+        applied = true;
+      }
+    }
+    // ③ 정렬·줄간격 복제(간격/여백은 단위가 달라 제외).
+    if (wasm.getParaPropertiesAt && wasm.applyParaFormat) {
+      const pp = wasm.getParaPropertiesAt(refPara.sec, refPara.para);
+      const paraProps = pickKeys(pp, COPYABLE_PARA_KEYS);
+      if (Object.keys(paraProps).length) {
+        wasm.applyParaFormat(sec, para, JSON.stringify(paraProps));
+        applied = true;
+      }
+    }
+  } catch {
+    /* 서식 읽기/적용 실패 — 적용된 만큼만 두고 폴백 여부는 applied로 판정. */
+  }
+  return applied;
+}
+
+/** 객체에서 지정 키만, undefined가 아닌 값으로 추려 새 객체를 만든다. */
+function pickKeys(obj: Record<string, unknown>, keys: string[]): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const k of keys) {
+    if (obj[k] !== undefined && obj[k] !== null) out[k] = obj[k];
+  }
+  return out;
+}
+
 /** 삽입된 본문 문단(sec,para)의 [0,len)에 semantic 스타일을 적용한다. 미지정·미지원이면 무시. */
 function applyParaStyle(wasm: WasmEditing, sec: number, para: number, text: string, style?: string): void {
   if (!style) return;
@@ -631,8 +717,8 @@ function applyOne(
         insertImageAt(wasm, sec, para + 1, edit, images);
       } else {
         wasm.insertText(sec, para + 1, 0, text);
-        // 새 문단은 style 미지정 시 body 기본 — 미적용 시 문단 간격 0으로 빽빽해진다.
-        applyParaStyle(wasm, sec, para + 1, text, edit.payload.style ?? 'body');
+        // copy_format_from이 있으면 그 기존 문단 서식 복제, 없으면 테마(미지정 시 body).
+        applyParagraphFormatting(wasm, sec, para + 1, text, edit, edit.payload.style ?? 'body');
       }
       // 새 문단을 새 페이지에서 시작(긴 새 내용/새 절 추가용).
       if (pageBreak) wasm.insertPageBreak(sec, para + 1, 0);
@@ -647,7 +733,7 @@ function applyOne(
         insertImageAt(wasm, sec, para, edit, images);
       } else {
         wasm.insertText(sec, para, 0, text);
-        applyParaStyle(wasm, sec, para, text, edit.payload.style ?? 'body');
+        applyParagraphFormatting(wasm, sec, para, text, edit, edit.payload.style ?? 'body');
       }
       if (pageBreak) wasm.insertPageBreak(sec, para, 0);
       break;
@@ -656,7 +742,7 @@ function applyOne(
       const length = wasm.getParagraphLength(sec, para);
       if (length > 0) wasm.deleteText(sec, para, 0, length);
       wasm.insertText(sec, para, 0, text);
-      applyParaStyle(wasm, sec, para, text, edit.payload.style);
+      applyParagraphFormatting(wasm, sec, para, text, edit, edit.payload.style);
       break;
     }
     case 'DELETE': {

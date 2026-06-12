@@ -35,6 +35,10 @@ pub enum ContentNode {
         /// LLM이 목차 생성·장별 요약의 구조 근거로 쓴다(F-0858f2).
         #[serde(skip_serializing_if = "Option::is_none")]
         heading: Option<u8>,
+        /// 본문 문단의 실제 서식 요약(예: "14pt 굵게 가운데"). 평범한 본문(10pt 보통)은
+        /// 생략한다. AI가 기존 문서 서식을 보고 copy_format_from 참조를 고르는 근거(F-c166cf).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        fmt: Option<String>,
     },
 }
 
@@ -75,7 +79,7 @@ pub fn build_windowed_context(
 
     let windowed = selection_only || total_chars > WINDOW_CHAR_THRESHOLD;
     let body: Vec<Node> = if !windowed {
-        paragraphs.iter().map(|p| body_node(p, &headings)).collect()
+        paragraphs.iter().map(|p| body_node(core, p, &headings)).collect()
     } else {
         // 커서를 찾지 못하면 문서 앞쪽(0번)을 기준으로 윈도우를 잡는다.
         let anchor = cursor
@@ -83,7 +87,7 @@ pub fn build_windowed_context(
             .unwrap_or(0);
         let start = anchor.saturating_sub(WINDOW_RADIUS);
         let end = (anchor + WINDOW_RADIUS + 1).min(paragraphs.len());
-        paragraphs[start..end].iter().map(|p| body_node(p, &headings)).collect()
+        paragraphs[start..end].iter().map(|p| body_node(core, p, &headings)).collect()
     };
 
     // 표 셀(중첩 포함, 스펙 2장)·머리말/꼬리말·각주는 본문 윈도우와 무관하게 항상 포함한다.
@@ -96,20 +100,57 @@ pub fn build_windowed_context(
     Ok(assemble(nodes, total_sections, cursor_path))
 }
 
-/// 직렬화 노드: (id, text, 추정 헤딩 수준).
-type Node = (String, String, Option<u8>);
+/// 직렬화 노드: (id, text, 추정 헤딩 수준, 서식 요약).
+type Node = (String, String, Option<u8>, Option<String>);
 
-fn body_node(p: &Paragraph, headings: &HashMap<(usize, usize), u8>) -> Node {
+fn body_node(core: &DocumentCore, p: &Paragraph, headings: &HashMap<(usize, usize), u8>) -> Node {
     (
         format!("sec[{}].p[{}]", p.0, p.1),
         p.2.clone(),
         headings.get(&(p.0, p.1)).copied(),
+        paragraph_format_hint(core, p.0, p.1),
     )
 }
 
-/// 표 셀 노드(헤딩 없음).
+/// 본문 문단의 실제 서식을 짧은 한국어 요약으로 만든다(평범한 본문은 None — 토큰 절약).
+/// 글자 크기(pt)·굵기·특수 정렬만. AI가 기존 서식을 보고 참조 문단을 고르는 데 쓴다.
+fn paragraph_format_hint(core: &DocumentCore, sec: usize, para: usize) -> Option<String> {
+    let cv: serde_json::Value = core
+        .get_char_properties_at_native(sec, para, 0)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())?;
+    let pv: serde_json::Value = core
+        .get_para_properties_at_native(sec, para)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())?;
+    let size_hu = cv.get("fontSize").and_then(|v| v.as_u64()).unwrap_or(1000);
+    let bold = cv.get("bold").and_then(|v| v.as_bool()).unwrap_or(false);
+    let align = pv.get("alignment").and_then(|v| v.as_str()).unwrap_or("");
+
+    let mut parts: Vec<String> = Vec::new();
+    let pt = size_hu / 100;
+    if pt != 10 {
+        parts.push(format!("{}pt", pt));
+    }
+    if bold {
+        parts.push("굵게".to_string());
+    }
+    // 본문 기본(양쪽/왼쪽)이 아닌 정렬만 표기.
+    match align {
+        "center" | "Center" => parts.push("가운데".to_string()),
+        "right" | "Right" => parts.push("오른쪽".to_string()),
+        _ => {}
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(" "))
+    }
+}
+
+/// 표 셀 노드(헤딩·서식 요약 없음).
 fn cell_nodes(core: &DocumentCore) -> Vec<Node> {
-    collect_cells(core).into_iter().map(|(id, text)| (id, text, None)).collect()
+    collect_cells(core).into_iter().map(|(id, text)| (id, text, None, None)).collect()
 }
 
 /// 머리말/꼬리말 문단을 `sec[S].header|footer[A].p[I]` 노드로 수집한다(A=적용 대상
@@ -137,11 +178,12 @@ fn collect_header_footers(core: &DocumentCore, total_sections: u32) -> Vec<Node>
                         format!("sec[{}].{}[{}].p[{}]", sec, kind, apply, i),
                         para.to_string(),
                         None,
+                        None,
                     ));
                 }
             }
             if !any {
-                out.push((format!("sec[{}].{}[0].p[0]", sec, kind), String::new(), None));
+                out.push((format!("sec[{}].{}[0].p[0]", sec, kind), String::new(), None, None));
             }
         }
     }
@@ -180,6 +222,7 @@ fn collect_footnotes(core: &DocumentCore) -> Vec<Node> {
                     format!("sec[{}].p[{}].fn[{}].p[{}]", key.0, key.1, key.2, i),
                     t.as_str().unwrap_or("").to_string(),
                     None,
+                    None,
                 ));
             }
         }
@@ -214,7 +257,7 @@ fn field_nodes_from_json(json: &str) -> Vec<Node> {
         } else {
             value_text.to_string()
         };
-        out.push((format!("field[{}:{}]", id, name), text, None));
+        out.push((format!("field[{}:{}]", id, name), text, None, None));
     }
     out
 }
@@ -226,7 +269,7 @@ pub fn build_full_context(
 ) -> Result<(DocumentContext, HashSet<String>), String> {
     let (paragraphs, total_sections) = collect_paragraphs(core)?;
     let headings = detect_headings(&paragraphs, &collect_body_font_info(core));
-    let mut nodes: Vec<Node> = paragraphs.iter().map(|p| body_node(p, &headings)).collect();
+    let mut nodes: Vec<Node> = paragraphs.iter().map(|p| body_node(core, p, &headings)).collect();
     nodes.extend(cell_nodes(core));
     nodes.extend(collect_header_footers(core, total_sections));
     nodes.extend(collect_footnotes(core));
@@ -242,12 +285,12 @@ pub fn build_scoped_context(
 ) -> Result<(DocumentContext, HashSet<String>), String> {
     let (paragraphs, total_sections) = collect_paragraphs(core)?;
     let headings = detect_headings(&paragraphs, &collect_body_font_info(core));
-    let mut nodes: Vec<Node> = paragraphs.iter().map(|p| body_node(p, &headings)).collect();
+    let mut nodes: Vec<Node> = paragraphs.iter().map(|p| body_node(core, p, &headings)).collect();
     nodes.extend(cell_nodes(core));
     nodes.extend(collect_header_footers(core, total_sections));
     nodes.extend(collect_footnotes(core));
     nodes.extend(collect_fields(core));
-    nodes.retain(|(id, _, _)| ids.contains(id));
+    nodes.retain(|(id, _, _, _)| ids.contains(id));
     Ok(assemble(nodes, total_sections, None))
 }
 
@@ -317,9 +360,9 @@ fn assemble(
     let mut content = Vec::with_capacity(nodes.len());
     let mut whitelist = HashSet::with_capacity(nodes.len());
 
-    for (id, text, heading) in nodes {
+    for (id, text, heading, fmt) in nodes {
         whitelist.insert(id.clone());
-        content.push(ContentNode::Paragraph { id, text, heading });
+        content.push(ContentNode::Paragraph { id, text, heading, fmt });
     }
 
     let context = DocumentContext {
@@ -855,15 +898,20 @@ mod tests {
             id: "sec[0].p[0]".to_string(),
             text: "1. 서론".to_string(),
             heading: Some(1),
+            fmt: Some("14pt 굵게".to_string()),
         };
         let json = serde_json::to_string(&node).unwrap();
         assert!(json.contains("\"heading\":1"));
+        assert!(json.contains("\"fmt\":\"14pt 굵게\""));
         let plain = ContentNode::Paragraph {
             id: "sec[0].p[1]".to_string(),
             text: "본문".to_string(),
             heading: None,
+            fmt: None,
         };
-        assert!(!serde_json::to_string(&plain).unwrap().contains("heading"));
+        let plain_json = serde_json::to_string(&plain).unwrap();
+        assert!(!plain_json.contains("heading"));
+        assert!(!plain_json.contains("fmt")); // 평범한 본문은 fmt 생략.
     }
 
     /// 글상자(textbox) 문단이 기존 셀 경로 파이프라인으로 직렬화·편집·저장되는지

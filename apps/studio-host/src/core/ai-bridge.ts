@@ -43,6 +43,8 @@ export interface EditPayload {
   variations?: string[];
   /** 교정 패스에서만: 이 편집이 고치는 이슈 설명("분류: 설명", 분류=맞춤법/문법/어색한 표현/일관성). */
   reason?: string;
+  /** 서식 인식 작성(F-c166cf): 새 문단을 '이 기존 문단과 똑같은 서식으로' 만들 참조 문단 ID. */
+  copy_format_from?: string;
   table_data?: {
     rows: number;
     cols: number;

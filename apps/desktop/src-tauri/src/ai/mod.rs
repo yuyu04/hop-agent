@@ -532,6 +532,12 @@ fn system_prompt() -> String {
      고르면 됩니다(긴 글을 한 문단에 몰지 말고 제목/소제목/본문으로 구조화하세요). \
      style을 생략한 INSERT 문단은 body로 처리됩니다. 문단 사이 간격은 style이 자동으로 \
      만들어 주므로, 간격을 띄우려고 '빈 문단'을 INSERT 하지 마세요(빈 줄 금지). \
+     [기존 문서 서식 따라가기] 기존 문서에 이어 쓰거나 같은 양식을 반복해 새 내용을 \
+     넣을 때는, 새 문단마다 payload.copy_format_from에 '같은 종류의 기존 본문 문단 ID'를 \
+     지정하세요(예: 새 본문 문단이면 가까운 기존 본문 문단 sec[1].p[3], 새 소제목이면 \
+     기존 소제목 문단). 그러면 그 문단의 글꼴·크기·정렬·스타일이 새 문단에 그대로 복제돼 \
+     문서 톤이 일치합니다. 기존 문서의 디자인을 살릴 때는 style(테마)보다 copy_format_from을 \
+     우선 쓰세요. 백지에서 새로 만들 때만 style을 쓰세요. \
      표의 머리글 행은 앱이 자동으로 굵게+연한 배경+가운데로 꾸미므로 머리글 칸에 별도 \
      장식을 넣지 마세요. \
      표를 새로 만들려면 본문 문단 ID에 INSERT_AFTER 하고 payload.type=\"table\", \
@@ -717,6 +723,14 @@ mod tests {
         assert!(prompt.contains("fn[c]"));
         // 각주는 내용 수정/비우기만 — 새 각주 추가는 미지원임을 명시.
         assert!(prompt.contains("새 각주 추가는 지원하지"));
+    }
+
+    #[test]
+    fn system_prompt_guides_copy_format_from() {
+        let prompt = system_prompt();
+        assert!(prompt.contains("copy_format_from"));
+        // 기존 문서 디자인을 살릴 때 테마보다 우선하라는 지시.
+        assert!(prompt.contains("style(테마)보다 copy_format_from을 우선"));
     }
 
     #[test]
