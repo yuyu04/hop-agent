@@ -49,3 +49,6 @@ Thumbs.db
 
 # Cladding runtime state
 .cladding/
+
+# vitest coverage (clad Coverage 게이트 생성물)
+coverage/

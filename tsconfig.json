@@ -1,0 +1,5 @@
+{
+  "//": "clad Type 게이트(`npx tsc --noEmit`)가 루트에서 실제 TS 패키지(studio-host)를 검사하도록 위임한다. 단일 TS 패키지이므로 그 설정을 그대로 상속한다.",
+  "extends": "./apps/studio-host/tsconfig.json",
+  "include": ["apps/studio-host/src"]
+}
