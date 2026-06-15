@@ -716,6 +716,7 @@ describe('TauriBridge AI commands', () => {
       documents: null,
       filePaths: null,
       targetIds: null,
+      formFillLabels: null,
     });
   });
 
@@ -742,6 +743,7 @@ describe('TauriBridge AI commands', () => {
       documents: null,
       filePaths: null,
       targetIds: null,
+      formFillLabels: null,
     });
   });
 

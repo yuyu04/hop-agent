@@ -29,7 +29,13 @@ export function buildDiffModel(script: ActionScript, context: DocumentContext): 
     const original = textOf(byId.get(edit.target_id));
     // 표 생성은 텍스트가 없으므로 "[표 R×C]"로 표시한다.
     const table = edit.payload.type === 'table' ? edit.payload.table_data : undefined;
-    const inserted = table ? `[표 ${table.rows}×${table.cols}]` : edit.payload.text;
+    // 양식 표 복제(양식 이어쓰기)는 채울 값칸 수로 미리보기를 만든다(구조는 원본 동일).
+    const clone = edit.payload.type === 'clone_table' ? edit.payload.clone_table : undefined;
+    const inserted = table
+      ? `[표 ${table.rows}×${table.cols}]`
+      : clone
+        ? `[양식 항목 추가 — 값 ${clone.cell_fills?.length ?? 0}칸]`
+        : edit.payload.text;
     switch (edit.command) {
       case 'DELETE':
         return { command: edit.command, targetId: edit.target_id, beforeText: original };

@@ -19,10 +19,32 @@ export interface ParagraphNode {
 
 export type ContentNode = ParagraphNode;
 
+/** 복제 가능한 최상위 양식 표 한 셀(serialize.rs FormCell). */
+export interface FormCell {
+  row: number;
+  col: number;
+  /** "label"(안내 칸 — 건드리지 말 것) | "input"(채울 빈 칸). */
+  role: string;
+  /** 현재 셀 내용(라벨 식별용). 입력칸이면 보통 빈 문자열. */
+  text?: string;
+}
+
+/** 복제 대상 최상위 양식 표(serialize.rs FormTable, F-220afd). */
+export interface FormTable {
+  section: number;
+  paragraph: number;
+  control_index: number;
+  rows: number;
+  cols: number;
+  cells: FormCell[];
+}
+
 export interface DocumentContext {
   document_metadata: {
     total_sections: number;
     current_cursor_path?: string;
+    /** 복제 가능한 양식 표 목록(F-220afd). 비어 있으면 양식 표가 없는 일반 문서. */
+    form_tables?: FormTable[];
   };
   content: ContentNode[];
 }
@@ -191,6 +213,28 @@ export function parseActionScript(json: string): ActionScript | null {
       return null;
     }
     return value as ActionScript;
+  } catch {
+    return null;
+  }
+}
+
+/** 양식 이어쓰기 응답(F-ae778890) — 내용 전용. 표/compose 구조는 일절 없다. */
+export interface FormFillResponse {
+  entries: { fields: { label: string; value: string }[] }[];
+  message?: string;
+}
+
+/**
+ * 양식 이어쓰기 응답 JSON({entries:[{fields:[{label,value}]}]})을 파싱한다. 형식이
+ * 어긋나면 `null`. AI가 표 구조를 결정하지 못하도록 entries(라벨→값)만 받는다.
+ */
+export function parseFormFillResponse(json: string): FormFillResponse | null {
+  try {
+    const value = JSON.parse(json) as unknown;
+    if (!value || typeof value !== 'object' || !Array.isArray((value as FormFillResponse).entries)) {
+      return null;
+    }
+    return value as FormFillResponse;
   } catch {
     return null;
   }

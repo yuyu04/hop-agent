@@ -153,6 +153,10 @@ pub fn ai_request_edit(
     documents: Option<Vec<ImageInput>>,
     file_paths: Option<Vec<String>>,
     target_ids: Option<Vec<String>>,
+    // Some(labels)이면 '양식 이어쓰기' 모드(F-ae778890): AI가 표를 그리지 않고 항목 내용
+    // 리스트만 반환하도록 전용 시스템 프롬프트·스키마를 쓰고, 응답을 form-fill로 검증한다.
+    // labels는 소스 양식 표의 필드 라벨(모델이 내용을 라벨로 키잉하게).
+    form_fill_labels: Option<Vec<String>>,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
     // 민감 문서는 외부 provider 전송을 차단한다(스펙 6장 — 공문서 보호).
@@ -190,11 +194,22 @@ pub fn ai_request_edit(
     let request_id = Uuid::new_v4().to_string();
     let cancel = state.ai.register(request_id.clone());
 
+    // 양식 이어쓰기 모드면 전용 프롬프트·스키마를 쓰고 응답을 form-fill로 검증한다.
+    // 그 외(일반 편집/질문/교정)는 기존 Action Script 경로 그대로.
+    let (sys_prompt, out_schema, mode) = match &form_fill_labels {
+        Some(labels) => (
+            form_fill_system_prompt(labels),
+            schema::form_fill_schema(),
+            RequestMode::FormFill,
+        ),
+        None => (system_prompt(), schema::action_script_schema(), RequestMode::Edit),
+    };
+
     let req = LlmRequest {
-        system_prompt: system_prompt(),
+        system_prompt: sys_prompt,
         user_prompt,
         document_context_json: context_json,
-        output_schema: schema::action_script_schema(),
+        output_schema: out_schema,
         images: images.unwrap_or_default(),
         documents: documents.unwrap_or_default(),
         file_paths: file_paths.unwrap_or_default(),
@@ -207,6 +222,7 @@ pub fn ai_request_edit(
         req,
         whitelist,
         cancel,
+        mode,
     ));
 
     Ok(request_id)
@@ -406,6 +422,15 @@ fn truncate_chars(text: String, max: usize) -> String {
     format!("{}\n\n…(문서가 길어 앞부분만 첨부됨)", head)
 }
 
+/// 요청 모드 — 응답을 어떤 스키마로 검증해 어떤 이벤트로 보낼지 결정한다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RequestMode {
+    /// 일반 편집/질문/교정 — Action Script로 파싱·화이트리스트 검증.
+    Edit,
+    /// 양식 이어쓰기(F-ae778890) — 내용 전용 form-fill JSON으로 파싱(표/compose 없음).
+    FormFill,
+}
+
 async fn run_edit_request(
     app: AppHandle,
     request_id: String,
@@ -413,6 +438,7 @@ async fn run_edit_request(
     req: LlmRequest,
     whitelist: std::collections::HashSet<String>,
     cancel: CancelToken,
+    mode: RequestMode,
 ) {
     let on_delta: DeltaSink = {
         let app = app.clone();
@@ -429,7 +455,10 @@ async fn run_edit_request(
     };
 
     match provider.generate_edit(req, on_delta, cancel).await {
-        Ok(raw) => emit_validated(&app, &request_id, &raw, &whitelist),
+        Ok(raw) => match mode {
+            RequestMode::Edit => emit_validated(&app, &request_id, &raw, &whitelist),
+            RequestMode::FormFill => emit_form_fill(&app, &request_id, &raw),
+        },
         Err(error) => emit_failed(&app, &request_id, error.to_string(), error.code()),
     }
 
@@ -470,6 +499,26 @@ fn emit_validated(
             format!("문서에 존재하지 않는 대상입니다: {}", violations.join(", ")),
             "WHITELIST_VIOLATION",
         );
+    }
+}
+
+/// 양식 이어쓰기 응답을 검증해 `hop-ai-edit-ready`로 보낸다(F-ae778890). action_script와
+/// 달리 화이트리스트 검증이 없다 — 응답에는 target_id가 없고, 표 구조는 앱이 결정적으로
+/// 복제하므로 환각의 여지가 구조적으로 제거됐다(AC-0cd01fc1). 프런트는 actionScriptJson에
+/// 담긴 form-fill JSON({entries})을 파싱해 항목마다 소스 표를 복제한다.
+fn emit_form_fill(app: &AppHandle, request_id: &str, raw: &str) {
+    match schema::parse_form_fill_response(raw) {
+        Ok(resp) => {
+            let canonical = serde_json::to_string(&resp).unwrap_or_else(|_| raw.to_string());
+            let _ = app.emit(
+                "hop-ai-edit-ready",
+                AiEditReady {
+                    request_id: request_id.to_string(),
+                    action_script_json: canonical,
+                },
+            );
+        }
+        Err(message) => emit_failed(app, request_id, message, "PARSE_ERROR"),
     }
 }
 
@@ -657,9 +706,67 @@ fn system_prompt() -> String {
         .to_string()
 }
 
+/// 양식 이어쓰기 모드(F-ae778890) 시스템 프롬프트. 이 모드에서 AI는 표를 절대 그리지
+/// 않는다 — 주어진 양식의 필드 라벨에 맞춰 '항목 내용 리스트'만 반환한다. 표 구조 결정은
+/// 앱이 결정적으로 한다(기존 양식 표를 그대로 복제). F-10a6a5/F-220afd의 clone-not-compose
+/// 원칙을 모드 수준으로 끌어올린 것이다(AC-0cd01fc1/AC-86e329eb).
+///
+/// `labels`는 소스 양식 표의 필드 라벨 목록(예: 제목/연구내용/기록자/확인자/기록 일자)으로,
+/// 모델이 내용을 라벨로 키잉하도록 프롬프트에 명시한다.
+fn form_fill_system_prompt(labels: &[String]) -> String {
+    let label_line = if labels.is_empty() {
+        "(라벨 목록이 비어 있습니다 — 사용자 요청과 문서 맥락에서 필드 이름을 추론하세요.)".to_string()
+    } else {
+        labels.join(", ")
+    };
+    format!(
+        "당신은 한글(HWP) 양식 문서에 '항목'을 이어 쓰는 보조자입니다. \
+         이 모드에서는 절대 표를 그리지 마세요 — 표 구조(행 수·열 수·셀 병합·테두리)는 앱이 \
+         기존 양식 표를 그대로 복제(clone)해 100% 동일하게 만듭니다. 누름틀(field)·양식 표 복제와 \
+         똑같은 '디자인 100% 보장' 원칙입니다: 당신은 구조를 결정하지 말고, 주어진 양식의 필드 \
+         라벨에 맞춰 각 항목의 '내용'만 반환하세요. \
+         반드시 제공된 JSON Schema를 만족하는 JSON만 출력하세요. 형식은 \
+         {{\"entries\": [{{\"fields\": [{{\"label\": \"<필드 라벨>\", \"value\": \"<그 칸 내용>\"}}, ...]}}, ...]}} \
+         입니다. entries 배열의 길이가 곧 추가할 항목(표) 수입니다 — 사용자가 N개를 요청하면 \
+         entries에 N개를 넣으세요. \
+         각 항목의 label은 이 양식의 필드 라벨을 그대로 쓰세요. 이 양식의 필드 라벨: {labels}. \
+         value에는 그 칸에 들어갈 내용을 채우고, 여러 줄이 필요하면 \\n으로 구분하세요. \
+         표/compose/table_data/clone_table/table_edit 같은 구조 액션은 절대 쓰지 마세요(스키마에 \
+         존재하지도 않습니다). 라벨 칸의 텍스트는 바꾸지 말고, 값 칸 내용만 제공하세요. \
+         문서 컨텍스트의 기존 항목과 일관된 어조·용어·형식으로 현실적인 내용을 작성하세요. \
+         최상위 message에 무엇을 추가했는지 한국어 1~3문장으로 적으세요. JSON만 반환하세요.",
+        labels = label_line
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn form_fill_prompt_forbids_tables_and_lists_labels() {
+        let prompt = form_fill_system_prompt(&[
+            "제목".to_string(),
+            "연구내용".to_string(),
+            "기록자".to_string(),
+        ]);
+        // 표를 그리지 말라는 지시 + 라벨→값 내용만 + clone-not-compose 정신.
+        assert!(prompt.contains("표를 그리지"));
+        assert!(prompt.contains("entries"));
+        assert!(prompt.contains("label") && prompt.contains("value"));
+        assert!(prompt.contains("복제"));
+        // 소스 양식의 라벨이 프롬프트에 포함된다(모델이 내용을 라벨로 키잉하게).
+        assert!(prompt.contains("제목") && prompt.contains("연구내용") && prompt.contains("기록자"));
+        // 표/compose 구조 액션을 쓰지 말라는 명시.
+        assert!(prompt.contains("table_data") && prompt.contains("clone_table"));
+    }
+
+    #[test]
+    fn form_fill_prompt_handles_empty_labels() {
+        let prompt = form_fill_system_prompt(&[]);
+        assert!(prompt.contains("표를 그리지"));
+        assert!(prompt.contains("추론"));
+    }
 
     #[test]
     fn ai_state_register_cancel_remove() {

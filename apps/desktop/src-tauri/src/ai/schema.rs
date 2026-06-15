@@ -267,6 +267,96 @@ fn preview(text: &str, max_chars: usize) -> String {
     }
 }
 
+// ── 양식 이어쓰기(form_fill) 응답 스키마 (F-ae778890) ──────────────────────
+//
+// 핵심 원칙: 이 모드에서 AI는 표 구조를 절대 결정하지 않는다. 응답은 '항목 내용
+// 리스트'뿐이며, 각 항목은 라벨→값 쌍의 집합이다. 표/compose/edit 액션을 일절
+// 포함하지 않는다(AC-0cd01fc1). 앱이 항목마다 소스 양식 표를 결정적으로 복제하고
+// (cloneTableAt) 라벨↔인접 값칸 매핑으로 값칸만 채운다(AC-6bdb1e17/AC-86e329eb).
+
+/// 한 항목의 라벨→값 쌍 하나(예: {label:"제목", value:"실험 A 재현"}).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FormFillField {
+    /// 소스 양식 표의 라벨 셀 이름(예: 제목/연구내용/기록자/확인자/기록 일자).
+    pub label: String,
+    /// 그 라벨에 대응하는 값칸에 채울 내용(여러 줄이면 `\n` 포함 가능).
+    pub value: String,
+}
+
+/// 새로 추가할 항목 하나 — 라벨→값 쌍의 집합. 표 구조 정보는 일절 없다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FormFillEntry {
+    pub fields: Vec<FormFillField>,
+}
+
+/// 양식 이어쓰기 응답(내용 전용). entries.len() = 추가할 항목 수 N. 표/compose 없음.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FormFillResponse {
+    pub entries: Vec<FormFillEntry>,
+    /// 사용자에게 보여줄 요약(선택, 한국어 1~3문장).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+/// 양식 이어쓰기 응답 문자열을 `FormFillResponse`로 파싱한다. action_script와 동일하게
+/// 코드펜스/설명 문장 래핑을 방어적으로 벗겨낸다.
+pub fn parse_form_fill_response(raw: &str) -> Result<FormFillResponse, String> {
+    let cleaned = strip_code_fences(raw).trim();
+    if cleaned.is_empty() {
+        return Err("빈 응답을 받았습니다 — 모델이 항목 내용을 내지 않았습니다.".to_string());
+    }
+    if let Ok(resp) = serde_json::from_str::<FormFillResponse>(cleaned) {
+        return Ok(resp);
+    }
+    if let Some(braced) = extract_braced_object(cleaned) {
+        if let Ok(resp) = serde_json::from_str::<FormFillResponse>(braced) {
+            return Ok(resp);
+        }
+    }
+    Err(format!(
+        "양식 이어쓰기 응답 JSON 파싱 실패. 받은 응답 일부: {}",
+        preview(cleaned, 200)
+    ))
+}
+
+/// provider에 주입할 양식 이어쓰기 출력 JSON Schema(F-ae778890). 표/compose 구조를
+/// 일절 노출하지 않으므로 AI가 표를 그릴 여지가 없다(AC-0cd01fc1).
+pub fn form_fill_schema() -> Value {
+    json!({
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+            "message": {
+                "type": "string",
+                "description": "사용자에게 보여줄 요약(무엇을 추가했는지). 한국어 1~3문장."
+            },
+            "entries": {
+                "type": "array",
+                "description": "추가할 항목들. 배열 길이가 곧 추가할 항목(표) 수다. 각 항목은 라벨→값 쌍의 집합이며, 표 구조는 절대 포함하지 않는다(앱이 기존 양식 표를 그대로 복제한다).",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "fields": {
+                            "type": "array",
+                            "description": "그 항목의 라벨→값 쌍. label은 소스 양식의 필드 라벨(제목/연구내용/기록자 등), value는 그 칸에 넣을 내용(여러 줄이면 \\n).",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "label": { "type": "string" },
+                                    "value": { "type": "string" }
+                                },
+                                "required": ["label", "value"]
+                            }
+                        }
+                    },
+                    "required": ["fields"]
+                }
+            }
+        },
+        "required": ["entries"]
+    })
+}
+
 /// 화이트리스트에 없는 `target_id`(환각으로 간주) 목록을 반환한다. 빈 벡터면 통과.
 pub fn collect_violations(script: &ActionScript, whitelist: &HashSet<String>) -> Vec<String> {
     script
@@ -657,6 +747,81 @@ mod tests {
         // 재직렬화(emit_validated)에서 살아남아 프런트로 전달된다.
         let json = serde_json::to_string(&script).unwrap();
         assert!(json.contains("chart_data") && json.contains("분기별 매출"));
+    }
+
+    #[test]
+    fn parses_form_fill_response_and_round_trips() {
+        // 양식 이어쓰기 응답은 entries[].fields[]{label,value}만 가진다 — 표/compose 없음.
+        let raw = r#"{
+            "message": "연구노트 항목 2개를 추가했습니다.",
+            "entries": [
+                {"fields": [
+                    {"label": "제목", "value": "실험 A 재현"},
+                    {"label": "연구내용", "value": "첫째 줄\n둘째 줄"}
+                ]},
+                {"fields": [{"label": "제목", "value": "실험 B"}]}
+            ]
+        }"#;
+        let resp = parse_form_fill_response(raw).unwrap();
+        assert_eq!(resp.entries.len(), 2);
+        assert_eq!(resp.entries[0].fields.len(), 2);
+        assert_eq!(resp.entries[0].fields[1].label, "연구내용");
+        assert_eq!(resp.entries[0].fields[1].value, "첫째 줄\n둘째 줄");
+        assert_eq!(resp.message.as_deref(), Some("연구노트 항목 2개를 추가했습니다."));
+        // 재직렬화 라운드트립.
+        let json = serde_json::to_string(&resp).unwrap();
+        let again = parse_form_fill_response(&json).unwrap();
+        assert_eq!(resp, again);
+    }
+
+    #[test]
+    fn form_fill_schema_has_no_table_or_compose_constructs() {
+        // 스키마에 표/compose/edit 구성요소가 없어야 한다(AC-0cd01fc1 — AI가 표를 그릴 여지 제거).
+        let schema = form_fill_schema().to_string();
+        assert!(schema.contains("entries") && schema.contains("fields"));
+        assert!(schema.contains("label") && schema.contains("value"));
+        for forbidden in [
+            "table_data",
+            "clone_table",
+            "table_edit",
+            "matrix",
+            "merges",
+            "\"rows\"",
+            "\"cols\"",
+        ] {
+            assert!(
+                !schema.contains(forbidden),
+                "form_fill 스키마가 표/compose 구성요소를 노출하면 안 됩니다: {}",
+                forbidden
+            );
+        }
+    }
+
+    #[test]
+    fn form_fill_response_struct_has_no_table_fields() {
+        // 구조체 자체에도 표 관련 필드가 없음을 직렬화 키로 확인한다.
+        let resp = FormFillResponse {
+            entries: vec![FormFillEntry {
+                fields: vec![FormFillField {
+                    label: "제목".to_string(),
+                    value: "x".to_string(),
+                }],
+            }],
+            message: None,
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        for forbidden in ["table", "clone", "matrix", "merge", "compose", "command"] {
+            assert!(!json.contains(forbidden), "표/compose 키 노출 금지: {}", forbidden);
+        }
+    }
+
+    #[test]
+    fn parse_form_fill_response_rejects_empty_and_garbage() {
+        assert!(parse_form_fill_response("   ").unwrap_err().contains("빈 응답"));
+        assert!(parse_form_fill_response("not json").is_err());
+        // 코드펜스 래핑도 벗겨낸다.
+        let fenced = "```json\n{\"entries\":[]}\n```";
+        assert!(parse_form_fill_response(fenced).unwrap().entries.is_empty());
     }
 
     #[test]

@@ -125,6 +125,9 @@ export interface AiBridgeApi {
     documents?: AiImageInput[] | null,
     filePaths?: string[] | null,
     targetIds?: string[] | null,
+    /** Some이면 '양식 이어쓰기' 모드(F-ae778890): AI가 표를 그리지 않고 라벨→값 내용만
+     *  반환하도록 전용 프롬프트·스키마를 쓴다. labels는 소스 양식 표의 필드 라벨. */
+    formFillLabels?: string[] | null,
   ): Promise<string>;
   /** HWP/HWPX 파일의 평문 텍스트를 추출한다(첨부용). */
   aiExtractText(path: string): Promise<string>;
@@ -362,6 +365,7 @@ export class TauriBridge extends WasmBridge implements DesktopBridgeApi, AiBridg
     documents?: AiImageInput[] | null,
     filePaths?: string[] | null,
     targetIds?: string[] | null,
+    formFillLabels?: string[] | null,
   ): Promise<string> {
     return this.invoke<string>('ai_request_edit', {
       docId,
@@ -374,6 +378,7 @@ export class TauriBridge extends WasmBridge implements DesktopBridgeApi, AiBridg
       documents: documents ?? null,
       filePaths: filePaths ?? null,
       targetIds: targetIds ?? null,
+      formFillLabels: formFillLabels ?? null,
     });
   }
 

@@ -1116,6 +1116,184 @@ function cloneTableAt(wasm: WasmEditing, sec: number, para: number, edit: Edit):
   }
 }
 
+// ── 양식 이어쓰기: 라벨→값 매핑 + 결정적 복제 루프 (F-ae778890) ──────────────
+//
+// 핵심 원칙: AI는 표 구조를 절대 결정하지 않는다. AI는 항목 내용(라벨→값 리스트)만
+// 반환하고, 앱이 항목마다 소스 양식 표를 cloneTableAt(F-220afd: copyControl→pasteControl)로
+// 결정적 복제한다. 복제는 같은 문서 내라 doc-로컬 ID가 보존돼 행·열·병합·테두리가 100%
+// 동일하다. 따라서 생성 항목은 ALWAYS 소스와 구조가 같다(6×3→6×2 compose 드리프트 해결).
+
+/** serialize.rs FormTable 한 셀(라벨/입력칸 식별용). */
+export interface FormSourceCell {
+  row: number;
+  col: number;
+  role?: string;
+  text?: string;
+}
+
+/** serialize.rs FormTable — 복제 소스가 될 최상위 양식 표. */
+export interface FormSourceTable {
+  section: number;
+  paragraph: number;
+  control_index: number;
+  rows: number;
+  cols: number;
+  cells: FormSourceCell[];
+}
+
+/** AI가 반환하는 한 항목(라벨→값 쌍의 집합). 표 구조 정보는 없다. */
+export interface FormFillEntry {
+  fields: { label: string; value: string }[];
+}
+
+/** 라벨/값 비교용 정규화(공백 제거 + 소문자). '사 업 명' == '사업명' 같은 변형 흡수. */
+function normalizeLabel(text: string): string {
+  return text.replace(/\s+/g, '').toLowerCase();
+}
+
+/**
+ * 소스 양식 표에서 한 라벨 셀의 '값칸' 좌표를 찾는다(라벨↔인접 값칸 매핑 휴리스틱).
+ *
+ * 휴리스틱(이 순서로 시도):
+ *  1) 같은 행, 다음 열(label 오른쪽 칸) — 가장 흔한 가로 폼.
+ *  2) 다음 행, 같은 열(label 아래 칸) — 세로 폼.
+ * 단, 후보 칸이 그 자체로 '알려진 라벨'(다른 항목의 라벨명과 일치하거나 role=label로
+ * 텍스트가 있는 칸)이면 건너뛴다 — 라벨↔라벨이 붙은 표에서 라벨칸을 값칸으로 오인하지
+ * 않기 위함. 해석 실패 시 null(호출 측이 그 한 라벨만 건너뛰고 사유를 기록한다).
+ *
+ * 같은 (row,col)이 셀 목록에 여러 번 있으면(병합 등) 첫 매칭을 쓴다. 병합으로 가려진
+ * 좌표는 cellAt 매핑에서 빠지므로 cloneTableAt이 그 한 칸만 건너뛴다(구조는 이미 보존).
+ */
+export function resolveValueCell(
+  table: FormSourceTable,
+  labelCell: FormSourceCell,
+  knownLabels: Set<string>,
+): { row: number; col: number } | null {
+  const at = (row: number, col: number): FormSourceCell | undefined =>
+    table.cells.find((c) => c.row === row && c.col === col);
+  // 후보 칸이 '라벨로 쓰이는 칸'이면 값칸이 아니다 — 건너뛴다.
+  const isLabelCell = (c: FormSourceCell | undefined): boolean => {
+    if (!c) return false;
+    const t = (c.text ?? '').trim();
+    if (t && knownLabels.has(normalizeLabel(t))) return true;
+    // role=label이고 내용이 있으면(안내 칸) 값칸으로 쓰지 않는다.
+    return c.role === 'label' && t.length > 0;
+  };
+  const candidates = [
+    { row: labelCell.row, col: labelCell.col + 1 }, // 1) 오른쪽
+    { row: labelCell.row + 1, col: labelCell.col }, // 2) 아래
+  ];
+  for (const cand of candidates) {
+    if (cand.col >= table.cols || cand.row >= table.rows) continue;
+    const cell = at(cand.row, cand.col);
+    if (isLabelCell(cell)) continue; // 라벨칸은 값칸이 아니다.
+    return { row: cand.row, col: cand.col };
+  }
+  return null;
+}
+
+/** 라벨→값 매핑 결과: 채울 cell_fills와 해석 못 한 라벨(사유). */
+export interface FormFillMapping {
+  cellFills: { row: number; col: number; text: string }[];
+  skipped: { label: string; reason: string }[];
+}
+
+/**
+ * AI 항목(라벨→값)을 소스 양식 표의 '값칸 좌표 → text' cell_fills로 매핑한다(AC-86e329eb).
+ * 라벨칸은 결과에 넣지 않으므로 복제 후 원본 라벨이 그대로 보존된다(값칸만 REPLACE).
+ *
+ * 라벨 매칭은 정규화(공백/대소문자 무시) 후 완전일치 우선, 없으면 부분포함으로 찾는다.
+ */
+export function buildFormFillMapping(table: FormSourceTable, entry: FormFillEntry): FormFillMapping {
+  // 소스 표의 모든 '라벨로 쓰이는 칸' 이름 집합(값칸 오인 방지용).
+  const knownLabels = new Set<string>();
+  for (const c of table.cells) {
+    const t = (c.text ?? '').trim();
+    if (t && c.role !== 'input') knownLabels.add(normalizeLabel(t));
+  }
+  // AI가 보낸 라벨도 라벨 후보로 추가(라벨↔라벨 인접 표 대응).
+  for (const f of entry.fields) knownLabels.add(normalizeLabel(f.label));
+
+  const cellFills: { row: number; col: number; text: string }[] = [];
+  const skipped: { label: string; reason: string }[] = [];
+  const usedValueCells = new Set<string>();
+
+  for (const field of entry.fields) {
+    const wanted = normalizeLabel(field.label);
+    // 소스에서 그 라벨 셀을 찾는다(완전일치 → 부분포함). 라벨 텍스트가 있는 칸만 후보.
+    const labelCells = table.cells.filter((c) => {
+      const t = normalizeLabel((c.text ?? '').trim());
+      return t.length > 0 && t !== ''; // 빈 칸 제외(값칸일 수 있음)
+    });
+    const labelCell =
+      labelCells.find((c) => normalizeLabel((c.text ?? '').trim()) === wanted) ??
+      labelCells.find((c) => {
+        const t = normalizeLabel((c.text ?? '').trim());
+        return t.includes(wanted) || wanted.includes(t);
+      });
+    if (!labelCell) {
+      skipped.push({ label: field.label, reason: '소스 양식에서 같은 이름의 라벨 칸을 찾지 못했습니다.' });
+      continue;
+    }
+    const value = resolveValueCell(table, labelCell, knownLabels);
+    if (!value) {
+      skipped.push({ label: field.label, reason: '라벨에 인접한 값칸(오른쪽/아래)을 찾지 못했습니다.' });
+      continue;
+    }
+    const key = `${value.row},${value.col}`;
+    if (usedValueCells.has(key)) {
+      skipped.push({ label: field.label, reason: `값칸(${key})이 이미 다른 라벨에 매핑되었습니다.` });
+      continue;
+    }
+    usedValueCells.add(key);
+    cellFills.push({ row: value.row, col: value.col, text: field.value });
+  }
+  return { cellFills, skipped };
+}
+
+/** 항목 하나의 clone_table 편집 + 그 항목의 라벨 해석 실패 목록. */
+export interface FormFillEditPlan {
+  edit: Edit;
+  skipped: { label: string; reason: string }[];
+}
+
+/**
+ * AI 항목 리스트를 '항목마다 소스 표를 결정적 복제하는' clone_table 편집 목록으로 만든다
+ * (AC-6bdb1e17: clone-per-entry 루프). 표 구조는 AI가 결정하지 않는다 — clone_from은 항상
+ * 소스 양식 표 좌표이고, cell_fills는 라벨→값칸 매핑(buildFormFillMapping)에서 나온다.
+ *
+ * 모든 항목을 같은 anchor 본문 문단 뒤(INSERT_AFTER)에 넣고 page_break=true로 새 페이지에서
+ * 시작한다(spec이 위치를 명시하지 않아 가장 단순·안전한 선택: 문서 끝/새 페이지에 차례로
+ * 추가). applyActionScript은 문단 인덱스 내림차순으로 적용하지만 같은 target_id의
+ * INSERT_AFTER끼리는 입력 역순으로 적용돼 입력 정순(항목1, 항목2, …)으로 문서에 남는다.
+ */
+export function buildFormFillEdits(
+  table: FormSourceTable,
+  entries: FormFillEntry[],
+  anchorTargetId: string,
+): FormFillEditPlan[] {
+  return entries.map((entry) => {
+    const { cellFills, skipped } = buildFormFillMapping(table, entry);
+    const edit: Edit = {
+      command: 'INSERT_AFTER',
+      target_id: anchorTargetId,
+      payload: {
+        type: 'clone_table',
+        page_break: true,
+        clone_table: {
+          clone_from: {
+            section: table.section,
+            paragraph: table.paragraph,
+            control_index: table.control_index,
+          },
+          cell_fills: cellFills,
+        },
+      },
+    };
+    return { edit, skipped };
+  });
+}
+
 /** `sec[para]` 위치에 표를 만들고 matrix 텍스트로 셀을 채운다. */
 function createTableAt(wasm: WasmEditing, sec: number, para: number, edit: Edit): void {
   const data = edit.payload.table_data!;
