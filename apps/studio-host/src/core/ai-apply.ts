@@ -522,8 +522,8 @@ export function applyActionScript(
   // 본문 INSERT/REPLACE의 최종 위치를 추적한다. 적용 순서(내림차순)에서 낮은
   // 문단에 삽입이 일어나면 이미 기록된(더 높은) 위치를 +1 밀어 정합을 유지한다.
   const changed: ChangedPara[] = [];
-  const shiftFrom = (sec: number, fromPara: number) => {
-    for (const c of changed) if (c.sec === sec && c.para >= fromPara) c.para += 1;
+  const shiftFrom = (sec: number, fromPara: number, by = 1) => {
+    for (const c of changed) if (c.sec === sec && c.para >= fromPara) c.para += by;
   };
 
   let applied = 0;
@@ -548,16 +548,20 @@ export function applyActionScript(
         applyFormatEdit(wasm, item.edit, item.sec, item.para);
         changed.push({ sec: item.sec, para: item.para });
       } else {
-        applyOne(wasm, item, images);
+        // extra = 다줄 분할로 첫 결과 문단 외에 추가된 문단 수(\n 없으면 0).
+        const extra = applyOne(wasm, item, images);
         const { sec, para, edit } = item;
         if (edit.command === 'INSERT_AFTER') {
-          shiftFrom(sec, para + 1);
-          changed.push({ sec, para: para + 1 });
+          // para+1..para+1+extra 에 총 (1+extra)개 문단이 끼어든다.
+          shiftFrom(sec, para + 1, 1 + extra);
+          for (let i = 0; i <= extra; i += 1) changed.push({ sec, para: para + 1 + i });
         } else if (edit.command === 'INSERT_BEFORE') {
-          shiftFrom(sec, para);
-          changed.push({ sec, para });
+          shiftFrom(sec, para, 1 + extra);
+          for (let i = 0; i <= extra; i += 1) changed.push({ sec, para: para + i });
         } else if (edit.command === 'REPLACE') {
-          changed.push({ sec, para });
+          // 원문 문단은 제자리, 그 뒤에 extra개 새 문단이 추가된다.
+          if (extra > 0) shiftFrom(sec, para + 1, extra);
+          for (let i = 0; i <= extra; i += 1) changed.push({ sec, para: para + i });
         }
       }
       applied += 1;
@@ -614,13 +618,53 @@ function applyParaStyle(wasm: WasmEditing, sec: number, para: number, text: stri
   }
 }
 
+/**
+ * 채우기 텍스트를 줄(\n) 단위로 나눈다. \n이 없으면 길이 1 배열(기존 단일 경로).
+ * 빈 줄(\n\n)도 빈 문자열로 보존해 빈 문단이 되게 한다(AC-dcebbb).
+ */
+function splitLines(text: string): string[] {
+  return text.split('\n');
+}
+
+/**
+ * 본문 문단 `firstPara`부터 여러 줄을 각각 별도 문단으로 채운다. 첫 줄은 이미
+ * (호출 측이) 빈 문단으로 만들어 둔 `firstPara`에 넣고, 이후 줄마다 문단 끝에서
+ * 분할해 새 문단에 넣는다. 각 파생 문단에 동일 style을 적용해 서식을 상속한다.
+ * 반환값은 첫 줄 외에 추가로 만든 문단 수(lines.length - 1).
+ */
+function fillBodyLines(
+  wasm: WasmEditing,
+  sec: number,
+  firstPara: number,
+  lines: string[],
+  style: string | undefined,
+): number {
+  for (let i = 0; i < lines.length; i += 1) {
+    const para = firstPara + i;
+    if (i > 0) {
+      // 직전 문단 끝에서 분할 → 새 빈 문단(para)을 만든다.
+      const prevLen = wasm.getParagraphLength(sec, firstPara + i - 1);
+      wasm.splitParagraph(sec, firstPara + i - 1, prevLen);
+    }
+    if (lines[i]) wasm.insertText(sec, para, 0, lines[i]);
+    applyParaStyle(wasm, sec, para, lines[i], style);
+  }
+  return lines.length - 1;
+}
+
+/**
+ * 본문 편집을 적용한다. INSERT/REPLACE에서 텍스트에 \n이 있으면 줄마다 별도
+ * 문단으로 분할 삽입한다(AC-dcebbb). 반환값은 첫 결과 문단 외에 추가로 생성된
+ * 문단 수 — 호출 측 changed/shiftFrom 정합 유지에 쓴다(0이면 기존과 동일).
+ */
 function applyOne(
   wasm: WasmEditing,
   { edit, sec, para }: { edit: Edit; sec: number; para: number },
   images: ImageForInsert[],
-): void {
+): number {
   const text = edit.payload.text ?? '';
   const pageBreak = edit.payload.page_break === true;
+  const lines = splitLines(text);
   switch (edit.command) {
     case 'INSERT_AFTER': {
       const length = wasm.getParagraphLength(sec, para);
@@ -630,13 +674,15 @@ function applyOne(
       } else if (isImageEdit(edit)) {
         insertImageAt(wasm, sec, para + 1, edit, images);
       } else {
-        wasm.insertText(sec, para + 1, 0, text);
         // 새 문단은 style 미지정 시 body 기본 — 미적용 시 문단 간격 0으로 빽빽해진다.
-        applyParaStyle(wasm, sec, para + 1, text, edit.payload.style ?? 'body');
+        const extra = fillBodyLines(wasm, sec, para + 1, lines, edit.payload.style ?? 'body');
+        // 새 문단을 새 페이지에서 시작(긴 새 내용/새 절 추가용).
+        if (pageBreak) wasm.insertPageBreak(sec, para + 1, 0);
+        return extra;
       }
       // 새 문단을 새 페이지에서 시작(긴 새 내용/새 절 추가용).
       if (pageBreak) wasm.insertPageBreak(sec, para + 1, 0);
-      break;
+      return 0;
     }
     case 'INSERT_BEFORE': {
       // 오프셋 0에서 분할하면 빈 문단이 para 위치에 생기고 원문은 para+1로 밀린다.
@@ -646,27 +692,27 @@ function applyOne(
       } else if (isImageEdit(edit)) {
         insertImageAt(wasm, sec, para, edit, images);
       } else {
-        wasm.insertText(sec, para, 0, text);
-        applyParaStyle(wasm, sec, para, text, edit.payload.style ?? 'body');
+        const extra = fillBodyLines(wasm, sec, para, lines, edit.payload.style ?? 'body');
+        if (pageBreak) wasm.insertPageBreak(sec, para, 0);
+        return extra;
       }
       if (pageBreak) wasm.insertPageBreak(sec, para, 0);
-      break;
+      return 0;
     }
     case 'REPLACE': {
       const length = wasm.getParagraphLength(sec, para);
       if (length > 0) wasm.deleteText(sec, para, 0, length);
-      wasm.insertText(sec, para, 0, text);
-      applyParaStyle(wasm, sec, para, text, edit.payload.style);
-      break;
+      return fillBodyLines(wasm, sec, para, lines, edit.payload.style);
     }
     case 'DELETE': {
       const length = wasm.getParagraphLength(sec, para);
       if (length > 0) wasm.deleteText(sec, para, 0, length);
       // 문단 경계를 이웃과 병합해 빈 문단을 제거한다.
       wasm.mergeParagraph(sec, para > 0 ? para : 1);
-      break;
+      return 0;
     }
   }
+  return 0;
 }
 
 /**
@@ -1124,8 +1170,58 @@ function styleTableCells(
   }
 }
 
+/**
+ * 최상위(flat) 셀 문단 `firstCp`부터 여러 줄을 각각 별도 문단으로 채운다. 첫 줄은
+ * 비어 있는 `firstCp`에 넣고, 이후 줄마다 직전 셀 문단 끝에서 분할해 새 문단에 넣는다.
+ * 셀 문단 서식은 splitParagraphInCell이 분할 시 원 문단 모양을 상속하므로 유지된다
+ * (AC-cf5898). 표 구조(행/열/병합)는 건드리지 않고 셀 내부 문단만 늘린다(AC-f1c06b).
+ */
+function fillCellLinesFlat(
+  wasm: WasmEditing,
+  c: CellTarget,
+  ci: number,
+  ce: number,
+  firstCp: number,
+  lines: string[],
+): void {
+  for (let i = 0; i < lines.length; i += 1) {
+    const cp = firstCp + i;
+    if (i > 0) {
+      const prevLen = wasm.getCellParagraphLength(c.sec, c.parentPara, ci, ce, cp - 1);
+      wasm.splitParagraphInCell(c.sec, c.parentPara, ci, ce, cp - 1, prevLen);
+    }
+    if (lines[i]) wasm.insertTextInCell(c.sec, c.parentPara, ci, ce, cp, 0, lines[i]);
+  }
+}
+
+/**
+ * by-path 셀 문단 경로의 마지막 단계 인덱스 `firstCp`부터 여러 줄을 별도 문단으로
+ * 채운다. 분할이 원 셀 문단 모양을 상속하므로 서식이 유지된다(AC-cf5898).
+ */
+function fillCellLinesByPath(
+  wasm: WasmEditing,
+  c: CellTarget,
+  firstCp: number,
+  lines: string[],
+): void {
+  const pathAt = (cellParaIndex: number): string => {
+    const path = c.path.map((e) => ({ ...e }));
+    path[path.length - 1].cellParaIndex = cellParaIndex;
+    return JSON.stringify(path);
+  };
+  for (let i = 0; i < lines.length; i += 1) {
+    const cp = firstCp + i;
+    if (i > 0) {
+      const prevLen = wasm.getCellParagraphLengthByPath(c.sec, c.parentPara, pathAt(cp - 1));
+      wasm.splitParagraphInCellByPath(c.sec, c.parentPara, pathAt(cp - 1), prevLen);
+    }
+    if (lines[i]) wasm.insertTextInCellByPath(c.sec, c.parentPara, pathAt(cp), 0, lines[i]);
+  }
+}
+
 function applyOneCell(wasm: WasmEditing, edit: Edit, c: CellTarget): void {
   const text = edit.payload.text ?? '';
+  const lines = splitLines(text);
 
   // 최상위(경로 1단계) 셀·글상자 편집은 flat API로 처리한다 — by-path와 달리
   // reflow가 일어나 긴 텍스트가 줄바꿈되고 높이가 늘어나며, rhwp의 flat 경로는
@@ -1138,54 +1234,47 @@ function applyOneCell(wasm: WasmEditing, edit: Edit, c: CellTarget): void {
         const length = wasm.getCellParagraphLength(c.sec, c.parentPara, ci, ce, cp);
         if (length > 0) wasm.deleteTextInCell(c.sec, c.parentPara, ci, ce, cp, 0, length);
         if (edit.command === 'REPLACE') {
-          wasm.insertTextInCell(c.sec, c.parentPara, ci, ce, cp, 0, text);
+          fillCellLinesFlat(wasm, c, ci, ce, cp, lines);
         }
         return;
       }
       case 'INSERT_AFTER': {
-        // 현재 문단 끝에서 분할 → 새 문단(cp+1)에 텍스트 삽입.
+        // 현재 문단 끝에서 분할 → 새 문단(cp+1)에 텍스트(다줄이면 줄마다) 삽입.
         const length = wasm.getCellParagraphLength(c.sec, c.parentPara, ci, ce, cp);
         wasm.splitParagraphInCell(c.sec, c.parentPara, ci, ce, cp, length);
-        wasm.insertTextInCell(c.sec, c.parentPara, ci, ce, cp + 1, 0, text);
+        fillCellLinesFlat(wasm, c, ci, ce, cp + 1, lines);
         return;
       }
       case 'INSERT_BEFORE': {
         // 오프셋 0에서 분할 → 빈 문단이 cp에 생기고 원문은 cp+1로 밀린다. cp에 삽입.
         wasm.splitParagraphInCell(c.sec, c.parentPara, ci, ce, cp, 0);
-        wasm.insertTextInCell(c.sec, c.parentPara, ci, ce, cp, 0, text);
+        fillCellLinesFlat(wasm, c, ci, ce, cp, lines);
         return;
       }
     }
   }
 
   const pathJson = JSON.stringify(c.path);
-
-  // 경로 마지막 단계의 cellParaIndex만 바꿔 같은 셀의 다른 문단을 가리킨다.
-  const pathAt = (cellParaIndex: number): string => {
-    const path = c.path.map((e) => ({ ...e }));
-    path[path.length - 1].cellParaIndex = cellParaIndex;
-    return JSON.stringify(path);
-  };
   const lastIdx = c.path[c.path.length - 1].cellParaIndex;
 
   switch (edit.command) {
     case 'INSERT_AFTER': {
-      // 현재 셀 문단 끝에서 분할 → 새 문단(i+1)에 텍스트 삽입.
+      // 현재 셀 문단 끝에서 분할 → 새 문단(i+1)에 텍스트(다줄이면 줄마다) 삽입.
       const length = wasm.getCellParagraphLengthByPath(c.sec, c.parentPara, pathJson);
       wasm.splitParagraphInCellByPath(c.sec, c.parentPara, pathJson, length);
-      wasm.insertTextInCellByPath(c.sec, c.parentPara, pathAt(lastIdx + 1), 0, text);
+      fillCellLinesByPath(wasm, c, lastIdx + 1, lines);
       break;
     }
     case 'INSERT_BEFORE': {
       // 오프셋 0에서 분할 → 빈 문단이 i에 생기고 원문은 i+1로 밀린다. i에 삽입.
       wasm.splitParagraphInCellByPath(c.sec, c.parentPara, pathJson, 0);
-      wasm.insertTextInCellByPath(c.sec, c.parentPara, pathJson, 0, text);
+      fillCellLinesByPath(wasm, c, lastIdx, lines);
       break;
     }
     case 'REPLACE': {
       const length = wasm.getCellParagraphLengthByPath(c.sec, c.parentPara, pathJson);
       if (length > 0) wasm.deleteTextInCellByPath(c.sec, c.parentPara, pathJson, 0, length);
-      wasm.insertTextInCellByPath(c.sec, c.parentPara, pathJson, 0, text);
+      fillCellLinesByPath(wasm, c, lastIdx, lines);
       break;
     }
     case 'DELETE': {

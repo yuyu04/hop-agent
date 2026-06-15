@@ -1212,4 +1212,331 @@ describe('applyActionScript', () => {
     expect(result.skipped[0].targetId).toBe('sec[0].tbl[0]');
     expect(wasm.calls).toEqual([]);
   });
+
+  // ── F-466f8e: 다줄 텍스트 채우기 (줄바꿈 → 문단 분할) ─────────
+
+  describe('AC-dcebbb (body multi-line split)', () => {
+    it('INSERT_AFTER with newlines splits into multiple paragraphs (no \\n in results)', () => {
+      const wasm = new FakeWasm();
+      wasm.lengths['0.1'] = 5;
+      const result = applyActionScript(
+        wasm,
+        script([
+          {
+            command: 'INSERT_AFTER',
+            target_id: 'sec[0].p[1]',
+            payload: { text: '첫 줄\n두 번째\n세 번째', style: 'body' },
+          },
+        ]),
+      );
+      expect(result.applied).toBe(1);
+      const inserts = wasm.calls.filter((c) => c.startsWith('insertText('));
+      // 3줄 → 3개 insertText 호출
+      expect(inserts).toHaveLength(3);
+      expect(inserts).toEqual([
+        'insertText(0,2,0,"첫 줄")',
+        'insertText(0,3,0,"두 번째")',
+        'insertText(0,4,0,"세 번째")',
+      ]);
+      // 줄바꿈 문자가 남아있지 않음
+      inserts.forEach((call) => {
+        expect(call).not.toContain('\\n');
+      });
+      // splitParagraph: 초기(INSERT_AFTER) 1회 + fillBodyLines(2줄) 2회 = 3회
+      const splits = wasm.calls.filter((c) => c.startsWith('splitParagraph('));
+      expect(splits).toHaveLength(3);
+      expect(result.changed).toHaveLength(3); // 3개 문단이 changed에 기록됨
+    });
+
+    it('REPLACE with newlines splits into multiple paragraphs', () => {
+      const wasm = new FakeWasm();
+      wasm.lengths['0.2'] = 4;
+      const result = applyActionScript(
+        wasm,
+        script([
+          {
+            command: 'REPLACE',
+            target_id: 'sec[0].p[2]',
+            payload: { text: '연구내용 1\n연구내용 2\n연구내용 3' },
+          },
+        ]),
+      );
+      expect(result.applied).toBe(1);
+      const inserts = wasm.calls.filter((c) => c.startsWith('insertText('));
+      expect(inserts).toHaveLength(3);
+      // REPLACE는 초기 분할 없음, fillBodyLines만 2줄 분할
+      const splits = wasm.calls.filter((c) => c.startsWith('splitParagraph('));
+      expect(splits).toHaveLength(2);
+    });
+
+    it('empty lines in split text create empty paragraphs', () => {
+      const wasm = new FakeWasm();
+      wasm.lengths['0.0'] = 3;
+      applyActionScript(
+        wasm,
+        script([
+          {
+            command: 'INSERT_AFTER',
+            target_id: 'sec[0].p[0]',
+            payload: { text: '첫 줄\n\n세 번째' },
+          },
+        ]),
+      );
+      const inserts = wasm.calls.filter((c) => c.startsWith('insertText('));
+      // 3줄(첫, 빈, 세) → insertText는 빈 줄을 건너뛴다
+      expect(inserts).toHaveLength(2); // "첫 줄"과 "세 번째"만
+      expect(inserts[0]).toContain('"첫 줄"');
+      expect(inserts[1]).toContain('"세 번째"');
+      // 초기 1회 + fillBodyLines 2줄 분할 2회 = 3회
+      const splits = wasm.calls.filter((c) => c.startsWith('splitParagraph('));
+      expect(splits).toHaveLength(3);
+    });
+  });
+
+  describe('AC-f1c06b (cell multi-line via splitParagraphInCell)', () => {
+    it('REPLACE in top-level cell with newlines uses splitParagraphInCell for each extra line', () => {
+      const wasm = new FakeWasm();
+      wasm.lengths['0.2.0.5.0'] = 5;
+      const result = applyActionScript(
+        wasm,
+        script([
+          {
+            command: 'REPLACE',
+            target_id: 'sec[0].p[2].tbl[0].cell[5].p[0]',
+            payload: { text: '항목 1\n항목 2\n항목 3' },
+          },
+        ]),
+      );
+      expect(result.applied).toBe(1);
+      const splits = wasm.calls.filter((c) => c.startsWith('splitParagraphInCell('));
+      // fillCellLinesFlat: 2줄 분할 (3줄이므로 줄마다 분할하되 i>0일 때만)
+      expect(splits).toHaveLength(2);
+      const inserts = wasm.calls.filter((c) => c.startsWith('insertTextInCell('));
+      expect(inserts).toHaveLength(3);
+      // 표 구조 변경 API 호출 없음
+      expect(wasm.calls.some((c) => c.startsWith('insertTableRow'))).toBe(false);
+      expect(wasm.calls.some((c) => c.startsWith('insertTableColumn'))).toBe(false);
+      expect(wasm.calls.some((c) => c.startsWith('mergeTableCells'))).toBe(false);
+    });
+
+    it('INSERT_AFTER in top-level cell with newlines splits and fills each line', () => {
+      const wasm = new FakeWasm();
+      wasm.lengths['0.2.0.5.0'] = 3;
+      const result = applyActionScript(
+        wasm,
+        script([
+          {
+            command: 'INSERT_AFTER',
+            target_id: 'sec[0].p[2].tbl[0].cell[5].p[0]',
+            payload: { text: '추가 1\n추가 2' },
+          },
+        ]),
+      );
+      expect(result.applied).toBe(1);
+      const splits = wasm.calls.filter((c) => c.startsWith('splitParagraphInCell('));
+      // 첫 번째 분할(p[0] 끝) + 2줄 fillCellLinesFlat(1줄 분할) = 2회
+      expect(splits).toHaveLength(2);
+      const inserts = wasm.calls.filter((c) => c.startsWith('insertTextInCell('));
+      expect(inserts).toHaveLength(2); // 2줄
+      expect(inserts[0]).toContain('"추가 1"');
+      expect(inserts[1]).toContain('"추가 2"');
+    });
+
+    it('REPLACE in nested cell with newlines uses splitParagraphInCellByPath', () => {
+      const wasm = new FakeWasm();
+      const path =
+        '[{"controlIndex":2,"cellIndex":0,"cellParaIndex":4},{"controlIndex":0,"cellIndex":11,"cellParaIndex":0}]';
+      wasm.lengths[`0.0.${path}`] = 5;
+      const result = applyActionScript(
+        wasm,
+        script([
+          {
+            command: 'REPLACE',
+            target_id: 'sec[0].p[0].tbl[2].cell[0].p[4].tbl[0].cell[11].p[0]',
+            payload: { text: '중첩 줄 1\n중첩 줄 2' },
+          },
+        ]),
+      );
+      expect(result.applied).toBe(1);
+      const splits = wasm.calls.filter((c) => c.startsWith('splitParagraphInCellByPath('));
+      // fillCellLinesByPath: 2줄이므로 1줄 분할
+      expect(splits).toHaveLength(1);
+      const inserts = wasm.calls.filter((c) => c.startsWith('insertTextInCellByPath('));
+      expect(inserts).toHaveLength(2);
+      expect(inserts[0]).toContain('"중첩 줄 1"');
+      expect(inserts[1]).toContain('"중첩 줄 2"');
+      // 표 구조 변경 API 호출 없음
+      expect(wasm.calls.some((c) => c.startsWith('insertTableRow'))).toBe(false);
+      expect(wasm.calls.some((c) => c.startsWith('insertTableColumn'))).toBe(false);
+      expect(wasm.calls.some((c) => c.startsWith('mergeTableCells'))).toBe(false);
+    });
+
+    it('INSERT_BEFORE in nested cell with newlines uses splitParagraphInCellByPath', () => {
+      const wasm = new FakeWasm();
+      const path =
+        '[{"controlIndex":1,"cellIndex":3,"cellParaIndex":0},{"controlIndex":0,"cellIndex":7,"cellParaIndex":2}]';
+      wasm.lengths[`0.1.${path}`] = 0;
+      const result = applyActionScript(
+        wasm,
+        script([
+          {
+            command: 'INSERT_BEFORE',
+            target_id: 'sec[0].p[1].tbl[1].cell[3].p[0].tbl[0].cell[7].p[2]',
+            payload: { text: '앞추가 1\n앞추가 2\n앞추가 3' },
+          },
+        ]),
+      );
+      expect(result.applied).toBe(1);
+      const splits = wasm.calls.filter((c) => c.startsWith('splitParagraphInCellByPath('));
+      // 초기(INSERT_BEFORE) 1회 + fillCellLinesByPath(2줄) 2회 = 3회
+      expect(splits).toHaveLength(3);
+      const inserts = wasm.calls.filter((c) => c.startsWith('insertTextInCellByPath('));
+      expect(inserts).toHaveLength(3);
+    });
+  });
+
+  describe('AC-cf5898 (format inheritance)', () => {
+    it('body multi-line split applies style to each derived paragraph', () => {
+      const wasm = new FakeWasm();
+      wasm.lengths['0.1'] = 0;
+      applyActionScript(
+        wasm,
+        script([
+          {
+            command: 'INSERT_AFTER',
+            target_id: 'sec[0].p[1]',
+            payload: { text: '스타일 1\n스타일 2', style: 'heading' },
+          },
+        ]),
+      );
+      // applyParaStyle가 각 문단마다 호출됨
+      const charFormats = wasm.calls.filter((c) => c.startsWith('applyCharFormat('));
+      const paraFormats = wasm.calls.filter((c) => c.startsWith('applyParaFormat('));
+      // 2줄 → 각각 charFormat/paraFormat 적용
+      expect(charFormats.length).toBeGreaterThanOrEqual(2);
+      expect(paraFormats.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it('flat cell multi-line split preserves formatting via splitParagraphInCell inheritance', () => {
+      const wasm = new FakeWasm();
+      wasm.lengths['0.2.0.5.0'] = 0;
+      applyActionScript(
+        wasm,
+        script([
+          {
+            command: 'INSERT_AFTER',
+            target_id: 'sec[0].p[2].tbl[0].cell[5].p[0]',
+            payload: { text: '형식 A\n형식 B\n형식 C' },
+          },
+        ]),
+      );
+      // splitParagraphInCell이 원 셀 문단의 형식을 상속 → 추가 형식 호출 없음
+      const cellParaFormats = wasm.calls.filter((c) => c.startsWith('applyParaFormatInCell('));
+      // 형식 호출이 없거나(분할이 상속함) 최소한 분할된 줄 수보다 적음
+      expect(cellParaFormats.length).toBeLessThanOrEqual(0);
+    });
+
+    it('nested cell multi-line split preserves formatting via splitParagraphInCellByPath', () => {
+      const wasm = new FakeWasm();
+      const path =
+        '[{"controlIndex":2,"cellIndex":0,"cellParaIndex":4},{"controlIndex":0,"cellIndex":11,"cellParaIndex":0}]';
+      wasm.lengths[`0.0.${path}`] = 0;
+      applyActionScript(
+        wasm,
+        script([
+          {
+            command: 'REPLACE',
+            target_id: 'sec[0].p[0].tbl[2].cell[0].p[4].tbl[0].cell[11].p[0]',
+            payload: { text: '중첩형식 1\n중첩형식 2' },
+          },
+        ]),
+      );
+      // by-path API는 자동으로 형식을 상속 → 추가 형식 호출 없음
+      const byPathCalls = wasm.calls.filter((c) => c.includes('ByPath'));
+      expect(byPathCalls.length).toBeGreaterThan(0);
+      // 중첩 셀 전용 형식 API(예: applyParaFormatInCellByPath)는 호출되지 않음
+      expect(wasm.calls.some((c) => c.includes('applyParaFormatInCellByPath'))).toBe(false);
+    });
+  });
+
+  describe('AC-0e8abc (no-newline regression)', () => {
+    it('single-line text results in one insert and one initial split (unchanged path)', () => {
+      const wasm = new FakeWasm();
+      wasm.lengths['0.1'] = 5;
+      applyActionScript(
+        wasm,
+        script([
+          {
+            command: 'INSERT_AFTER',
+            target_id: 'sec[0].p[1]',
+            payload: { text: '단일 줄 텍스트' },
+          },
+        ]),
+      );
+      // INSERT_AFTER: 초기 분할 1회 + fillBodyLines(1줄) 0회 = 1회
+      const splits = wasm.calls.filter((c) => c.startsWith('splitParagraph('));
+      expect(splits).toHaveLength(1); // 초기 분할만
+      const inserts = wasm.calls.filter((c) => c.startsWith('insertText('));
+      expect(inserts).toHaveLength(1); // 단일 삽입
+    });
+
+    it('REPLACE without newlines does not split', () => {
+      const wasm = new FakeWasm();
+      wasm.lengths['0.2'] = 4;
+      applyActionScript(
+        wasm,
+        script([
+          {
+            command: 'REPLACE',
+            target_id: 'sec[0].p[2]',
+            payload: { text: '단순 교체' },
+          },
+        ]),
+      );
+      // REPLACE는 초기 분할이 없음, fillBodyLines(1줄) 0회 = 0회
+      const splits = wasm.calls.filter((c) => c.startsWith('splitParagraph('));
+      expect(splits).toHaveLength(0);
+      const inserts = wasm.calls.filter((c) => c.startsWith('insertText('));
+      expect(inserts).toHaveLength(1);
+    });
+
+    it('cell REPLACE without newlines uses single insertTextInCell', () => {
+      const wasm = new FakeWasm();
+      wasm.lengths['0.2.0.5.0'] = 8;
+      applyActionScript(
+        wasm,
+        script([
+          {
+            command: 'REPLACE',
+            target_id: 'sec[0].p[2].tbl[0].cell[5].p[0]',
+            payload: { text: '셀 내용' },
+          },
+        ]),
+      );
+      const splits = wasm.calls.filter((c) => c.startsWith('splitParagraphInCell('));
+      expect(splits).toHaveLength(0); // 줄바꿈이 없으면 분할 없음
+      const inserts = wasm.calls.filter((c) => c.startsWith('insertTextInCell('));
+      expect(inserts).toHaveLength(1);
+    });
+
+    it('cell INSERT_BEFORE without newlines uses single insert', () => {
+      const wasm = new FakeWasm();
+      const result = applyActionScript(
+        wasm,
+        script([
+          {
+            command: 'INSERT_BEFORE',
+            target_id: 'sec[0].p[0].tbl[2].cell[0].p[0]',
+            payload: { text: '앞 단일' },
+          },
+        ]),
+      );
+      expect(result.applied).toBe(1);
+      // INSERT_BEFORE: 초기 분할 1회 + fillCellLinesFlat(1줄) 0회 = 1회
+      const splits = wasm.calls.filter((c) => c.startsWith('splitParagraphInCell('));
+      expect(splits).toHaveLength(1); // INSERT_BEFORE 초기 분할만
+      const inserts = wasm.calls.filter((c) => c.startsWith('insertTextInCell('));
+      expect(inserts).toHaveLength(1);
+    });
+  });
 });

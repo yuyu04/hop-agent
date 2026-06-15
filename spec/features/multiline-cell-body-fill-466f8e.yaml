@@ -1,0 +1,47 @@
+id: F-466f8e
+slug: multiline-cell-body-fill
+title: "표 셀·본문 다줄 텍스트 채우기 — 줄바꿈을 문단으로 분할"
+status: planned
+modules:
+  - apps/studio-host/src/core/ai-apply.ts
+acceptance_criteria:
+  - id: AC-dcebbb
+    ears: event
+    condition: "When AI가 줄바꿈(\\n)을 포함한 텍스트를 본문 문단 또는 표 셀에 채우면"
+    text: "The system shall 그 텍스트의 줄바꿈(\\n)을 문단 경계로 분할하여 각 줄을 별도 문단으로 삽입하고, 결과 문단의 텍스트에는 \\n 문자가 남지 않게 한다."
+    test_refs: ["apps/studio-host/src/core/ai-apply.test.ts"]
+    notes: |
+      ## Why
+      rhwp insert_text_at은 \n(0x0A)을 HWP 문단/줄나눔으로 변환하지 않고 일반 문자로 한 문단에 박아넣는다. 따라서 다줄 내용(예: 연구노트 양식 '연구내용' 칸)이 한 줄로 뭉친다. applyOne(본문)·applyOneCell(셀)의 REPLACE/INSERT_AFTER/INSERT_BEFORE 분기에서 채우는 텍스트를 \n으로 split한 뒤 줄별로 문단을 만들어 넣어야 한다.
+      ## Trade-off
+      분할은 채우기 단계에서만 수행한다 — 직렬화/diff 표시는 원문 그대로 두고, 적용 직전에 문단 분할로 변환한다.
+  - id: AC-f1c06b
+    ears: event
+    condition: "When 다줄 텍스트를 표 셀에 채우면"
+    text: "The system shall splitParagraphInCell(또는 by-path 변형)로 셀 내부 문단 수를 늘려 각 줄을 채우고, 표의 행/열/병합 구조는 변경하지 않는다."
+    test_refs: ["apps/studio-host/src/core/ai-apply.test.ts"]
+    notes: |
+      ## Decision
+      표 구조(행/열/병합)는 절대 변경하지 않는다 — 기존 양식 디자인 보존이 목표이고 입력칸만 채운다. 새 행/열을 추가하지 않고 셀 내부 문단을 분할/추가해 다줄을 표현한다. 셀 채우기는 by-index가 아니라 cell path 기반 변형(splitParagraphInCell by-path)을 사용해 중첩/병합 상황에서도 대상 셀을 정확히 식별한다.
+  - id: AC-cf5898
+    ears: ubiquitous
+    text: "The system shall 분할로 생성된 각 문단이 원래 대상(본문 문단 또는 셀 문단)의 서식을 상속·유지하게 한다."
+    test_refs: ["apps/studio-host/src/core/ai-apply.test.ts"]
+    notes: |
+      ## Why
+      첫 줄만 서식이 맞고 나머지가 기본 서식으로 떨어지면 양식 일관성이 깨진다. 분할 시 원 대상 문단의 문단/글자 속성을 모든 파생 문단에 적용한다.
+  - id: AC-0e8abc
+    ears: unwanted
+    condition: "If 채우는 텍스트에 줄바꿈(\\n)이 없으면"
+    text: "The system shall 기존과 동일하게 단일 삽입(insertText/insertTextInCell)으로 처리하여 회귀가 없게 한다."
+    test_refs: ["apps/studio-host/src/core/ai-apply.test.ts"]
+    notes: |
+      ## Why
+      단일 줄 경로는 검증된 기존 동작이다. \n 미포함 입력에 대해 분할 로직이 추가 문단/빈 문단을 만들지 않도록 빠른 경로를 유지한다.
+  - id: AC-989a92
+    ears: ubiquitous
+    text: "The system shall 다줄 셀 채우기로 변경·저장된 HWP가 hwp_table_check.py 검증을 exit 0으로 통과하게 한다 (필수 게이트)."
+    test_refs: ["apps/studio-host/src/core/ai-apply.test.ts", "apps/desktop/src-tauri/src/ai/serialize.rs"]
+    notes: |
+      ## Decision
+      F-7a3dbe AC-d13e41과 동일한 표 검증 게이트. 셀 내부 문단을 늘리는 변경도 표 라운드트립을 깨지 않아야 하므로 hwp_table_fix 후처리 포함 저장본을 hwp_table_check.py로 exit 0 확인한다.
