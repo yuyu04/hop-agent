@@ -1,7 +1,7 @@
 id: F-220afd
 slug: clone-form-table-fill
 title: "기존 양식 표 복제 후 채우기 — 반복 양식 이어쓰기 (clone-not-compose)"
-status: planned
+status: done
 modules:
   - apps/desktop/src-tauri/src/ai/serialize.rs
   - apps/desktop/src-tauri/src/ai/schema.rs
