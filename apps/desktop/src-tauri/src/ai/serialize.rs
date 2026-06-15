@@ -740,11 +740,13 @@ fn collect_form_tables(core: &DocumentCore) -> Vec<FormTable> {
                     text: text.trim().to_string(),
                 });
             }
-            // 양식 표 판정: 라벨칸과 입력칸이 모두 있어야 '채울 폼'으로 본다(전부 채워졌거나
-            // 전부 비었으면 일반 표). 한 칸이라도 label, 한 칸이라도 input이면 폼으로 노출.
-            let has_label = cells.iter().any(|c| c.role == "label");
-            let has_input = cells.iter().any(|c| c.role == "input");
-            if rows >= 1 && cols >= 1 && has_label && has_input {
+            // 양식 표 판정: 채움 상태(has_label/has_input)에 의존하지 않는다 [F-220afd AC-facb58].
+            // 가장 흔한 케이스(이미 다 채워진 기존 항목을 복제)에서도 표가 복제 소스로 노출돼야
+            // 하므로 '빈 입력칸 존재'를 요구하지 않는다. 대신 구조적 판정으로 진짜 항목 표(다행
+            // 그리드)는 노출하되 1행짜리 장식 박스는 거른다 — rows >= 2를 임계로 둔다(over-surface는
+            // 허용: AI가 셀 내용으로 소스를 고르고 시스템 프롬프트가 clone-not-compose를 강제한다).
+            // role("label"/"input")은 cells에 정보성 힌트로만 남는다(노출 게이트 아님).
+            if rows >= 2 && cols >= 1 {
                 cells.sort_by(|a, b| (a.row, a.col).cmp(&(b.row, b.col)));
                 tables.push(FormTable {
                     section: sec as u32,
@@ -1197,6 +1199,83 @@ mod tests {
         assert!(whitelist.contains(&form_table_token(0, tp as u32, ctrl as u32)));
     }
 
+    /// [F-220afd AC-facb58 회귀 가드] 완전히 채워진 기존 항목 표(빈 입력칸 없음)도
+    /// 복제 소스로 노출되는지 검증한다.
+    ///
+    /// 연구노트 문서의 가장 흔한 케이스: 기존 항목은 제목/내용/기록자/날짜가 전부 채워져 있다.
+    /// 옛 코드는 has_input(빈 셀 존재)를 게이트로 사용해 이 표들을 form_tables에서 제외했다 →
+    /// AI는 복제 대상이 없어 compose 폴백 → 새로 그린 항목이 원본 6행×3열과 달라짐.
+    /// 개선: 채움 상태와 무관하게 구조적 판정(rows >= 2 && cols >= 1)으로 노출해
+    /// 완전히 채워진 기존 항목도 복제 소스로 쓸 수 있게 한다.
+    #[test]
+    fn fully_filled_entry_table_is_surfaced_as_clone_source() {
+        let mut core = blank_core();
+        core.insert_text_native(0, 0, 0, "연구노트 — 기존 항목").unwrap();
+        
+        // 실제 연구노트 폼과 유사한 구조: 3행×2열
+        let result = core.create_table_native(0, 0, 0, 3, 2).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&result).unwrap();
+        let ctrl = v.get("controlIdx").and_then(|c| c.as_u64()).unwrap() as usize;
+        let tp = v.get("paraIdx").and_then(|c| c.as_u64()).unwrap() as usize;
+        
+        // 모든 6개 셀을 완전히 채운다 — 빈 입력칸이 없다.
+        let cell_values = [
+            "제목", "새로운 연구 주제 발굴",
+            "내용", "기계학습 알고리즘 성능 비교",
+            "기록자", "2026-06-15"
+        ];
+        for (idx, value) in cell_values.iter().enumerate() {
+            core.insert_text_in_cell_native(0, tp, ctrl, idx, 0, 0, value).unwrap();
+        }
+        
+        // 액션: collect_form_tables()를 호출 — 완전히 채워진 표가 노출돼야 함.
+        let tables = collect_form_tables(&core);
+        
+        // 단언 1: 표가 노출되었다 (has_input 게이트 없음).
+        assert_eq!(tables.len(), 1, "완전히 채워진 표가 복제 소스로 노출돼야 함: {:?}", tables);
+        
+        let ft = &tables[0];
+        
+        // 단언 2: 표 식별자가 정확하다 (섹션/부모문단/controlIndex).
+        assert_eq!((ft.section, ft.paragraph, ft.control_index), (0, tp as u32, ctrl as u32),
+            "표 식별자 불일치");
+        
+        // 단언 3: 표 차원이 정확하다 (rows × cols).
+        assert_eq!((ft.rows, ft.cols), (3, 2), "표 차원 불일치");
+        
+        // 단언 4: 모든 셀이 노출되었다 (빈 셀 없음, 모두 text 포함).
+        assert_eq!(ft.cells.len(), 6, "모든 셀(6)이 노출돼야 함: {:?}", ft.cells);
+        for cell in &ft.cells {
+            // 모든 셀이 텍스트를 포함해야 함 (fully filled).
+            assert!(!cell.text.is_empty(), "셀({},{})이 텍스트를 포함해야 함: {:?}", cell.row, cell.col, cell);
+            // role은 정보성 힌트 — 모두 "label"이지만, 역할이 표 노출을 결정하지 않는다.
+            assert!(
+                cell.role == "label" || cell.role == "input",
+                "셀({},{}) role은 'label' 또는 'input'이어야 함: {:?}",
+                cell.row, cell.col, cell
+            );
+        }
+        
+        // 단언 5: 몇몇 셀의 (row, col) + text 매핑이 올바른지 확인.
+        let text_at = |row: u32, col: u32| {
+            ft.cells
+                .iter()
+                .find(|c| c.row == row && c.col == col)
+                .map(|c| c.text.clone())
+                .unwrap_or_default()
+        };
+        // 0행 0열은 "제목", 0행 1열은 "새로운 연구 주제 발굴"
+        assert_eq!(text_at(0, 0), "제목");
+        assert_eq!(text_at(0, 1), "새로운 연구 주제 발굴");
+        // 1행 0열은 "내용"
+        assert_eq!(text_at(1, 0), "내용");
+        
+        // 단언 6: 컨텍스트·화이트리스트에 표 식별자가 포함된다.
+        let (context, whitelist) = build_full_context(&core).unwrap();
+        assert_eq!(context.document_metadata.form_tables.len(), 1, "컨텍스트 form_tables에 1개 표");
+        let token = form_table_token(0, tp as u32, ctrl as u32);
+        assert!(whitelist.contains(&token), "화이트리스트에 표 토큰({}) 포함", token);
+    }
     /// 한 표(parent_para_idx, control_idx)의 leaf 셀 cellIdx→text 매핑을 렌더 레이아웃에서
     /// 수집한다. 비어있지 않은(텍스트가 채워진) 셀만 잡히므로 호출 전 모든 셀에 마커를 채운다.
     fn collect_table_cell_map(
