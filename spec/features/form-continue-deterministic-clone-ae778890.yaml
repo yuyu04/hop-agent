@@ -1,0 +1,44 @@
+id: F-ae778890
+slug: form-continue-deterministic-clone
+title: "양식 이어쓰기 모드 — 앱이 표를 결정적으로 복제하고 AI는 항목 내용만 생성"
+status: done
+modules:
+  - apps/studio-host/src/ui/agent-sidebar.ts
+  - apps/studio-host/src/core/ai-apply.ts
+  - apps/desktop/src-tauri/src/ai/schema.rs
+  - apps/desktop/src-tauri/src/ai/mod.rs
+  - apps/desktop/src-tauri/src/ai/serialize.rs
+acceptance_criteria:
+  - id: AC-0cd01fc1
+    ears: event
+    condition: "When 사용자가 양식 이어쓰기 모드로 항목 추가를 요청하면"
+    text: "The system shall AI에게 표 구조가 아니라 항목 내용(라벨→값)만 요청한다 — 응답 스키마에 표/compose 액션을 포함하지 않는다."
+    test_refs: ["apps/studio-host/src/ui/agent-sidebar.test.ts", "apps/desktop/src-tauri/src/ai/serialize.rs"]
+    notes: "## Why\nLLM은 표 구조(열 수·셀 병합)를 정확히 재현하지 못한다 — 실측: 연구노트 원본 항목은 6행×3열인데 AI가 표를 새로 그리면(compose) 6×2로 어긋난다(생성물 v1·v2 모두). 반면 칸 채우기는 안정적이다. 따라서 구조 결정을 AI에게서 완전히 제거한다.\n## Decision\nAI 출력 스키마에 표/compose 액션을 아예 포함하지 않는다 → AI가 표를 그릴 여지가 없다 → 새 항목 표는 항상 원본과 동일 구조. requestMode: 'edit'|'ask'|'proofread' 옆에 새 모드('form_fill' / '양식 이어쓰기')와 전용 오케스트레이터 runFormFill(runProofread 패턴)을 둔다.\n## Trade-off\n기존 F-220afd는 'AI가 clone_table 액션을 emit하도록' 의존하는 약한 고리가 있었다. 이 피처는 그 트리거를 앱 주도(deterministic)로 바꾼다 — AI는 항목 내용 리스트만 반환한다."
+  - id: AC-6bdb1e17
+    ears: event
+    condition: "When AI가 항목 내용 리스트를 반환하면"
+    text: "The system shall 항목마다 기존 양식 표를 결정적으로 복제(copyControl/pasteControl, cloneTableAt)하고 값칸을 채운다 — 표 구조는 AI가 결정하지 않는다."
+    test_refs: ["apps/studio-host/src/core/ai-apply.test.ts"]
+    notes: "## Decision\n항목 수 N = AI가 반환한 내용 리스트 길이. 앱이 항목마다 소스 양식 표를 cloneTableAt(F-220afd: copyControl→pasteControl 재사용)로 결정적 복제하고, 라벨명→인접 값칸 매핑으로 값칸을 채운다(다줄 = F-466f8e 셀 채우기 경로).\n## Depends\nF-220afd(cloneTableAt 결정적 복제 프리미티브), F-466f8e(다줄 셀 채우기). 이 피처는 두 의존을 앱 주도 루프로 묶는다."
+  - id: AC-cb2b6368
+    ears: ubiquitous
+    text: "The system shall 새로 추가된 각 항목 표의 행×열·병합이 소스 양식 표와 동일하게 한다."
+    test_refs: ["apps/studio-host/src/core/ai-apply.test.ts", "apps/desktop/src-tauri/src/ai/serialize.rs"]
+    notes: "## Why\n구조 동일성이 이 피처의 존재 이유다 — compose 경로를 제거했으므로 복제만으로 6행×3열·병합이 원본과 100% 일치해야 한다. doc-로컬 복제(같은 문서 내 control.clone)이므로 border_fill_id/para_shape 등이 보존된다(F-220afd 근거)."
+  - id: AC-86e329eb
+    ears: ubiquitous
+    text: "The system shall AI 내용을 라벨명으로 받아 라벨칸↔인접 값칸으로 해석해 채우고, 라벨칸은 보존한다."
+    test_refs: ["apps/studio-host/src/core/ai-apply.test.ts", "apps/desktop/src-tauri/src/ai/serialize.rs"]
+    notes: "## Decision\nAI 항목 = 라벨명→값 맵(예: {제목, 연구내용, 기록자, 확인자, 기록 일자, 확인 일자}). serialize가 소스 양식 표의 라벨↔값칸 매핑을 노출(F-220afd form_tables 기반)하고, 앱이 라벨명으로 인접 값칸을 찾아 채운다. 라벨칸은 절대 덮어쓰지 않는다 — 값칸만 REPLACE."
+  - id: AC-0d49695d
+    ears: unwanted
+    condition: "If 문서에서 복제할 양식 표를 찾지 못하면"
+    text: "The system shall 항목 추가를 거부하고 사유를 보고하며 문서를 변경하지 않는다 — 표를 새로 그리는 compose 폴백을 하지 않는다."
+    test_refs: ["apps/studio-host/src/core/ai-apply.test.ts"]
+    notes: "## Why\nF-220afd AC-f3d735의 거부 규약을 모드 수준으로 끌어올린다 — compose 폴백이 없으므로 소스 표가 없으면 조용히 새로 그리는 대신 skipped{reason}로 거부한다. 잘못된 구조를 생성하느니 아무것도 하지 않는다(no-op)."
+  - id: AC-77de6044
+    ears: ubiquitous
+    text: "The system shall 복제+채우기 후 저장된 HWP가 hwp_table_check.py 검증을 exit 0으로 통과하고, 추가된 항목 표가 소스와 동일 구조이게 한다 (필수 게이트)."
+    test_refs: ["apps/studio-host/src/core/ai-apply.test.ts", "apps/desktop/src-tauri/src/ai/serialize.rs"]
+    notes: "## Decision\nF-220afd AC-fa1b1b / F-466f8e AC-989a92와 동일한 표 검증 게이트. hwp_table_fix 후처리 포함 저장본을 hwp_table_check.py로 exit 0 확인하고, 추가된 각 항목 표의 행×열·병합이 소스와 일치하는지 추가 검증한다."
