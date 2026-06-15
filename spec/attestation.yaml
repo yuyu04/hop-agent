@@ -1,0 +1,18 @@
+# Cladding · Tier C — verification attestation (GREEN strict pre-push gate). Do not edit by hand.
+# One line per done feature: sha256 tree-hash of its modules at the last
+# attested verification. STALE_ATTESTATION compares; `clad check
+# --tier=pre-push --strict` GREEN refreshes. Content-anchored: survives
+# fresh clones and squash/rebase (suggested .gitattributes: merge=union).
+attested:
+  F-04a91c: 74a4f7d1e7cd60c6
+  F-0858f2: fecb47c6b7e057f8
+  F-10a6a5: 128553b8962460ae
+  F-191fd6: 128553b8962460ae
+  F-21a81b: 128553b8962460ae
+  F-220afd: 96014ac418585251
+  F-466f8e: 7e97c05be8050764
+  F-4e2261: 9091b17dbc9c427b
+  F-55a6a4: 165c146c874dda7b
+  F-7a3dbe: 48e96b1972e88851
+  F-d0dce3: 2ab4671710da5e27
+  F-dc4b99: f65960192da5fbf5

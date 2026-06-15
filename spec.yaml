@@ -12,6 +12,15 @@ project:
   description: "Tauri 2 기반 HWP 편집기(HOP)의 인라인 AI 편집 사이드바 — MS Word Copilot 패리티 목표. Rust(ai/*) 직렬화·프로바이더 + TS(studio-host) diff/세션/적용 파이프라인."
   version: "0.0.1"
   intent_summary: "HWP 문서를 AI가 보고(직렬화) 고치는(ActionScript→WASM 프리미티브) Copilot식 편집기. 제약: third_party/rhwp read-only(저장 후처리로 우회), 표 변경 시 hwp_table_check.py exit 0 필수. 전체 의도: docs/cladding-intent.md"
+  # HOP은 Tauri 2 GUI 데스크톱 앱이라 헤드리스 자동 스모크가 부적합하다(실행 시 창이 뜨고
+  # 스스로 종료하지 않아 timeout). 따라서 shipped 엔트리만 선언하고 is_safe_to_smoke=false로
+  # 둔다 — DELIVERABLE_SMOKE 스테이지는 건너뛰되 DELIVERABLE_INTEGRITY가 요구하는 '엔트리
+  # 선언'은 충족한다. 개발 구동은 `pnpm tauri dev`.
+  deliverable:
+    path: "./apps/desktop/src-tauri/target/debug/hop-desktop"
+    smoke_args: []
+    expect_exit: 0
+    is_safe_to_smoke: false
 
 features: []
 

@@ -22,9 +22,9 @@ acceptance_criteria:
     notes: "## Why\n채우기 절반은 의존 피처 multiline-cell-body-fill(F-466f8e)이 담당한다 — 복제 후 입력칸의 다줄 내용은 그 경로의 셀 문단 분할(splitParagraphInCell by-path)로 채운다. 라벨칸과 표 구조(행/열/병합)는 절대 건드리지 않는다."
   - id: AC-facb58
     ears: ubiquitous
-    text: "The system shall serialize가 반복 양식 표의 식별자(섹션/부모문단/controlIndex)와 셀 역할(라벨↔입력칸 인접쌍)을 AI 컨텍스트·화이트리스트에 제공한다."
+    text: "The system shall serialize가 반복/본문직속 양식 표를 셀 채움 여부와 무관하게 복제 소스로 노출하되(빈 입력칸 존재를 요구하지 않음), 표마다 식별자(섹션/부모문단/controlIndex), 차원(행×열), 셀별 (row,col)+텍스트(+최선노력 역할 힌트)를 AI 컨텍스트·화이트리스트에 제공하여 LLM이 소스 표와 덮어쓸 (row,col) 셀을 매핑하게 한다."
     test_refs: ["apps/desktop/src-tauri/src/ai/serialize.rs"]
-    notes: "## Why\n복제 대상 표를 AI가 결정적으로 가리키려면 (섹션/부모문단/controlIndex) 좌표와 라벨칸↔입력칸 인접쌍 역할이 컨텍스트·화이트리스트에 노출돼야 한다 — schema.rs의 양식 복제 액션 payload가 이 식별자를 참조한다."
+    notes: "## Why\n양식 표 노출을 '빈 입력칸 존재(has_input)'로 게이트하면 가장 흔한 케이스(이미 다 채워진 기존 항목을 복제)가 깨진다 — 실측: 연구노트 문서의 기존 항목은 제목/내용/기록자/날짜가 전부 채워져 has_input=false → 표가 form_tables에 노출되지 않음 → AI에 복제 대상이 없어 compose 폴백 → 새로 그린 항목이 원본 6행×3열이 아닌 6행×2열·다른 병합으로 나옴(생성본 v1·v2에서 동일 확인). 따라서 노출 판정은 채움 상태가 아니라 '반복/본문직속 항목 표'라는 사실에 근거해야 한다.\n## Decision\n복제는 표 전체(구조+현재 값)를 통째로 복사하고, AI는 cell_fills{row,col,text}로 값 셀을 덮어쓴다(셀 REPLACE가 기존 내용을 먼저 비움). AI는 기존 셀 단위 serialize(collect_cells, path ID)로 모든 셀 텍스트를 이미 보므로 form_tables는 후보 표마다 식별자·차원·셀별(row,col)+text+역할 힌트만 노출하면 충분하다.\n## Trade-off\n라벨/입력 역할은 has_label/has_input 게이트가 아니라 정보성 힌트로만 남긴다 — 잘못 추정된 역할이 표 노출을 막지 않도록 한다."
   - id: AC-2db9aa
     ears: ubiquitous
     text: "The system shall 시스템 프롬프트가 반복 양식 문서에서 표를 새로 그리지(compose) 말고 기존 표를 복제(clone)해 채우도록 지시한다."

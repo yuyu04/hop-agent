@@ -1,0 +1,16 @@
+# Cladding · Tier C — generated feature index (`clad sync`). Do not edit by hand.
+# One line per feature → 1-file lookup + line-independent merges
+# (suggested .gitattributes: `spec/index.yaml merge=union`).
+features:
+  F-04a91c: {slug: run-level-formatting, status: done, modules: 3}
+  F-0858f2: {slug: document-outline-recognition, status: done, modules: 3}
+  F-10a6a5: {slug: template-field-filling, status: done, modules: 3}
+  F-191fd6: {slug: header-footer-footnote, status: done, modules: 3}
+  F-21a81b: {slug: textbox-shape-text-editing, status: done, modules: 3}
+  F-220afd: {slug: clone-form-table-fill, status: planned, modules: 4}
+  F-466f8e: {slug: multiline-cell-body-fill, status: done, modules: 1}
+  F-4e2261: {slug: cross-platform-pdf-render, status: done, modules: 4}
+  F-55a6a4: {slug: document-proofread-pass, status: done, modules: 4}
+  F-7a3dbe: {slug: table-structure-editing, status: done, modules: 4}
+  F-d0dce3: {slug: data-to-chart-insertion, status: done, modules: 4}
+  F-dc4b99: {slug: per-edit-accept-reject, status: done, modules: 5}
