@@ -1,7 +1,7 @@
 id: F-466f8e
 slug: multiline-cell-body-fill
 title: "표 셀·본문 다줄 텍스트 채우기 — 줄바꿈을 문단으로 분할"
-status: planned
+status: done
 modules:
   - apps/studio-host/src/core/ai-apply.ts
 acceptance_criteria:
