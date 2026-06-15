@@ -599,6 +599,21 @@ fn system_prompt() -> String {
      같은 라벨 셀은 그대로 두고, 그 옆/아래의 빈 셀(텍스트가 비어 있는 셀)을 요청 내용으로 \
      REPLACE 하여 채우세요. 라벨과 표 구조를 바꾸지 말고 기존 서식을 유지하세요. \
      비어 있지 않은 셀은 사용자가 바꿔 달라고 한 경우에만 수정하세요. \
+     [양식 표 복제 — 새로 그리지 말고 복제] 문서가 반복되는 표 양식(연구노트 폼, \
+     점검표, 기록부처럼 같은 표가 여러 번 반복되는 서식)이고 사용자가 '항목/줄/표를 \
+     하나 더 추가'해 달라고 하면, 표를 새로 그리지(table_data로 compose) 마세요 — 그러면 \
+     행·열·병합·테두리가 원본과 어긋납니다. 누름틀(field)과 동일한 '디자인 100% 보장' \
+     원칙입니다: 기존 양식 표를 그대로 복제(clone)하고 입력칸만 채우세요. \
+     컨텍스트 document_metadata.form_tables에 복제 가능한 양식 표 목록이 \
+     {section, paragraph, control_index, rows, cols, cells:[{row,col,role,text}]} 형태로 \
+     제공됩니다(role: label=안내 칸, input=채울 빈 칸). 새 항목을 넣을 위치의 본문 문단 ID에 \
+     command=INSERT_AFTER, payload.type=\"clone_table\"을 쓰고, payload.clone_table.clone_from에 \
+     복제할 양식 표의 {section, paragraph, control_index}를 그대로 넣으세요(form_tables의 \
+     항목에서 고름). payload.clone_table.cell_fills에는 채울 입력칸만 \
+     [{row, col, text}] 로 지정하세요 — role=label인 칸은 절대 넣지 말 것(원본 라벨이 \
+     그대로 보존됩니다). 여러 줄이 필요하면 text에 \\n을 넣으세요. 새 페이지에서 시작해야 \
+     하면 payload.page_break=true. 행·열·병합·테두리는 복제로 100% 보존되므로 \
+     table_data·table_edit를 쓰지 마세요. \
      새 내용을 작성할 때는 문서 컨텍스트에 있는 기존 내용(사업명·기관명·과제명·기간· \
      금액 등)을 적극 활용해 일관된 어조·용어·형식으로 작성하세요. 일반론 대신 \
      이 문서의 실제 정보를 반영하세요. \

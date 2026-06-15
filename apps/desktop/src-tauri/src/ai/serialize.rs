@@ -21,6 +21,36 @@ pub struct DocumentMetadata {
     pub total_sections: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub current_cursor_path: Option<String>,
+    /// 반복 양식(연구노트 폼 등)에서 복제 가능한 최상위 양식 표 목록(F-220afd, AC-facb58).
+    /// AI가 새 항목을 추가할 때 새로 그리지 말고 이 중 하나를 clone_table로 복제하도록
+    /// 한다. 비어 있으면 양식 표가 없는 일반 문서다.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub form_tables: Vec<FormTable>,
+}
+
+/// 복제 대상이 될 수 있는 최상위 양식 표 하나(AC-facb58).
+/// `clone_from`(섹션/부모문단/controlIndex)으로 결정적으로 가리킬 수 있고, 셀별
+/// (row,col) 좌표와 라벨↔입력 역할 힌트를 노출해 AI가 입력칸만 채우게 한다.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct FormTable {
+    pub section: u32,
+    pub paragraph: u32,
+    pub control_index: u32,
+    pub rows: u32,
+    pub cols: u32,
+    pub cells: Vec<FormCell>,
+}
+
+/// 양식 표 한 셀의 좌표·역할·현재 내용.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct FormCell {
+    pub row: u32,
+    pub col: u32,
+    /// "label"(채워진 안내 칸 — 건드리지 말 것) | "input"(비어 있어 채울 입력칸).
+    pub role: String,
+    /// 현재 셀 내용(라벨 칸 식별·중복 방지용). 입력칸이면 보통 빈 문자열.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub text: String,
 }
 
 /// 직렬화된 콘텐츠 노드. `type` 태그로 종류를 구분한다(스펙 2장 JSON 포맷).
@@ -93,7 +123,7 @@ pub fn build_windowed_context(
     nodes.extend(collect_footnotes(core));
     nodes.extend(collect_fields(core));
 
-    Ok(assemble(nodes, total_sections, cursor_path))
+    Ok(assemble(nodes, total_sections, cursor_path, collect_form_tables(core)))
 }
 
 /// 직렬화 노드: (id, text, 추정 헤딩 수준).
@@ -231,7 +261,7 @@ pub fn build_full_context(
     nodes.extend(collect_header_footers(core, total_sections));
     nodes.extend(collect_footnotes(core));
     nodes.extend(collect_fields(core));
-    Ok(assemble(nodes, total_sections, None))
+    Ok(assemble(nodes, total_sections, None, collect_form_tables(core)))
 }
 
 /// 지정한 ID들만 직렬화한다(구간 교정 등 스코프 요청용). 화이트리스트도 같은 ID들로
@@ -248,7 +278,7 @@ pub fn build_scoped_context(
     nodes.extend(collect_footnotes(core));
     nodes.extend(collect_fields(core));
     nodes.retain(|(id, _, _)| ids.contains(id));
-    Ok(assemble(nodes, total_sections, None))
+    Ok(assemble(nodes, total_sections, None, collect_form_tables(core)))
 }
 
 /// `sec[<s>].p[<p>]` 형식의 커서 경로를 `(section, paragraph)`로 파싱한다.
@@ -313,6 +343,7 @@ fn assemble(
     nodes: Vec<Node>,
     total_sections: u32,
     cursor_path: Option<String>,
+    form_tables: Vec<FormTable>,
 ) -> (DocumentContext, HashSet<String>) {
     let mut content = Vec::with_capacity(nodes.len());
     let mut whitelist = HashSet::with_capacity(nodes.len());
@@ -322,14 +353,26 @@ fn assemble(
         content.push(ContentNode::Paragraph { id, text, heading });
     }
 
+    // 양식 표 식별자도 화이트리스트에 넣어 clone_table.clone_from 좌표 환각을 막는다
+    // (AC-facb58). 형식: `formtable:sec[S].p[P].tbl[C]`.
+    for ft in &form_tables {
+        whitelist.insert(form_table_token(ft.section, ft.paragraph, ft.control_index));
+    }
+
     let context = DocumentContext {
         document_metadata: DocumentMetadata {
             total_sections,
             current_cursor_path: cursor_path,
+            form_tables,
         },
         content,
     };
     (context, whitelist)
+}
+
+/// clone_table.clone_from 좌표의 화이트리스트 토큰(AC-facb58).
+pub fn form_table_token(section: u32, paragraph: u32, control_index: u32) -> String {
+    format!("formtable:sec[{}].p[{}].tbl[{}]", section, paragraph, control_index)
 }
 
 /// 본문 문단별 폰트 신호: (글자 수 가중 평균 크기, 과반 굵음 여부). 레이아웃 런에서
@@ -615,6 +658,109 @@ fn collect_cells(core: &DocumentCore) -> Vec<(String, String)> {
         }
     }
     out
+}
+
+/// 최상위(본문 직속) 양식 표를 수집한다(AC-facb58). 렌더 컨트롤 레이아웃에서
+/// 표 식별자(섹션/부모문단/controlIndex)와 셀 (row,col)·역할(label↔input)을 모은다.
+///
+/// 역할 추정(휴리스틱): 내용이 있는 셀은 `label`, 비어 있는 셀은 `input`. 라벨칸 오른쪽
+/// 또는 아래에 빈 입력칸이 인접하는 전형적 폼 구조를 AI가 읽고 입력칸만 채우게 한다.
+/// 중첩 표(셀 안의 표)는 복제 대상에서 제외한다 — 복제 단위는 최상위 표다.
+fn collect_form_tables(core: &DocumentCore) -> Vec<FormTable> {
+    // 셀 텍스트는 (parentParaIdx, controlIdx, cellIdx) → 합쳐진 텍스트로 모은다.
+    let mut cell_text: HashMap<(u64, u64, u64), String> = HashMap::new();
+    for page in 0..core.page_count() {
+        let Ok(layout) = core.get_page_text_layout_native(page) else { continue };
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(&layout) else { continue };
+        let Some(runs) = value.get("runs").and_then(|r| r.as_array()) else { continue };
+        for run in runs {
+            // 최상위 셀만(중첩이면 cellPath 길이>1) — path 첫 단계가 곧 최상위 표.
+            let path = run.get("cellPath").and_then(|p| p.as_array());
+            let nested = path.map(|p| p.len() > 1).unwrap_or(false);
+            if nested {
+                continue;
+            }
+            let (Some(pp), Some(ci), Some(cell)) = (
+                run.get("parentParaIdx").and_then(|v| v.as_u64()),
+                run.get("controlIdx").and_then(|v| v.as_u64()),
+                run.get("cellIdx").and_then(|v| v.as_u64()),
+            ) else {
+                continue;
+            };
+            let text = run.get("text").and_then(|t| t.as_str()).unwrap_or("");
+            cell_text.entry((pp, ci, cell)).or_default().push_str(text);
+        }
+    }
+
+    // 컨트롤 레이아웃에서 표 구조(행/열/셀 좌표)를 모은다.
+    let mut tables: Vec<FormTable> = Vec::new();
+    let mut seen: HashSet<(u64, u64, u64)> = HashSet::new();
+    for page in 0..core.page_count() {
+        let Ok(layout) = core.get_page_control_layout_native(page) else { continue };
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(&layout) else { continue };
+        let Some(controls) = value.get("controls").and_then(|c| c.as_array()) else { continue };
+        for ctrl in controls {
+            if ctrl.get("type").and_then(|t| t.as_str()) != Some("table") {
+                continue;
+            }
+            let (Some(sec), Some(pp), Some(ci)) = (
+                ctrl.get("secIdx").and_then(|v| v.as_u64()),
+                ctrl.get("paraIdx").and_then(|v| v.as_u64()),
+                ctrl.get("controlIdx").and_then(|v| v.as_u64()),
+            ) else {
+                continue; // 본문 직속이 아닌(중첩) 표는 좌표가 없어 제외된다.
+            };
+            // 페이지 분할 표가 여러 페이지에 나오면 한 번만.
+            if !seen.insert((sec, pp, ci)) {
+                continue;
+            }
+            let rows = ctrl.get("rowCount").and_then(|v| v.as_u64()).unwrap_or(0);
+            let cols = ctrl.get("colCount").and_then(|v| v.as_u64()).unwrap_or(0);
+            let Some(cell_arr) = ctrl.get("cells").and_then(|c| c.as_array()) else { continue };
+            let mut cells: Vec<FormCell> = Vec::new();
+            for cell in cell_arr {
+                let (Some(row), Some(col)) = (
+                    cell.get("row").and_then(|v| v.as_u64()),
+                    cell.get("col").and_then(|v| v.as_u64()),
+                ) else {
+                    continue;
+                };
+                let cell_idx = cell.get("cellIdx").and_then(|v| v.as_u64()).unwrap_or(0);
+                // cellIdx는 렌더 자식 인덱스 — 텍스트 맵은 model_cell_index 기반이 아니라
+                // (pp,ci,cellIdx) 셀 단위로 모았으므로 동일 표의 셀 인덱스로 매칭한다.
+                let text = cell_text
+                    .get(&(pp, ci, cell_idx))
+                    .cloned()
+                    .unwrap_or_default();
+                let role = if text.trim().is_empty() { "input" } else { "label" };
+                cells.push(FormCell {
+                    row: row as u32,
+                    col: col as u32,
+                    role: role.to_string(),
+                    text: text.trim().to_string(),
+                });
+            }
+            // 양식 표 판정: 라벨칸과 입력칸이 모두 있어야 '채울 폼'으로 본다(전부 채워졌거나
+            // 전부 비었으면 일반 표). 한 칸이라도 label, 한 칸이라도 input이면 폼으로 노출.
+            let has_label = cells.iter().any(|c| c.role == "label");
+            let has_input = cells.iter().any(|c| c.role == "input");
+            if rows >= 1 && cols >= 1 && has_label && has_input {
+                cells.sort_by(|a, b| (a.row, a.col).cmp(&(b.row, b.col)));
+                tables.push(FormTable {
+                    section: sec as u32,
+                    paragraph: pp as u32,
+                    control_index: ci as u32,
+                    rows: rows as u32,
+                    cols: cols as u32,
+                    cells,
+                });
+            }
+        }
+    }
+    tables.sort_by(|a, b| {
+        (a.section, a.paragraph, a.control_index).cmp(&(b.section, b.paragraph, b.control_index))
+    });
+    tables
 }
 
 /// `get_document_info()` JSON에서 `sectionCount`를 읽는다.
@@ -919,6 +1065,175 @@ mod tests {
         .unwrap();
         let all_text = extract_all_text(&reloaded).unwrap();
         assert!(all_text.contains("글상자 내용"), "저장 후 글상자 텍스트 소실: {}", all_text);
+    }
+
+    /// [F-220afd DE-RISK] 양식 표 복제 프리미티브 검증.
+    ///
+    /// 연구노트 폼처럼 병합이 섞인 다행 표를 copyControl→pasteControl로 in-model
+    /// 복제했을 때 (1) 복제본이 원본과 동일한 leaf-cell 집합(cellIdx→내용)을 갖고
+    /// (2) hwp_table_fix 후처리를 포함해 저장·재파싱해도 원본·복제본 셀 내용이 모두
+    /// 살아남는지 확인한다. 이 프리미티브가 충실하지 않으면 F-220afd 전체가 무의미하므로
+    /// 본 기능 코드보다 먼저 이 게이트가 GREEN이어야 한다.
+    ///
+    /// 구조(행·열·병합) 동일성은 블랙박스로 검증한다: 모든 leaf 셀에 고유 마커를 채운 뒤
+    /// get_page_text_layout_native의 cellIdx→text 매핑을 원본 표와 복제 표에서 각각
+    /// 수집해 동일한지 비교한다(복제가 셀을 추가/누락/병합변경하면 매핑이 달라진다).
+    #[test]
+    fn clone_form_table_preserves_structure_and_roundtrips() {
+        let mut core = blank_core();
+        core.insert_text_native(0, 0, 0, "연구노트 폼").unwrap();
+
+        // 4행×3열 폼: 맨 위 행은 (0,0)~(0,2) 가로 병합(제목 띠) — 실제 연구노트 폼의 머리.
+        let result = core.create_table_native(0, 0, 0, 4, 3).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&result).unwrap();
+        let ctrl = v.get("controlIdx").and_then(|c| c.as_u64()).unwrap() as usize;
+        let tp = v.get("paraIdx").and_then(|c| c.as_u64()).unwrap() as usize;
+        core.merge_table_cells_native(0, tp, ctrl, 0, 0, 0, 2).unwrap();
+
+        // 병합 후 남은 모든 leaf 셀에 고유 마커(SRC0..)를 채운다.
+        // cellIdx는 cells 배열 인덱스 — 병합으로 줄어든 실제 셀 수만큼 채운다.
+        let mut idx = 0usize;
+        loop {
+            match core.insert_text_in_cell_native(0, tp, ctrl, idx, 0, 0, &format!("SRC{}", idx)) {
+                Ok(_) => idx += 1,
+                Err(_) => break,
+            }
+        }
+        let leaf_count = idx;
+        assert!(leaf_count > 0, "양식 표에 채울 셀이 없습니다");
+        // 4행×3열에서 머리 한 줄(3셀)을 1셀로 병합 → 12-3+1 = 10 leaf 셀.
+        assert_eq!(leaf_count, 10, "병합 후 leaf 셀 수 불일치: {}", leaf_count);
+
+        // 원본 표의 cellIdx→text 매핑 수집.
+        let src_map = collect_table_cell_map(&core, tp, ctrl);
+        assert_eq!(src_map.len(), leaf_count, "원본 매핑 누락: {:?}", src_map);
+
+        // 표를 클립보드로 복제 → 본문 맨 끝 빈 문단에 붙여넣기.
+        let copy = core.copy_control_native(0, tp, ctrl).unwrap();
+        assert!(copy.contains("[표]"), "표 복사 실패: {}", copy);
+        let last_para = core.get_paragraph_count_native(0).unwrap().saturating_sub(1);
+        let last_len = core.get_paragraph_length_native(0, last_para).unwrap();
+        let paste = core.paste_control_native(0, last_para, last_len).unwrap();
+        let pv: serde_json::Value = serde_json::from_str(&paste).unwrap();
+        assert_eq!(pv.get("ok").and_then(|b| b.as_bool()), Some(true), "붙여넣기 실패: {}", paste);
+        let dest_para = pv.get("paraIdx").and_then(|c| c.as_u64()).unwrap() as usize;
+        let dest_ctrl = pv.get("controlIdx").and_then(|c| c.as_u64()).unwrap() as usize;
+
+        // 복제 표의 cellIdx→text 매핑이 원본과 완전히 동일해야 한다(행·열·병합 보존).
+        let clone_map = collect_table_cell_map(&core, dest_para, dest_ctrl);
+        assert_eq!(
+            clone_map, src_map,
+            "복제 표 구조/내용 불일치\n원본: {:?}\n복제: {:?}",
+            src_map, clone_map
+        );
+
+        // hwp_table_fix 후처리 포함 저장 → 재파싱해도 원본·복제 셀 내용이 모두 보존.
+        let bytes = crate::hwp_table_fix::fix_table_headers(core.export_hwp_native().unwrap());
+        let path = std::env::temp_dir().join("hop_ai_clone_form_table_check.hwp");
+        std::fs::write(&path, &bytes).unwrap();
+        let reloaded =
+            crate::state::editable_core_from_bytes(&bytes, "파싱 실패", "변환 실패").unwrap();
+        let round = extract_all_text(&reloaded).unwrap();
+        for i in 0..leaf_count {
+            // 복제이므로 SRC{i} 마커는 본문에 정확히 2번(원본+복제) 나타나야 한다.
+            let occurrences = round.matches(&format!("SRC{}", i)).count();
+            assert!(
+                occurrences >= 2,
+                "저장 후 SRC{} 마커가 원본+복제로 2번 나타나지 않음(={}): {}",
+                i,
+                occurrences,
+                round
+            );
+        }
+    }
+
+    /// [F-220afd AC-facb58 de-risk 보조] collect_form_tables가 라벨↔입력 역할을
+    /// 정확히 추정하는지(텍스트-레이아웃 cellIdx와 컨트롤-레이아웃 cellIdx 정합) 확인한다.
+    /// 2열 폼: 0열=라벨(채움), 1열=입력(빈칸). 라벨 칸은 'label', 빈 칸은 'input'이어야 하고
+    /// 표 식별자(섹션/부모문단/controlIndex)와 화이트리스트 토큰이 노출돼야 한다.
+    #[test]
+    fn collect_form_tables_exposes_identity_and_roles() {
+        let mut core = blank_core();
+        core.insert_text_native(0, 0, 0, "양식").unwrap();
+        let result = core.create_table_native(0, 0, 0, 3, 2).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&result).unwrap();
+        let ctrl = v.get("controlIdx").and_then(|c| c.as_u64()).unwrap() as usize;
+        let tp = v.get("paraIdx").and_then(|c| c.as_u64()).unwrap() as usize;
+        // 0열(짝수 cellIdx: 0,2,4)에 라벨, 1열(홀수)은 비워 둔다.
+        let labels = ["사업명", "기관명", "기간"];
+        for (r, label) in labels.iter().enumerate() {
+            core.insert_text_in_cell_native(0, tp, ctrl, r * 2, 0, 0, label).unwrap();
+        }
+
+        let tables = collect_form_tables(&core);
+        assert_eq!(tables.len(), 1, "양식 표 1개를 노출해야 함: {:?}", tables);
+        let ft = &tables[0];
+        assert_eq!((ft.section, ft.paragraph, ft.control_index), (0, tp as u32, ctrl as u32));
+        assert_eq!((ft.rows, ft.cols), (3, 2));
+        // 0열 셀은 label, 1열 셀은 input.
+        for cell in &ft.cells {
+            if cell.col == 0 {
+                assert_eq!(cell.role, "label", "0열은 라벨이어야 함: {:?}", cell);
+                assert!(!cell.text.is_empty());
+            } else {
+                assert_eq!(cell.role, "input", "1열은 입력칸이어야 함: {:?}", cell);
+            }
+        }
+        // 라벨 텍스트가 올바른 행에 매핑됐는지(cellIdx 정합 확인).
+        let label_at = |row: u32| {
+            ft.cells
+                .iter()
+                .find(|c| c.row == row && c.col == 0)
+                .map(|c| c.text.clone())
+                .unwrap_or_default()
+        };
+        assert_eq!(label_at(0), "사업명");
+        assert_eq!(label_at(1), "기관명");
+        assert_eq!(label_at(2), "기간");
+
+        // 컨텍스트·화이트리스트에 양식 표 식별자가 들어간다.
+        let (context, whitelist) = build_full_context(&core).unwrap();
+        assert_eq!(context.document_metadata.form_tables.len(), 1);
+        assert!(whitelist.contains(&form_table_token(0, tp as u32, ctrl as u32)));
+    }
+
+    /// 한 표(parent_para_idx, control_idx)의 leaf 셀 cellIdx→text 매핑을 렌더 레이아웃에서
+    /// 수집한다. 비어있지 않은(텍스트가 채워진) 셀만 잡히므로 호출 전 모든 셀에 마커를 채운다.
+    fn collect_table_cell_map(
+        core: &DocumentCore,
+        parent_para_idx: usize,
+        control_idx: usize,
+    ) -> std::collections::BTreeMap<u64, String> {
+        use std::collections::BTreeMap;
+        let mut map: BTreeMap<u64, String> = BTreeMap::new();
+        for page in 0..core.page_count() {
+            let layout = match core.get_page_text_layout_native(page) {
+                Ok(l) => l,
+                Err(_) => continue,
+            };
+            let parsed: serde_json::Value = match serde_json::from_str(&layout) {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+            let runs = match parsed.get("runs").and_then(|r| r.as_array()) {
+                Some(r) => r,
+                None => continue,
+            };
+            for run in runs {
+                let pp = run.get("parentParaIdx").and_then(|v| v.as_u64());
+                let ci = run.get("controlIdx").and_then(|v| v.as_u64());
+                if pp != Some(parent_para_idx as u64) || ci != Some(control_idx as u64) {
+                    continue;
+                }
+                let cell_idx = match run.get("cellIdx").and_then(|v| v.as_u64()) {
+                    Some(c) => c,
+                    None => continue,
+                };
+                let text = run.get("text").and_then(|v| v.as_str()).unwrap_or("");
+                map.entry(cell_idx).or_default().push_str(text);
+            }
+        }
+        map
     }
 
     /// 표 셀 INSERT(flat split+insert — ai-apply path-1 경로)와 글상자 편집 후 저장한

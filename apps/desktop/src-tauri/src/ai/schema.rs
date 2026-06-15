@@ -59,6 +59,35 @@ pub struct TableEditSpec {
     pub texts: Vec<String>,
 }
 
+/// 복제할 원본 양식 표의 식별자(섹션/부모문단/컨트롤 인덱스).
+/// serialize가 화이트리스트·컨텍스트에 노출한 양식 표 좌표를 그대로 참조한다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CloneSource {
+    pub section: u32,
+    pub paragraph: u32,
+    pub control_index: u32,
+}
+
+/// 복제된 표의 한 입력칸 채우기 항목((row,col) → text). text는 `\n`을 포함할 수 있고
+/// F-466f8e 다줄 셀 경로로 채워진다. 라벨칸은 채우지 않으면 원본 그대로 보존된다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CellFill {
+    pub row: u32,
+    pub col: u32,
+    pub text: String,
+}
+
+/// type="clone_table"일 때: 기존 양식 표를 in-model 복제하고 입력칸만 채운다.
+/// 새로 표를 그리지(compose) 않으므로 행·열·병합·테두리가 원본과 100% 동일하다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CloneTableSpec {
+    /// 복제할 원본 양식 표의 식별자.
+    pub clone_from: CloneSource,
+    /// 복제 후 채울 입력칸들(라벨칸은 생략 → 원본 보존).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cell_fills: Vec<CellFill>,
+}
+
 /// 차트 시리즈 하나(payload.type="chart").
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChartSeries {
@@ -145,6 +174,9 @@ pub struct EditPayload {
     /// type="table_edit"일 때: 기존 표의 구조 편집(행/열 추가·삭제, 셀 병합).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub table_edit: Option<TableEditSpec>,
+    /// type="clone_table"일 때: 기존 양식 표를 그대로 복제하고 입력칸만 채운다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clone_table: Option<CloneTableSpec>,
     /// type="chart"일 때: 차트 데이터(프런트가 PNG로 렌더해 그림으로 삽입).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chart_data: Option<ChartData>,
@@ -268,7 +300,7 @@ pub fn action_script_schema() -> Value {
                         "payload": {
                             "type": "object",
                             "properties": {
-                                "type": { "type": "string", "enum": ["paragraph", "table", "image", "table_edit", "format", "chart"] },
+                                "type": { "type": "string", "enum": ["paragraph", "table", "image", "table_edit", "clone_table", "format", "chart"] },
                                 "text": { "type": "string" },
                                 "style": {
                                     "type": "string",
@@ -366,6 +398,36 @@ pub fn action_script_schema() -> Value {
                                         }
                                     },
                                     "required": ["op"]
+                                },
+                                "clone_table": {
+                                    "type": "object",
+                                    "description": "type=\"clone_table\"일 때: 반복 양식 문서에서 기존 표를 그대로 복제하고 입력칸만 채운다(새로 그리지 않음 → 행·열·병합·테두리 원본과 100% 동일). command=INSERT_AFTER, target_id는 새 항목을 넣을 위치의 본문 문단 ID. clone_from은 컨텍스트의 '복제 가능 양식 표' 좌표(formTables[])에서 고른다.",
+                                    "properties": {
+                                        "clone_from": {
+                                            "type": "object",
+                                            "description": "복제할 원본 양식 표의 좌표. 컨텍스트 document_metadata.form_tables의 항목을 그대로 쓴다.",
+                                            "properties": {
+                                                "section": { "type": "integer" },
+                                                "paragraph": { "type": "integer" },
+                                                "control_index": { "type": "integer" }
+                                            },
+                                            "required": ["section", "paragraph", "control_index"]
+                                        },
+                                        "cell_fills": {
+                                            "type": "array",
+                                            "description": "복제된 표에서 채울 입력칸들. 라벨칸은 넣지 말 것(생략하면 원본 라벨이 그대로 보존된다). text는 \\n으로 여러 줄을 넣을 수 있다.",
+                                            "items": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "row": { "type": "integer", "description": "0-기준 행" },
+                                                    "col": { "type": "integer", "description": "0-기준 열" },
+                                                    "text": { "type": "string" }
+                                                },
+                                                "required": ["row", "col", "text"]
+                                            }
+                                        }
+                                    },
+                                    "required": ["clone_from"]
                                 },
                                 "table_data": {
                                     "type": "object",

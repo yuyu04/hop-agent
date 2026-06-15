@@ -1,0 +1,43 @@
+id: F-220afd
+slug: clone-form-table-fill
+title: "기존 양식 표 복제 후 채우기 — 반복 양식 이어쓰기 (clone-not-compose)"
+status: planned
+modules:
+  - apps/desktop/src-tauri/src/ai/serialize.rs
+  - apps/desktop/src-tauri/src/ai/schema.rs
+  - apps/desktop/src-tauri/src/ai/mod.rs
+  - apps/studio-host/src/core/ai-apply.ts
+acceptance_criteria:
+  - id: AC-1e8cbf
+    ears: event
+    condition: "When AI가 기존 표 양식을 복제해 새 항목을 추가하는 액션을 반환하면"
+    text: "The system shall copyControl/pasteControl로 그 표를 in-model 복제하여 원본과 동일한 구조(행·열·병합·테두리)로 삽입한다."
+    test_refs: ["apps/studio-host/src/core/ai-apply.test.ts", "apps/desktop/src-tauri/src/ai/serialize.rs"]
+    notes: "## Why\n연구노트처럼 반복되는 표 양식 문서에 AI가 새 항목을 추가할 때 표를 새로 그리면(compose) 구조가 어긋난다 — 실측: 원본 폼은 6행×3열인데 AI 생성분은 6행×2열·다른 병합으로 나와 한컴에서 셀 정렬·인쇄가 원본과 달라졌다. 해결책은 새로 그리기가 아니라 기존 표를 그대로 복제(clone)하고 입력칸만 채우기.\n## Decision\nrhwp에 이미 in-model 컨트롤 복제 프리미티브가 존재한다 — copyControl(sec,para,controlIdx)가 Control::Table을 control.clone()으로 통째 복제(para_shape/char_shape/style_id/border_fill_id/ctrl_data 보존)하고 pasteControl(sec,para,charOffset)로 캐럿에 삽입한다(third_party/rhwp/src/wasm_api.rs:4966/4990, clipboard.rs:222/677). 같은 문서 내 복제이므로 doc-로컬 ID가 그대로 유효 → 원본과 행·열·병합·테두리 100% 동일.\n## Trade-off\nrhwp 수정도 저장 후처리도 불필요하다 — hop-agent TS/serialize 계층 오케스트레이션(ai-apply.ts: copyControl→pasteControl→셀 채우기, placement=새 페이지/항목 끝)만으로 구현한다."
+  - id: AC-2357c1
+    ears: event
+    condition: "When 복제된 표에 셀 내용을 채우면"
+    text: "The system shall 기존 셀 채우기 경로(다줄 포함, F-466f8e 의존)로 입력칸을 채우고 라벨칸·표 구조는 보존한다."
+    test_refs: ["apps/studio-host/src/core/ai-apply.test.ts"]
+    notes: "## Why\n채우기 절반은 의존 피처 multiline-cell-body-fill(F-466f8e)이 담당한다 — 복제 후 입력칸의 다줄 내용은 그 경로의 셀 문단 분할(splitParagraphInCell by-path)로 채운다. 라벨칸과 표 구조(행/열/병합)는 절대 건드리지 않는다."
+  - id: AC-facb58
+    ears: ubiquitous
+    text: "The system shall serialize가 반복 양식 표의 식별자(섹션/부모문단/controlIndex)와 셀 역할(라벨↔입력칸 인접쌍)을 AI 컨텍스트·화이트리스트에 제공한다."
+    test_refs: ["apps/desktop/src-tauri/src/ai/serialize.rs"]
+    notes: "## Why\n복제 대상 표를 AI가 결정적으로 가리키려면 (섹션/부모문단/controlIndex) 좌표와 라벨칸↔입력칸 인접쌍 역할이 컨텍스트·화이트리스트에 노출돼야 한다 — schema.rs의 양식 복제 액션 payload가 이 식별자를 참조한다."
+  - id: AC-2db9aa
+    ears: ubiquitous
+    text: "The system shall 시스템 프롬프트가 반복 양식 문서에서 표를 새로 그리지(compose) 말고 기존 표를 복제(clone)해 채우도록 지시한다."
+    test_refs: ["apps/desktop/src-tauri/src/ai/mod.rs"]
+    notes: "## Decision\nF-10a6a5(누름틀 채우기 우선)와 동일한 디자인 보존 철학 — 양식 문서에서는 구조 생성보다 기존 구조 복제·채우기를 강제한다. compose 금지, clone 우선."
+  - id: AC-f3d735
+    ears: unwanted
+    condition: "If 복제 대상이 표 컨트롤이 아니거나 인덱스가 범위를 벗어나면"
+    text: "The system shall 적용을 거부하고 사유를 skipped로 보고하며 문서를 변경하지 않는다."
+    test_refs: ["apps/studio-host/src/core/ai-apply.test.ts"]
+    notes: "## Why\nF-7a3dbe AC-7342bb와 동일한 거부 규약 — 잘못된 대상(비-표 컨트롤/범위 밖 인덱스)에 대한 복제는 skipped{reason}로 사이드바에 '건너뜀' 표시하고 문서를 일절 변경하지 않는다."
+  - id: AC-fa1b1b
+    ears: ubiquitous
+    text: "The system shall 복제+채우기 후 저장된 HWP가 hwp_table_check.py 검증을 exit 0으로 통과하고, 복제된 표의 행×열이 원본과 동일하게 한다 (필수 게이트)."
+    test_refs: ["apps/studio-host/src/core/ai-apply.test.ts", "apps/desktop/src-tauri/src/ai/serialize.rs"]
+    notes: "## Decision\nF-7a3dbe AC-d13e41 / F-466f8e AC-989a92와 동일한 표 검증 게이트. 복제·채우기 변경도 표 라운드트립을 깨지 않아야 하므로 hwp_table_fix 후처리 포함 저장본을 hwp_table_check.py로 exit 0 확인하고, 복제된 표의 행×열이 원본과 일치하는지 추가 검증한다."

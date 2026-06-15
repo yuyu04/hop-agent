@@ -30,7 +30,7 @@ export interface DocumentContext {
 export type EditCommand = 'INSERT_BEFORE' | 'INSERT_AFTER' | 'REPLACE' | 'DELETE';
 
 export interface EditPayload {
-  type?: 'paragraph' | 'table' | 'image' | 'table_edit' | 'format' | 'chart';
+  type?: 'paragraph' | 'table' | 'image' | 'table_edit' | 'clone_table' | 'format' | 'chart';
   text?: string;
   style?: string;
   /** type="image"일 때 삽입할 첨부 이미지의 0-기준 인덱스(첨부 순서). */
@@ -82,6 +82,17 @@ export interface EditPayload {
     merge?: { start_row: number; start_col: number; end_row: number; end_col: number };
     /** 새 행/열의 셀 텍스트(순서대로, 선택). */
     texts?: string[];
+  };
+  /**
+   * type="clone_table"일 때: 반복 양식 표를 그대로 복제하고 입력칸만 채운다(F-220afd).
+   * 새로 그리지 않으므로 행·열·병합·테두리가 원본과 100% 동일하다. command=INSERT_AFTER,
+   * target_id는 새 항목을 넣을 본문 문단 ID.
+   */
+  clone_table?: {
+    /** 복제할 원본 양식 표의 좌표(컨텍스트 document_metadata.form_tables에서 고름). */
+    clone_from: { section: number; paragraph: number; control_index: number };
+    /** 채울 입력칸들(0-기준 row/col). 라벨칸은 생략(원본 보존). text는 \n으로 여러 줄. */
+    cell_fills?: { row: number; col: number; text: string }[];
   };
 }
 

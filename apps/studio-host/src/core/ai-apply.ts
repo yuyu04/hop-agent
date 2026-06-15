@@ -231,6 +231,19 @@ export interface WasmEditing {
     controlIdx: number,
     props: { pageBreak?: number },
   ): { ok: boolean };
+  /**
+   * 컨트롤(표·그림·도형)을 내부 클립보드에 복제한다(F-220afd). 같은 문서 내 복제이므로
+   * doc-로컬 ID(border_fill/char_shape/para_shape)가 그대로 유효해 구조가 100% 보존된다.
+   * 반환: JSON 문자열 `{"ok":true,"text":"[표]"}` (WasmBridge가 파싱 없이 그대로 넘김).
+   */
+  copyControl?(sec: number, para: number, controlIdx: number): string;
+  /**
+   * 내부 클립보드의 컨트롤을 캐럿 위치에 붙여넣는다.
+   * 반환: JSON 문자열 `{"ok":true,"paraIdx":<N>,"controlIdx":0}`.
+   */
+  pasteControl?(sec: number, para: number, charOffset: number): string;
+  /** 내부 클립보드에 컨트롤(표/그림/도형)이 들어 있는지. */
+  clipboardHasControl?(): boolean;
   /** 그림(이미지) 삽입. width/height는 표시 크기(HWPUNIT), natural*는 원본 픽셀. */
   insertPicture?(
     sec: number,
@@ -415,6 +428,7 @@ export function applyActionScript(
       edit.command !== 'DELETE' &&
       !isTableEdit(edit) &&
       !isImageEdit(edit) &&
+      !isCloneTableEdit(edit) &&
       !isTableStructEdit(edit) &&
       !isFormatEdit(edit);
     if (needsText && (edit.payload.text ?? '') === '') {
@@ -435,8 +449,8 @@ export function applyActionScript(
         });
         return;
       }
-      // 표 셀 안에는 표/이미지를 넣지 않는다(셀은 페이지로 늘어나지 않음). 본문에 넣는다.
-      if (isTableEdit(edit) || isImageEdit(edit)) {
+      // 표 셀 안에는 표/이미지/복제표를 넣지 않는다(셀은 페이지로 늘어나지 않음). 본문에 넣는다.
+      if (isTableEdit(edit) || isImageEdit(edit) || isCloneTableEdit(edit)) {
         skipped.push({
           targetId: edit.target_id,
           reason: '표 셀 안에는 표·이미지를 넣을 수 없습니다. 표 바깥 본문 문단에 INSERT 하세요.',
@@ -669,7 +683,9 @@ function applyOne(
     case 'INSERT_AFTER': {
       const length = wasm.getParagraphLength(sec, para);
       wasm.splitParagraph(sec, para, length);
-      if (isTableEdit(edit)) {
+      if (isCloneTableEdit(edit)) {
+        cloneTableAt(wasm, sec, para + 1, edit);
+      } else if (isTableEdit(edit)) {
         createTableAt(wasm, sec, para + 1, edit);
       } else if (isImageEdit(edit)) {
         insertImageAt(wasm, sec, para + 1, edit, images);
@@ -729,6 +745,15 @@ function isTableEdit(edit: Edit): boolean {
     !!edit.payload.table_data &&
     edit.payload.table_data.rows > 0 &&
     edit.payload.table_data.cols > 0
+  );
+}
+
+/** 양식 표 복제 편집인지(payload.type="clone_table" + clone_from). F-220afd. */
+function isCloneTableEdit(edit: Edit): boolean {
+  return (
+    edit.command === 'INSERT_AFTER' &&
+    edit.payload.type === 'clone_table' &&
+    !!edit.payload.clone_table?.clone_from
   );
 }
 
@@ -998,6 +1023,97 @@ function coveredCellIndices(
     }
   }
   return covered;
+}
+
+/**
+ * 반복 양식 표를 그대로 복제하고 입력칸만 채운다(F-220afd, AC-1e8cbf/AC-2357c1).
+ *
+ * `sec[para]`는 호출 측이 분할로 만들어 둔 빈 본문 문단이다. 여기에 원본 양식 표를
+ * copyControl→pasteControl로 in-model 복제하면 행·열·병합·테두리가 100% 동일하게
+ * 붙는다(같은 문서라 doc-로컬 ID가 그대로 유효). 그 후 cell_fills의 (row,col)을 붙은
+ * 표의 셀 인덱스로 매핑해 기존 셀 채우기 경로(다줄 포함, F-466f8e)로 입력칸만 채운다.
+ *
+ * 복제 대상이 표 컨트롤이 아니거나 인덱스가 범위를 벗어나면 throw 한다 — 호출 측이
+ * skipped{reason}로 보고하고 문서를 변경하지 않는다(AC-f3d735).
+ */
+function cloneTableAt(wasm: WasmEditing, sec: number, para: number, edit: Edit): void {
+  const spec = edit.payload.clone_table!;
+  const src = spec.clone_from;
+  if (!wasm.copyControl || !wasm.pasteControl) {
+    throw new Error('표 복제(copyControl/pasteControl)를 지원하지 않는 환경입니다.');
+  }
+
+  // 1) 원본 양식 표를 내부 클립보드로 복제. 표 컨트롤이 아니거나 인덱스가 범위 밖이면
+  //    rhwp가 오류로 거부하거나 ok=false를 반환한다 → throw(AC-f3d735).
+  let copied: { ok?: boolean; error?: string };
+  try {
+    copied = JSON.parse(wasm.copyControl(src.section, src.paragraph, src.control_index)) as {
+      ok?: boolean;
+      error?: string;
+    };
+  } catch (e) {
+    throw new Error(`복제 대상 표를 찾을 수 없습니다(sec ${src.section}, p ${src.paragraph}, tbl ${src.control_index}): ${String(e)}`);
+  }
+  if (copied.ok !== true) {
+    throw new Error(`복제 대상이 표 컨트롤이 아닙니다(sec ${src.section}, p ${src.paragraph}, tbl ${src.control_index}).`);
+  }
+  // 복제된 것이 표인지 확인 — 클립보드에 컨트롤이 없으면(텍스트만 복사) 거부.
+  if (wasm.clipboardHasControl && wasm.clipboardHasControl() !== true) {
+    throw new Error('복제 대상이 표/그림/도형 컨트롤이 아닙니다.');
+  }
+
+  // 2) 빈 본문 문단에 붙여넣어 표를 복제한다. 붙은 표의 (paraIdx, controlIdx)를 받는다.
+  let pasted: { ok?: boolean; paraIdx?: number; controlIdx?: number };
+  try {
+    pasted = JSON.parse(wasm.pasteControl(sec, para, 0)) as {
+      ok?: boolean;
+      paraIdx?: number;
+      controlIdx?: number;
+    };
+  } catch (e) {
+    throw new Error(`표 붙여넣기에 실패했습니다: ${String(e)}`);
+  }
+  if (pasted.ok !== true || typeof pasted.paraIdx !== 'number' || typeof pasted.controlIdx !== 'number') {
+    throw new Error('표 붙여넣기에 실패했습니다(클립보드에 표가 없습니다).');
+  }
+  const destPara = pasted.paraIdx;
+  const destCtrl = pasted.controlIdx;
+
+  // 3) (row,col) → 붙은 표의 셀 인덱스 매핑. 복제된 표의 실제 셀 좌표를 한 번만 조회한다.
+  const fills = spec.cell_fills ?? [];
+  if (fills.length === 0) return; // 복제만 하고 채우지 않는 경우(빈 양식 추가).
+  if (!wasm.getTableCellBboxes) {
+    // 좌표 조회 불가 — 복제는 성공했으니 구조는 보존된다. 채우기만 생략하지 않고
+    // 명시적으로 오류로 본다(입력칸을 못 채우면 빈 양식이 된다).
+    throw new Error('복제된 표의 셀 좌표를 조회할 수 없어 입력칸을 채우지 못했습니다.');
+  }
+  let cells: Array<{ cellIdx: number; col: number; row: number; colSpan: number }>;
+  try {
+    cells = wasm.getTableCellBboxes(sec, destPara, destCtrl);
+  } catch (e) {
+    throw new Error(`복제된 표의 셀 좌표 조회 실패: ${String(e)}`);
+  }
+  // (row,col) → cellIdx 룩업. 병합 셀은 대표(좌상단) 셀의 row/col로만 잡히므로,
+  // 병합으로 가려진 좌표는 매칭되지 않는다(라벨/입력 모두 대표 좌표로 지정해야 한다).
+  const cellAt = new Map<string, number>();
+  for (const c of cells) cellAt.set(`${c.row},${c.col}`, c.cellIdx);
+
+  for (const fill of fills) {
+    const cellIdx = cellAt.get(`${fill.row},${fill.col}`);
+    if (cellIdx === undefined) {
+      // 범위 밖/병합에 가려진 좌표 — 그 한 칸만 건너뛴다(복제 구조는 이미 보존됨).
+      continue;
+    }
+    // 기존 셀 채우기 경로(다줄 포함, F-466f8e) 재사용: 셀 첫 문단(cp=0)을 비우고 채운다.
+    const target: CellTarget = {
+      sec,
+      parentPara: destPara,
+      path: [{ controlIndex: destCtrl, cellIndex: cellIdx, cellParaIndex: 0 }],
+    };
+    const length = wasm.getCellParagraphLength(sec, destPara, destCtrl, cellIdx, 0);
+    if (length > 0) wasm.deleteTextInCell(sec, destPara, destCtrl, cellIdx, 0, 0, length);
+    fillCellLinesFlat(wasm, target, destCtrl, cellIdx, 0, splitLines(fill.text));
+  }
 }
 
 /** `sec[para]` 위치에 표를 만들고 matrix 텍스트로 셀을 채운다. */
