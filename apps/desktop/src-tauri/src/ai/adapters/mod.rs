@@ -62,7 +62,8 @@ pub fn build_provider(
         })),
         // 로컬 CLI 위임 — API 키 불필요(CLI가 구독/OAuth 처리).
         "claude-cli" => Ok(Box::new(CliProvider::claude(model_id))),
-        "gemini-cli" => Ok(Box::new(CliProvider::gemini(model_id))),
+        // `gemini-cli`는 구버전 저장 설정 호환용 별칭 — 동일하게 agy CLI로 위임한다.
+        "agy-cli" | "gemini-cli" => Ok(Box::new(CliProvider::agy(model_id))),
         other => Err(format!("알 수 없는 provider입니다: {}", other)),
     }
 }

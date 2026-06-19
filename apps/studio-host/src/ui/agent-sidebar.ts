@@ -12,6 +12,7 @@ import {
   interpretAiFailure,
   listenAiEvents,
   parseActionScript,
+  parseFormFillResponse,
   type ActionScript,
   type Edit,
   type AiEditFailed,
@@ -24,10 +25,12 @@ import {
 import type { AiBridgeApi, AiImageInput } from '@/core/tauri-bridge';
 import {
   applyActionScript,
+  buildFormFillEdits,
   parseCellTarget,
   parseParagraphTarget,
   type ApplyResult,
   type ChangedPara,
+  type FormSourceTable,
   type ImageForInsert,
   type WasmEditing,
 } from '@/core/ai-apply';
@@ -89,10 +92,10 @@ const CUSTOM_PROVIDER = 'openai-compat';
 
 /** 로컬 CLI 위임 — 터미널에 로그인된 CLI를 호출(키·과금 없음). 스펙 5.3장. */
 const CLAUDE_CLI_PROVIDER = 'claude-cli';
-const GEMINI_CLI_PROVIDER = 'gemini-cli';
+const AGY_CLI_PROVIDER = 'agy-cli';
 
 /** CLI 위임 provider — 첨부를 base64 대신 파일 경로로 넘기고 키가 필요 없다. */
-const CLI_PROVIDERS = new Set<string>([CLAUDE_CLI_PROVIDER, GEMINI_CLI_PROVIDER]);
+const CLI_PROVIDERS = new Set<string>([CLAUDE_CLI_PROVIDER, AGY_CLI_PROVIDER]);
 
 const PROVIDERS = [
   'gemini',
@@ -100,13 +103,13 @@ const PROVIDERS = [
   'anthropic',
   'ollama',
   CLAUDE_CLI_PROVIDER,
-  GEMINI_CLI_PROVIDER,
+  AGY_CLI_PROVIDER,
   CUSTOM_PROVIDER,
 ] as const;
 
 const PROVIDER_LABELS: Record<string, string> = {
   [CLAUDE_CLI_PROVIDER]: 'Claude Code (로컬 CLI)',
-  [GEMINI_CLI_PROVIDER]: 'Gemini CLI (로컬)',
+  [AGY_CLI_PROVIDER]: 'agy CLI (로컬)',
   [CUSTOM_PROVIDER]: 'OpenAI 호환 (Groq 등)',
 };
 
@@ -133,7 +136,7 @@ const MODELS: Record<string, string[]> = {
   gemini: ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash-lite', 'gemini-flash-latest'],
   ollama: ['llama3.1', 'llama3.2', 'qwen2.5', 'mistral'],
   [CLAUDE_CLI_PROVIDER]: ['default', 'sonnet', 'opus', 'haiku'],
-  [GEMINI_CLI_PROVIDER]: ['default', 'gemini-2.5-flash', 'gemini-2.5-pro'],
+  [AGY_CLI_PROVIDER]: ['default'],
   [CUSTOM_PROVIDER]: ['llama-3.1-8b-instant', 'llama-3.3-70b-versatile'],
 };
 
@@ -215,10 +218,13 @@ export class AgentSidebar {
   /** 작업 모드: 'edit'=문서 편집, 'ask'=편집 없이 질문/요약 답변. */
   private mode: 'edit' | 'ask' = 'edit';
   /** 전송 시점에 고정한 모드(응답 처리에서 사용 — this.mode가 그새 바뀌어도 안전).
-   *  'proofread'는 전체 교정 패스(응답을 적용하지 않고 이슈 목록으로 수집). */
-  private requestMode: 'edit' | 'ask' | 'proofread' = 'edit';
+   *  'proofread'는 전체 교정 패스(응답을 적용하지 않고 이슈 목록으로 수집).
+   *  'form_fill'은 양식 이어쓰기(AI는 항목 내용만, 앱이 표를 결정적 복제 — F-ae778890). */
+  private requestMode: 'edit' | 'ask' | 'proofread' | 'form_fill' = 'edit';
   /** 교정 패스의 순차 루프가 기다리는 현재 구간 응답 resolver. */
   private proofreadResolve: ((script: ActionScript | null) => void) | null = null;
+  /** 양식 이어쓰기 루프가 기다리는 form-fill 응답(원문 JSON) resolver. */
+  private formFillResolve: ((rawJson: string | null) => void) | null = null;
   private readonly modeEditBtn: HTMLButtonElement;
   private readonly modeAskBtn: HTMLButtonElement;
   private readonly quickActions: HTMLElement;
@@ -768,6 +774,11 @@ export class AgentSidebar {
       await this.runProofread();
       return;
     }
+    // 양식 이어쓰기 — AI는 항목 내용만, 앱이 표를 결정적 복제(F-ae778890).
+    if (action === 'form_fill') {
+      await this.runFormFill();
+      return;
+    }
     const presets: Record<string, { mode: 'edit' | 'ask'; text: string }> = {
       concise: { mode: 'edit', text: '선택한 부분(선택이 없으면 현재 문단)을 의미는 유지하되 더 간결하게 다듬어줘.' },
       formal: { mode: 'edit', text: '선택한 부분(선택이 없으면 현재 문단)을 더 격식 있고 정중한 문어체로 다듬어줘.' },
@@ -1087,6 +1098,7 @@ export class AgentSidebar {
     this.requestId = null;
     this.setRequesting(false);
     this.resolveProofread(null);
+    this.resolveFormFill(null);
     this.setActiveStatus('취소했습니다.');
   }
 
@@ -1109,6 +1121,14 @@ export class AgentSidebar {
     if (ready.requestId !== this.requestId || !this.active) return;
     // 같은 요청의 ready 이벤트가 두 번 와도 한 번만 처리(이중 적용 방지).
     this.requestId = null;
+    // 양식 이어쓰기: 응답은 Action Script가 아니라 form-fill JSON({entries})이다 — 파싱·적용은
+    // runFormFill 루프가 한다(앱이 표를 결정적 복제). 원문을 그대로 넘긴다.
+    if (this.requestMode === 'form_fill') {
+      this.active.streamEl.textContent = '';
+      this.session.complete();
+      this.resolveFormFill(ready.actionScriptJson);
+      return;
+    }
     // 교정 패스는 구간 루프가 끝날 때까지 요청 중 상태(취소 버튼)를 유지한다.
     if (this.requestMode !== 'proofread') this.setRequesting(false);
     this.active.streamEl.textContent = '';
@@ -1118,6 +1138,7 @@ export class AgentSidebar {
       this.session.onFailed();
       this.setActiveStatus(interpretAiFailure('PARSE_ERROR'), 'error');
       this.resolveProofread(null);
+      this.resolveFormFill(null);
       return;
     }
     // 교정 패스: 적용하지 않고 응답을 루프(runProofread)에 넘긴다.
@@ -1213,6 +1234,7 @@ export class AgentSidebar {
     this.active.streamEl.textContent = '';
     this.setActiveStatus(`${interpretAiFailure(failed.code)} (${failed.reason})`, 'error');
     this.resolveProofread(null);
+    this.resolveFormFill(null);
   }
 
   /** 교정 루프가 기다리는 구간 응답을 풀어준다(완료/실패/취소 공통). */
@@ -1220,6 +1242,13 @@ export class AgentSidebar {
     const resolve = this.proofreadResolve;
     this.proofreadResolve = null;
     resolve?.(script);
+  }
+
+  /** 양식 이어쓰기 루프가 기다리는 form-fill 응답(원문 JSON)을 풀어준다. */
+  private resolveFormFill(rawJson: string | null): void {
+    const resolve = this.formFillResolve;
+    this.formFillResolve = null;
+    resolve?.(rawJson);
   }
 
   private accept(): void {
@@ -1337,6 +1366,139 @@ export class AgentSidebar {
           this.session.onFailed();
           this.setActiveStatus(`요청 실패: ${String(error)}`, 'error');
           this.resolveProofread(null);
+        });
+    });
+  }
+
+  // ── 양식 이어쓰기 (F-ae778890) ───────────────────────────────
+  //
+  // 핵심: AI는 표 구조를 절대 결정하지 않는다. 앱이 항목마다 소스 양식 표를 결정적으로
+  // 복제(cloneTableAt)하고, AI가 준 라벨→값 내용으로 값칸만 채운다. 소스 양식 표가 없으면
+  // compose 폴백 없이 거부한다(AC-0d49695d).
+
+  /**
+   * 양식 이어쓰기 오케스트레이터(runProofread 패턴):
+   *  1) 소스 양식 표를 form_tables에서 식별. 없으면 거부(문서 변경 없음, no compose).
+   *  2) AI에 '항목 내용 리스트'만 요청(form-fill 모드 — 응답 스키마에 표/compose 없음).
+   *  3) 항목마다 소스 표를 결정적 복제하고 라벨→값칸 매핑으로 값칸을 채운다.
+   */
+  private async runFormFill(): Promise<void> {
+    if (this.session.state === 'REQUESTING') return;
+    const guard = this.checkSendGuards();
+    if (!guard) return;
+    const { docId, provider, baseUrl } = guard;
+    if (this.session.isPending) this.session.cancel();
+
+    this.requestMode = 'form_fill';
+    const userText = this.promptInput.value.trim() || '이 양식의 항목을 하나 더 추가해줘';
+    this.appendUserTurn(userText, []);
+    this.recordMessage('user', userText);
+    this.active = this.appendAssistantTurn();
+    this.promptInput.value = '';
+    this.setRequesting(true);
+    const model = this.currentModel();
+    try {
+      const context = await this.deps.bridge.aiGetDocumentContext(docId, false, null, true);
+      this.context = context;
+      const source = this.pickSourceFormTable(context);
+      if (!source) {
+        // AC-0d49695d: 복제할 양식 표가 없으면 거부 — compose 폴백을 하지 않는다(no-op).
+        const reason = '복제할 양식 표를 찾지 못했습니다 — 반복되는 표 양식이 있는 문서에서만 항목을 추가할 수 있습니다(표를 새로 그리지 않습니다).';
+        if (this.active) this.active.msgEl.textContent = reason;
+        this.recordMessage('assistant', reason);
+        this.setActiveStatus('양식 표 없음 — 추가하지 않았습니다.', 'warn');
+        return;
+      }
+      const labels = formTableLabels(source);
+      this.log(`양식 이어쓰기: 소스 표 sec[${source.section}].p[${source.paragraph}].tbl[${source.control_index}] (${source.rows}×${source.cols}), 라벨 ${labels.length}개`);
+      this.setActiveStatus('항목 내용 생성 중…');
+      const rawJson = await this.requestFormFillContent(docId, provider, model, baseUrl, userText, labels);
+      if (rawJson == null) return; // 실패/취소 — 상태 표시는 onFailed/cancel이 했다.
+
+      const parsed = parseFormFillResponse(rawJson);
+      const entries = parsed?.entries ?? [];
+      if (!entries.length) {
+        const msg = parsed?.message?.trim() || '추가할 항목 내용을 받지 못했습니다.';
+        if (this.active) this.active.msgEl.textContent = msg;
+        this.recordMessage('assistant', msg);
+        this.setActiveStatus('추가할 항목이 없습니다.', 'warn');
+        return;
+      }
+
+      // 항목마다 소스 표를 결정적 복제하는 clone_table 편집 목록(AC-6bdb1e17).
+      // anchor는 표 바깥 본문 문단(.tbl 없는 마지막 sec[s].p[p]) — 새 항목을 그 뒤/새 페이지에.
+      const anchor = lastBodyParagraphId(context);
+      if (!anchor) {
+        const reason = '새 항목을 넣을 본문 문단을 찾지 못했습니다.';
+        if (this.active) this.active.msgEl.textContent = reason;
+        this.setActiveStatus(reason, 'warn');
+        return;
+      }
+      const plans = buildFormFillEdits(source, entries, anchor);
+      const script: ActionScript = { edits: plans.map((p) => p.edit) };
+      const labelSkips = plans.flatMap((p) => p.skipped);
+      if (labelSkips.length) {
+        this.log(`라벨 해석 건너뜀 ${labelSkips.length}건: ${labelSkips.map((s) => `${s.label}(${s.reason})`).join(' / ')}`);
+      }
+
+      if (!this.snapshotDocument()) {
+        this.setActiveStatus('이 환경에서는 양식 이어쓰기를 미리 적용할 수 없습니다.', 'warn');
+        return;
+      }
+      const result = applyActionScript(this.deps.bridge, script, [], this.compiledTheme);
+      this.reflowAndRender();
+      this.applied = result;
+      this.pendingScript = script;
+      this.rejectedEdits = new Set();
+      this.renderDiff(script);
+      this.renderDecisionBar(script, result.changed);
+      this.setPreviewEnabled(true);
+      const summary =
+        parsed?.message?.trim() ||
+        `양식 항목 ${entries.length}개를 기존 표와 동일한 구조로 추가했습니다.`;
+      if (this.active) this.active.msgEl.textContent = summary;
+      this.recordMessage('assistant', summary);
+      const note = this.skipNote(result) + (labelSkips.length ? ` · 라벨 ${labelSkips.length}건 미해석` : '');
+      const tone = result.applied === 0 ? 'warn' : 'info';
+      this.setActiveStatus(`항목 ${result.applied}개 미리 추가${note} — 승인 또는 거절하세요.`, tone);
+    } catch (error) {
+      this.setActiveStatus(`양식 이어쓰기 실패: ${String(error)}`, 'error');
+    } finally {
+      this.setRequesting(false);
+    }
+  }
+
+  /**
+   * 복제할 소스 양식 표를 고른다. 커서가 양식 표 안/근처면 그 표를, 아니면 첫 양식 표를
+   * 고른다(가장 단순한 안전한 선택). form_tables가 비어 있으면 null(→ 거부).
+   */
+  private pickSourceFormTable(context: DocumentContext): FormSourceTable | null {
+    const tables = context.document_metadata.form_tables ?? [];
+    if (!tables.length) return null;
+    return tables[0] as FormSourceTable;
+  }
+
+  /** 양식 이어쓰기 요청(content-only 모드)을 보내고 응답 원문 JSON(또는 실패 시 null)을 기다린다. */
+  private requestFormFillContent(
+    docId: string,
+    provider: string,
+    model: string,
+    baseUrl: string | null,
+    userText: string,
+    labels: string[],
+  ): Promise<string | null> {
+    return new Promise((resolve) => {
+      this.formFillResolve = resolve;
+      this.session.startRequest();
+      this.deps.bridge
+        .aiRequestEdit(docId, userText, provider, model, null, baseUrl, null, null, null, null, labels)
+        .then((requestId) => {
+          this.requestId = requestId;
+        })
+        .catch((error) => {
+          this.session.onFailed();
+          this.setActiveStatus(`요청 실패: ${String(error)}`, 'error');
+          this.resolveFormFill(null);
         });
     });
   }
@@ -2356,7 +2518,7 @@ function defaultModel(provider: string): string {
     case 'ollama':
       return 'llama3.1';
     case CLAUDE_CLI_PROVIDER:
-    case GEMINI_CLI_PROVIDER:
+    case AGY_CLI_PROVIDER:
       return 'default';
     case CUSTOM_PROVIDER:
       return 'llama-3.1-8b-instant';
@@ -2616,6 +2778,7 @@ function buildPanel(): PanelParts {
     { action: 'expand', label: '길게' },
     { action: 'grammar', label: '문법 교정' },
     { action: 'proofread', label: '전체 교정' },
+    { action: 'form_fill', label: '양식 항목 추가' },
     { action: 'variations', label: '변형 제안' },
     { action: 'summarize', label: '요약' },
   ];
@@ -2766,6 +2929,39 @@ function attachmentIcon(kind: Attachment['kind']): string {
   if (kind === 'image') return '🖼';
   if (kind === 'file') return '📄';
   return '📎';
+}
+
+/**
+ * 소스 양식 표의 '필드 라벨' 목록을 뽑는다(F-ae778890). 텍스트가 있고 role이 input이
+ * 아닌 셀의 내용을 라벨로 본다(serialize.rs의 role 힌트). 중복 제거, 순서 보존. 이 목록을
+ * form-fill 시스템 프롬프트에 넣어 모델이 내용을 라벨로 키잉하게 한다(AC-0cd01fc1).
+ */
+function formTableLabels(table: FormSourceTable): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const c of table.cells) {
+    const t = (c.text ?? '').trim();
+    if (!t || c.role === 'input') continue;
+    const key = t.replace(/\s+/g, '');
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(t);
+  }
+  return out;
+}
+
+/**
+ * 새 항목을 넣을 anchor로 쓸 '표 바깥 본문 문단'의 마지막 ID(`sec[s].p[p]`, `.tbl` 없음)를
+ * 고른다. 표 셀 안에는 표를 넣을 수 없으므로(셀은 페이지로 늘어나지 않음) 본문 문단을
+ * anchor로 삼아 INSERT_AFTER + page_break로 문서 끝/새 페이지에 차례로 추가한다. 본문
+ * 문단이 하나도 없으면 null.
+ */
+function lastBodyParagraphId(context: DocumentContext): string | null {
+  let last: string | null = null;
+  for (const node of context.content) {
+    if (/^sec\[\d+\]\.p\[\d+\]$/.test(node.id)) last = node.id;
+  }
+  return last;
 }
 
 function mimeForImage(name: string): string {

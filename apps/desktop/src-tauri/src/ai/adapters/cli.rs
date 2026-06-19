@@ -1,6 +1,6 @@
 //! 로컬 CLI 위임 어댑터(스펙 5.3장 — API 키 없이 구독 활용).
 //!
-//! 사용자가 터미널에서 이미 로그인해 둔 CLI(`claude` / `gemini`)를 자식 프로세스로
+//! 사용자가 터미널에서 이미 로그인해 둔 CLI(`claude` / `agy`)를 자식 프로세스로
 //! 호출한다. OAuth·구독·과금은 CLI가 처리하므로 앱은 API 키를 다루지 않는다.
 //! 프롬프트를 stdin으로 넘기고 stdout(텍스트)을 받아, 다른 provider와 동일하게
 //! 코어가 파싱·검증·diff·승인 적용한다.
@@ -16,15 +16,20 @@ use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 /// CLI 응답 대기 상한(초). 초과 시 프로세스를 종료하고 TIMEOUT 처리.
-const CLI_TIMEOUT_SECS: u64 = 180;
+///
+/// 에이전트형 CLI(claude/agy)는 단발 API가 아니라 추론 루프라 느리고, 문서 전체를
+/// 한 번에 고쳐 쓰는 작업은 입력·출력이 모두 크다. claude CLI 자체 print-timeout이
+/// 5분이므로, 그보다 먼저 죽이지 않도록 여유를 둔다(우리가 claude의 완료 전에 끊으면
+/// 멀쩡한 응답도 TIMEOUT으로 버려진다).
+const CLI_TIMEOUT_SECS: u64 = 600;
 
 /// 범용 CLI provider. 실행 파일·기본 인자·모델 플래그만 다르고 동작은 동일하다.
 pub struct CliProvider {
-    /// 실행 파일 이름(PATH 기준). 예: `claude`, `gemini`.
+    /// 실행 파일 이름(PATH 기준). 예: `claude`, `agy`.
     pub program: &'static str,
     /// 비대화형 실행을 위한 고정 인자. 예: claude `-p --output-format text`.
     pub base_args: &'static [&'static str],
-    /// 모델 지정 플래그. 예: claude `--model`, gemini `-m`. 없으면 모델 미지정.
+    /// 모델 지정 플래그. 예: claude `--model`, agy `--model`. 없으면 모델 미지정.
     pub model_flag: Option<&'static str>,
     /// 모델 값. 비었거나 "default"면 CLI 기본 모델을 쓴다.
     pub model: String,
@@ -34,20 +39,25 @@ impl CliProvider {
     pub fn claude(model: String) -> Self {
         CliProvider {
             program: "claude",
-            base_args: &["-p", "--output-format", "text"],
+            // `--safe-mode`: CLAUDE.md·플러그인·훅·MCP 등 사용자 커스터마이징을 모두 끈다
+            // (인증·모델 선택은 유지). 이게 없으면 전역 설치된 플러그인(예: cladding)의
+            // Stop 훅이 게이트 findings를 내뱉고, 에이전트형 claude가 그것에 반응해
+            //  (1) 순수 JSON 대신 거버넌스 설명문을 응답으로 내고(파싱 실패),
+            //  (2) 그 findings를 두고 추론 루프를 돌며 수 분을 허비한다(타임아웃).
+            // 측정: 동일 작업이 safe-mode 없이 7분38초→safe-mode로 1분50초, 출력도 유효 JSON.
+            base_args: &["-p", "--output-format", "text", "--safe-mode"],
             model_flag: Some("--model"),
             model,
         }
     }
 
-    pub fn gemini(model: String) -> Self {
+    pub fn agy(model: String) -> Self {
         CliProvider {
-            program: "gemini",
-            // gemini의 `-p`는 프롬프트 "값"을 요구한다(claude의 플래그형 `-p`와 다름).
-            // 빈 값으로 비대화형(headless)에 진입하고, 실제 프롬프트는 stdin으로 넘긴다
-            // ("-p ... Appended to input on stdin"). `-o text`로 평문 출력.
-            base_args: &["-p", "", "-o", "text"],
-            model_flag: Some("-m"),
+            program: "agy",
+            // agy의 `-p`(=`--print`)는 단발 비대화형 실행이며, 프롬프트는 stdin으로 받는다
+            // (claude의 플래그형 `-p`와 동일). 출력은 응답 텍스트만 평문으로 나온다.
+            base_args: &["-p"],
+            model_flag: Some("--model"),
             model,
         }
     }
@@ -118,6 +128,11 @@ fn run_cli(
             command.arg(flag).arg(model);
         }
     }
+    // 중립 디렉터리에서 실행한다. 에이전트형 CLI는 실행 디렉터리의 `CLAUDE.md`·`.cladding`
+    // 같은 프로젝트 컨텍스트를 자동으로 읽어들여 순수 JSON 대신 설명문을 낼 수 있다.
+    // claude는 `--safe-mode`로 그 유입을 원천 차단하지만(전역 플러그인·훅까지), safe-mode
+    // 류 플래그가 없는 CLI(agy 등)를 위한 2차 방어선으로 cwd도 프로젝트 밖으로 둔다.
+    command.current_dir(std::env::temp_dir());
     command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
 
     let mut child = command.spawn().map_err(|e| {
@@ -220,9 +235,9 @@ mod tests {
     }
 
     #[test]
-    fn claude_and_gemini_configs_differ() {
+    fn claude_and_agy_configs_differ() {
         assert_eq!(CliProvider::claude("default".into()).program, "claude");
-        assert_eq!(CliProvider::gemini("default".into()).program, "gemini");
-        assert_eq!(CliProvider::gemini("x".into()).model_flag, Some("-m"));
+        assert_eq!(CliProvider::agy("default".into()).program, "agy");
+        assert_eq!(CliProvider::agy("x".into()).model_flag, Some("--model"));
     }
 }
