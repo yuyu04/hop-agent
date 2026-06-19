@@ -19,3 +19,8 @@ capabilities:
   - id: attachment-context
     title: "첨부 컨텍스트 — PDF/HWP/DOCX 추출, PDF 페이지 렌더+크롭 (전 플랫폼)"
     features: [F-4e2261]
+  - id: document-export
+    title: "문서 내보내기 — HWP를 다른 포맷(DOCX 등)으로 결정적 변환"
+    summary: "현재 HWP 문서를 AI 없이 결정적으로 다른 오피스 포맷으로 내보낸다. MVP: HWP→DOCX(텍스트·글자서식·문단정렬·단순 표)."
+    surface: feature
+    features: [F-ffa7449b]

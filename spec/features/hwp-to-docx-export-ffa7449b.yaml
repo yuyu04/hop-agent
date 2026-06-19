@@ -1,0 +1,48 @@
+id: F-ffa7449b
+slug: hwp-to-docx-export
+title: "HWP → DOCX 내보내기 (결정적 OOXML 변환, MVP: 텍스트·서식·단순표)"
+status: done
+modules:
+  - apps/desktop/src-tauri/src/docx_export.rs
+  - apps/desktop/src-tauri/src/commands.rs
+  - apps/desktop/src-tauri/src/lib.rs
+acceptance_criteria:
+  - id: AC-62bb6a74
+    ears: event
+    condition: "When 사용자가 현재 문서를 DOCX로 내보내기를 요청하면"
+    text: "The system shall 문서 모델(core.document())을 결정적으로 순회하여 유효한 OOXML .docx(ZIP 컨테이너: [Content_Types].xml, _rels/.rels, word/document.xml 최소 포함)를 대상 경로에 쓴다 — LLM/AI를 사용하지 않는다."
+    test_refs: ["apps/desktop/src-tauri/src/docx_export.rs"]
+    notes: "pdf_export.rs와 동일한 패턴: export_core_to_docx(core, target_path). zip 8.5(deflate) + quick-xml 0.38(이미 의존성에 존재)로 직접 OOXML 생성. atomic_write로 기록. AI는 변환에 일절 관여하지 않음 — F-ae778890의 '구조는 앱이 결정적으로' 철학과 동일."
+  - id: AC-201e71d2
+    ears: ubiquitous
+    text: "The system shall 본문 문단을 구역(section)·문단 순서대로 w:p로 출력하고, 각 문단 텍스트를 w:r/w:t 런으로 출력하며 XML 특수문자(& < > 등)를 이스케이프한다(빈 문단도 빈 w:p로 보존)."
+    test_refs: ["apps/desktop/src-tauri/src/docx_export.rs"]
+    notes: "Document.sections[].paragraphs[]를 순서대로 순회. Paragraph.text + char_offsets + char_shapes(Vec<CharShapeRef{start_pos,char_shape_id}>)로 런 분할. quick-xml Writer가 텍스트 이스케이프 처리."
+  - id: AC-045774b6
+    ears: ubiquitous
+    text: "The system shall HWP 글자모양(CharShape)의 굵게·기울임·글꼴·글자크기·글자색을 해당 런의 w:rPr로 매핑한다 — bold→w:b, italic→w:i, 글꼴→w:rFonts, 크기→w:sz(half-point), 색→w:color."
+    test_refs: ["apps/desktop/src-tauri/src/docx_export.rs"]
+    notes: "doc_info.char_shapes[char_shape_id]에서 bold/italic/base_size/text_color/font_ids 읽음. 크기: base_size(1pt=100 HWPUNIT)→ w:sz = base_size/50 (half-point). 색: ColorRef=u32 0x00BBGGRR → DOCX RRGGBB(R=c&0xFF,G=(c>>8)&0xFF,B=(c>>16)&0xFF), 검정(0)은 생략 가능. 글꼴: doc_info.font_faces[0(한글)][font_ids[0]].name."
+  - id: AC-f9e7511f
+    ears: ubiquitous
+    text: "The system shall HWP 문단 정렬(왼쪽/가운데/오른쪽/양쪽)을 w:pPr/w:jc(left/center/right/both)로 매핑한다."
+    test_refs: ["apps/desktop/src-tauri/src/docx_export.rs"]
+    notes: "doc_info.para_shapes[para_shape_id].alignment(Alignment::Left/Right/Center/Justify/Distribute/Split). Justify→both, Left→left, Right→right, Center→center, Distribute/Split→both(근사). MVP에서 heading 스타일 매핑은 선택적(serialize.rs detect_headings 재사용 가능하나 MVP 필수 아님)."
+  - id: AC-94d6dd25
+    ears: event
+    condition: "When 문단이 표 컨트롤(Control::Table, 병합 셀 없음)을 포함하면"
+    text: "The system shall 표를 w:tbl로 출력하여 행 수·열 수 구조와 각 셀(Cell.paragraphs)의 문단 텍스트를 보존한다."
+    test_refs: ["apps/desktop/src-tauri/src/docx_export.rs"]
+    notes: "Table{row_count,col_count,cells:Vec<Cell{row,col,col_span,row_span,paragraphs}>}. 셀은 row-major. MVP: col_span/row_span==1 단순 표. 각 행을 w:tr, 셀을 w:tc, 셀 내부는 문단 재귀(w:p). 표 그리드(w:tblGrid)와 최소 w:tblPr(테두리) 포함해 Word에서 열림."
+  - id: AC-babea59d
+    ears: unwanted
+    condition: "If 대상 경로가 .docx 확장자가 아니거나 내보낼 내용(문단)이 전혀 없으면"
+    text: "The system shall 사유를 담은 오류를 반환하고 부분/손상 파일을 쓰지 않는다."
+    test_refs: ["apps/desktop/src-tauri/src/docx_export.rs"]
+    notes: "ensure_docx_path (pdf_export.rs::ensure_pdf_path 대칭). 내용 없음은 빈 문서 거부. 파일 쓰기 전 검증 → 실패 시 atomic_write 미실행."
+  - id: AC-532bc0c9
+    ears: unwanted
+    condition: "If 문서에 MVP 미지원 구조(이미지/그림, 병합 셀, 각주/미주, 글상자·도형)가 있으면"
+    text: "The system shall 충돌(panic) 없이 해당 요소를 건너뛰거나 평탄화하고 나머지 내용을 정상 출력하여 손상되지 않은 .docx를 만든다."
+    test_refs: ["apps/desktop/src-tauri/src/docx_export.rs"]
+    notes: "Control::Picture/Shape/Footnote 등은 skip. 병합 셀(col_span/row_span>1)은 MVP에서 평탄화(개별 셀로) 또는 gridSpan 미적용 — panic 금지가 핵심. 이미지·각주·머리/꼬리말은 차기 feature(풀세트). 본 AC는 견고성(robustness) 보장."

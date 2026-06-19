@@ -260,6 +260,36 @@ pub fn export_pdf(
 }
 
 #[tauri::command]
+pub fn export_docx(
+    doc_id: String,
+    target_path: String,
+    open_after: bool,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let path = PathBuf::from(&target_path);
+    ensure_target_parent(&path, "DOCX 경로")?;
+
+    let mut sessions = state
+        .sessions
+        .lock()
+        .map_err(|_| "문서 세션 잠금 실패".to_string())?;
+    let session = sessions.session_mut(&doc_id)?;
+    let core = session.ensure_core_loaded()?;
+    crate::docx_export::export_core_to_docx(core, &path)?;
+
+    if open_after {
+        open::that(&path).map_err(|e| {
+            format!(
+                "파일은 저장됐지만 OS 기본 앱으로 열 수 없습니다: {} ({})",
+                path.display(),
+                e
+            )
+        })?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
 pub fn export_pdf_from_hwp_path(
     app: AppHandle,
     staged_path: String,

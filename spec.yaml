@@ -26,8 +26,8 @@ features: []
 
 # Auto-maintained by `clad sync` (F-5b9f9f). Do not edit by hand.
 inventory:
-  features: 13
+  features: 14
   scenarios: 1
-  capabilities: 5
+  capabilities: 6
   test_files: 0
-  last_synced: "2026-06-15"
+  last_synced: "2026-06-17"
