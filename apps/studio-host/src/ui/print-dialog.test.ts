@@ -179,6 +179,15 @@ describe('openPrintDialog', () => {
     expect(doc.renderPageSvg).toHaveBeenCalledWith(0);
     expect(doc.renderPageSvg).toHaveBeenCalledWith(1);
     expect(doc.renderPageSvg).toHaveBeenCalledWith(2);
+
+    const printRoot = fakeDocument.body.children.find((child) => child.id === 'hop-print-root');
+    expect(printRoot?.dataset.pageCount).toBe('3');
+    expect(printRoot?.children).toHaveLength(3);
+    expect(printRoot?.children.every((page) => (
+      page.className === 'hop-print-page'
+      && page.children.length === 1
+      && page.children[0]?.tagName.toLowerCase() === 'svg'
+    ))).toBe(true);
   });
 
   it('keeps print content just inside the physical page height', async () => {
@@ -194,6 +203,8 @@ describe('openPrintDialog', () => {
     const printStyle = fakeDocument.head.children.find((child) => child.id === 'hop-print-style');
     expect(printStyle?.textContent).toContain('@page { size: 210mm 297mm; margin: 0; }');
     expect(printStyle?.textContent).toContain('height: calc(297mm - 0.1mm);');
+    expect(printStyle?.textContent).toContain('.hop-print-page:last-child');
+    expect(printStyle?.textContent).toContain('break-after: auto;');
   });
 
   it('rejects malformed SVG gracefully', async () => {
