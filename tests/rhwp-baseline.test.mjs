@@ -103,6 +103,18 @@ test('HOP product info keeps the upstream rhwp version and adds HOP version sepa
   assert.match(aboutDialog, /HOP \$\{__HOP_VERSION__\}/);
 });
 
+test('desktop release checksum manifest does not hash itself', async () => {
+  const releaseWorkflow = await readFile(
+    join(repoRoot, '.github/workflows/hop-desktop.yml'),
+    'utf8',
+  );
+
+  assert.match(
+    releaseWorkflow,
+    /find \. -type f ! -name '\.\/SHA256SUMS\.txt' -print0/,
+  );
+});
+
 test('HOP keeps PDF export menu-only without a stale Ctrl+E label', async () => {
   const fileCommands = await readFile(join(repoRoot, 'apps/studio-host/src/command/commands/file.ts'), 'utf8');
   const indexHtml = await readFile(join(repoRoot, 'apps/studio-host/index.html'), 'utf8');

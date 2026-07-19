@@ -897,7 +897,7 @@ jobs:
 
           (
             cd release-assets
-            find . -type f -print0 | sort -z | xargs -0 shasum -a 256
+            find . -type f ! -name './SHA256SUMS.txt' -print0 | sort -z | xargs -0 shasum -a 256
           ) > release-assets/SHA256SUMS.txt
 
           echo "files<<EOF" >> "$GITHUB_OUTPUT"
