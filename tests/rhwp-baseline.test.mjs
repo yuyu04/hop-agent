@@ -111,7 +111,7 @@ test('desktop release checksum manifest does not hash itself', async () => {
 
   assert.match(
     releaseWorkflow,
-    /find \. -type f ! -name '\.\/SHA256SUMS\.txt' -print0/,
+    /find \. -type f ! -name 'SHA256SUMS\.txt' -print0/,
   );
 });
 
