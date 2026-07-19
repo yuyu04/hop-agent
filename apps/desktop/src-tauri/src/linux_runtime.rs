@@ -88,7 +88,6 @@ fn apply_appimage_runtime_fixes_with_host_caches(host_cache_candidates: &[PathBu
         if let Some(cache_path) = find_im_module_cache(host_cache_candidates, module) {
             apply_host_im_module_cache(&cache_path);
             ensure_gtk_im_module(module);
-            return;
         }
     }
 }
