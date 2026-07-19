@@ -181,6 +181,21 @@ describe('openPrintDialog', () => {
     expect(doc.renderPageSvg).toHaveBeenCalledWith(2);
   });
 
+  it('keeps print content just inside the physical page height', async () => {
+    const doc = {
+      fileName: 'test.hwp',
+      pageCount: 1,
+      getPageInfo: vi.fn(() => pageInfo({ width: 793.7, height: 1122.5 })),
+      renderPageSvg: vi.fn(() => '<svg></svg>'),
+    };
+
+    await openPrintDialog(doc, { print: printMock });
+
+    const printStyle = fakeDocument.head.children.find((child) => child.id === 'hop-print-style');
+    expect(printStyle?.textContent).toContain('@page { size: 210mm 297mm; margin: 0; }');
+    expect(printStyle?.textContent).toContain('height: calc(297mm - 0.1mm);');
+  });
+
   it('rejects malformed SVG gracefully', async () => {
     (globalThis as Record<string, unknown>).DOMParser = makeFakeDOMParser(true);
 

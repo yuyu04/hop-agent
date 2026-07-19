@@ -14,6 +14,7 @@ interface PrintDialogOptions {
 
 const PRINT_ROOT_ID = 'hop-print-root';
 const PRINT_STYLE_ID = 'hop-print-style';
+const PRINT_PAGE_HEIGHT_GUARD_MM = 0.1;
 
 export async function openPrintDialog(
   document: PrintableDocument,
@@ -99,7 +100,7 @@ function renderPrintDocumentShell(payload: {
     }
     #${PRINT_ROOT_ID} .hop-print-page {
       width: ${payload.widthMm}mm;
-      height: ${payload.heightMm}mm;
+      height: calc(${payload.heightMm}mm - ${PRINT_PAGE_HEIGHT_GUARD_MM}mm);
       margin: 0 !important;
       padding: 0 !important;
       overflow: hidden;
