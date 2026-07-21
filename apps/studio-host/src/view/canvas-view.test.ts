@@ -5,6 +5,10 @@ const renderPageMock = vi.hoisted(() => vi.fn());
 const renderPageParentMock = vi.hoisted(() => vi.fn());
 const viewportState = vi.hoisted(() => ({ width: 1041, height: 900 }));
 const scrollContentState = vi.hoisted(() => ({ width: 1041 }));
+const animationFrameState = vi.hoisted(() => ({
+  callbacks: new Map<number, FrameRequestCallback>(),
+  nextId: 1,
+}));
 
 vi.mock('@upstream/view/virtual-scroll', () => ({
   VirtualScroll: class MockVirtualScroll {
@@ -65,7 +69,7 @@ vi.mock('@upstream/view/canvas-pool', () => ({
     private inUse = new Map<number, HTMLCanvasElement>();
 
     acquire(pageIdx: number): HTMLCanvasElement {
-      const canvas = this.inUse.get(pageIdx) ?? createMockCanvas();
+      const canvas = createMockCanvas();
       this.inUse.set(pageIdx, canvas);
       return canvas;
     }
@@ -186,6 +190,7 @@ function createMockNode(id?: string): MockNode {
     innerHTML: '',
     classList: { toggle: () => undefined },
     appendChild(child) {
+      child.parentElement?.removeChild(child);
       child.parentElement = node;
       node.children.push(child);
       return child;
@@ -217,6 +222,9 @@ function createMockNode(id?: string): MockNode {
       return null;
     },
     querySelectorAll(selector) {
+      if (selector === 'canvas') {
+        return node.children.filter((child) => 'width' in child);
+      }
       if (selector === '[data-rhwp-overlay]') {
         return node.children.filter((child) => child.dataset?.rhwpOverlay);
       }
@@ -292,9 +300,19 @@ describe('CanvasView viewport resize behavior', () => {
     viewportState.width = 1041;
     viewportState.height = 900;
     scrollContentState.width = 1041;
+    animationFrameState.callbacks.clear();
+    animationFrameState.nextId = 1;
     (globalThis as { window?: unknown }).window = {
       innerWidth: 1400,
       devicePixelRatio: 2,
+      requestAnimationFrame: vi.fn((callback: FrameRequestCallback) => {
+        const id = animationFrameState.nextId++;
+        animationFrameState.callbacks.set(id, callback);
+        return id;
+      }),
+      cancelAnimationFrame: vi.fn((id: number) => {
+        animationFrameState.callbacks.delete(id);
+      }),
     };
   });
 
@@ -385,6 +403,55 @@ describe('CanvasView viewport resize behavior', () => {
     eventBus.emit('document-view-changed');
 
     expect(renderPageMock).toHaveBeenCalledTimes(2);
+    expect(scrollContent.querySelectorAll('[data-rhwp-overlay]')).toHaveLength(1);
+
+    view.dispose();
+  });
+
+  it('coalesces upstream page invalidations and redraws the active table page', () => {
+    const container = createMockNode();
+    const scrollContent = createMockNode('scroll-content');
+    container.clientWidth = 1041;
+    scrollContent.clientWidth = scrollContentState.width;
+    container.appendChild(scrollContent);
+
+    const wasm = {
+      pageCount: 1,
+      getPageInfo: () => ({
+        pageIndex: 0,
+        width: 1000,
+        height: 1400,
+        sectionIndex: 0,
+        marginLeft: 0,
+        marginRight: 0,
+        marginTop: 0,
+        marginBottom: 0,
+        marginHeader: 0,
+        marginFooter: 0,
+      }),
+    };
+
+    const eventBus = new EventBus();
+    const view = new CanvasView(container as unknown as HTMLElement, wasm as never, eventBus);
+
+    view.loadDocument();
+    const canvas = scrollContent.querySelector('canvas');
+    expect(renderPageMock).toHaveBeenCalledTimes(1);
+
+    eventBus.emit('document-page-invalidated', { pageIndex: 0, reason: 'text-edit' });
+    eventBus.emit('document-page-invalidated', { pageIndex: 0, reason: 'text-edit' });
+
+    expect(renderPageMock).toHaveBeenCalledTimes(1);
+    expect(animationFrameState.callbacks).toHaveLength(1);
+
+    const callback = animationFrameState.callbacks.values().next().value;
+    expect(callback).toBeTypeOf('function');
+    animationFrameState.callbacks.clear();
+    callback?.(0);
+
+    expect(renderPageMock).toHaveBeenCalledTimes(2);
+    expect(scrollContent.querySelector('canvas')).toBe(canvas);
+    expect(scrollContent.querySelectorAll('canvas')).toHaveLength(1);
     expect(scrollContent.querySelectorAll('[data-rhwp-overlay]')).toHaveLength(1);
 
     view.dispose();

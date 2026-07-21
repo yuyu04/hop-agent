@@ -26,6 +26,8 @@ export class CanvasView {
   private scrollContent: HTMLElement;
   private pages: PageInfo[] = [];
   private unsubscribers: (() => void)[] = [];
+  private pendingPageRefreshes = new Set<number>();
+  private pageRefreshRafId: number | null = null;
 
   constructor(
     private container: HTMLElement,
@@ -45,6 +47,7 @@ export class CanvasView {
       eventBus.on('viewport-scroll', () => this.updateVisiblePages()),
       eventBus.on('viewport-resize', () => this.onViewportResize()),
       eventBus.on('zoom-changed', (zoom) => this.onZoomChanged(zoom as number)),
+      eventBus.on('document-page-invalidated', (payload) => this.refreshInvalidatedPage(payload)),
       eventBus.on('document-changed', () => this.refreshPages()),
       eventBus.on('document-view-changed', () => this.refreshPages()),
     );
@@ -128,8 +131,10 @@ export class CanvasView {
     }
   }
 
-  private renderPage(pageIdx: number): void {
-    const canvas = this.canvasPool.acquire(pageIdx);
+  private renderPage(
+    pageIdx: number,
+    canvas: HTMLCanvasElement = this.canvasPool.acquire(pageIdx),
+  ): void {
     const zoom = this.viewportManager.getZoom();
     const rawDpr = window.devicePixelRatio || 1;
 
@@ -172,6 +177,54 @@ export class CanvasView {
       dpr,
     );
     applyPageOverlayDisplayLayout(this.scrollContent, canvas, pageIdx);
+  }
+
+  private refreshInvalidatedPage(payload: unknown): void {
+    const pageIndex =
+      typeof payload === 'object' && payload !== null && 'pageIndex' in payload
+        ? (payload as { pageIndex?: unknown }).pageIndex
+        : undefined;
+
+    if (typeof pageIndex !== 'number' || !Number.isInteger(pageIndex) || pageIndex < 0) {
+      this.cancelPendingPageRefresh();
+      this.refreshPages();
+      return;
+    }
+
+    const pageIdx = pageIndex;
+    const pageCount = this.wasm.pageCount;
+    if (pageCount !== this.pages.length || pageIdx >= pageCount) {
+      this.cancelPendingPageRefresh();
+      this.refreshPages();
+      return;
+    }
+
+    this.pendingPageRefreshes.add(pageIdx);
+    if (this.pageRefreshRafId !== null) return;
+
+    this.pageRefreshRafId = window.requestAnimationFrame(() => {
+      this.pageRefreshRafId = null;
+      const pendingPages = Array.from(this.pendingPageRefreshes);
+      this.pendingPageRefreshes.clear();
+
+      for (const pendingPageIdx of pendingPages) {
+        const canvas = this.canvasPool.getCanvas(pendingPageIdx);
+        if (canvas) this.renderPage(pendingPageIdx, canvas);
+      }
+    });
+  }
+
+  private cancelPendingPageRefresh(pageIdx?: number): void {
+    if (typeof pageIdx === 'number') {
+      this.pendingPageRefreshes.delete(pageIdx);
+    } else {
+      this.pendingPageRefreshes.clear();
+    }
+    if (this.pendingPageRefreshes.size > 0) return;
+    if (this.pageRefreshRafId !== null) {
+      window.cancelAnimationFrame(this.pageRefreshRafId);
+      this.pageRefreshRafId = null;
+    }
   }
 
   private repositionActivePages(): void {
@@ -265,11 +318,13 @@ export class CanvasView {
   }
 
   private releasePage(pageIdx: number): void {
+    this.cancelPendingPageRefresh(pageIdx);
     removePageOverlays(this.scrollContent, pageIdx);
     this.canvasPool.release(pageIdx);
   }
 
   private releaseAllPages(): void {
+    this.cancelPendingPageRefresh();
     removeAllPageOverlays(this.scrollContent);
     this.canvasPool.releaseAll();
   }
