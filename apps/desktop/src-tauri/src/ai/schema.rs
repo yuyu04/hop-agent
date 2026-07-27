@@ -37,7 +37,7 @@ pub struct TableData {
 /// 기존 표의 구조 편집 스펙(행/열 추가·삭제, 셀 병합). target_id는 그 표의 셀 ID.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TableEditSpec {
-    /// "insert_row" | "insert_col" | "delete_row" | "delete_col" | "merge_cells"
+    /// "insert_row" | "insert_col" | "delete_row" | "delete_col" | "merge_cells" | "split_cell"
     pub op: String,
     /// 기준 행(0-기준). insert_row/delete_row에서 사용.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -54,6 +54,18 @@ pub struct TableEditSpec {
     /// merge_cells: 병합 범위(0-기준, 끝 포함).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub merge: Option<MergeSpec>,
+    /// split_cell: 셀을 몇 줄로 나눌지(생략 시 1). F-6daa56b3.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub into_rows: Option<u32>,
+    /// split_cell: 셀을 몇 칸으로 나눌지(생략 시 1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub into_cols: Option<u32>,
+    /// split_cell: 나뉜 줄 높이를 균등하게(생략 시 true).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub equal_row_height: Option<bool>,
+    /// split_cell: 주면 이 범위 안의 셀들을 각각 into_rows×into_cols로 분할한다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub range: Option<MergeSpec>,
     /// insert_row/insert_col: 새 행/열의 셀 텍스트(왼→오 / 위→아래 순, 선택).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub texts: Vec<String>,
@@ -133,6 +145,63 @@ pub struct CharFormatSpec {
     pub text_color: Option<String>,
 }
 
+/// 문서 전역 찾아 바꾸기 스펙(payload.type="replace_text", F-293e8c99).
+///
+/// 문단마다 REPLACE 편집을 나열하는 대신 rhwp의 전역 치환 프리미티브를 한 번 부른다 —
+/// 100군데를 고칠 때 edit 100개 대신 1개면 된다(토큰·누락·승인 UI 문제 해소).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReplaceTextSpec {
+    /// 찾을 문자열(비어 있으면 적용하지 않고 사유를 보고한다).
+    pub query: String,
+    /// 바꿀 문자열(빈 문자열이면 삭제).
+    pub new_text: String,
+    /// 대소문자 구분(생략 시 false).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub case_sensitive: Option<bool>,
+    /// "all"(기본, 전부) | "first"(첫 건만).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+}
+
+/// 표 셀 계산식 스펙(payload.type="table_formula", F-8eb1f86f).
+///
+/// AI가 암산한 숫자를 글자로 넣는 대신 rhwp 표 계산 엔진이 값을 구해 셀에 기입한다.
+/// 주의: row/col은 0-기준 정수(다른 표 편집과 동일)지만, formula 안의 셀 참조는 A1 표기다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TableFormulaSpec {
+    /// 결과를 쓸 셀의 행(0-기준).
+    pub row: u32,
+    /// 결과를 쓸 셀의 열(0-기준).
+    pub col: u32,
+    /// 계산식. 예: "=SUM(B2:B5)", "=A1+B2*3". 셀 참조는 A1 표기를 쓴다.
+    pub formula: String,
+}
+
+/// 각주 달기/떼기 스펙(payload.type="footnote", F-3e2d0f9a).
+///
+/// 삽입: 본문 문단 ID + command=REPLACE (본문 내용은 그대로, 각주만 추가).
+/// 삭제: 각주 ID + command=DELETE (각주 자체를 표식까지 제거).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FootnoteSpec {
+    /// 삽입할 각주 내용. 삭제에는 필요 없다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    /// 삽입 위치: 이 문자열 바로 뒤에 각주 표식을 단다(생략 시 문단 끝).
+    /// 문단 안에서 유일해야 한다 — 여러 번 나오면 적용하지 않는다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anchor_text: Option<String>,
+}
+
+/// HTML 붙여넣기 스펙(payload.type="paste_html", F-4f6d826e).
+///
+/// 웹/워드에서 가져온 내용을 순수 텍스트로 풀어 쓰는 대신 서식(굵기·목록·표)을 유지한 채
+/// 반입한다. rhwp가 HTML을 파싱해 문단·런으로 만든다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PasteHtmlSpec {
+    /// 붙여넣을 HTML 조각. 비어 있으면 적용하지 않고 사유를 보고한다.
+    pub html: String,
+}
+
 /// 이미지 크롭 영역(0~1 비율).
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct CropSpec {
@@ -186,6 +255,18 @@ pub struct EditPayload {
     /// type="format"일 때: 적용할 글자 서식(바꿀 속성만 지정).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub char_format: Option<CharFormatSpec>,
+    /// type="replace_text"일 때: 문서 전역 찾아 바꾸기(target_id="doc").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replace_text: Option<ReplaceTextSpec>,
+    /// type="table_formula"일 때: 표 셀 계산식(엔진이 계산해 셀에 기입).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub table_formula: Option<TableFormulaSpec>,
+    /// type="footnote"일 때: 각주 달기(본문 문단 target) / 떼기(각주 target).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub footnote: Option<FootnoteSpec>,
+    /// type="paste_html"일 때: HTML을 서식 유지한 채 붙여넣는다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paste_html: Option<PasteHtmlSpec>,
     /// INSERT 시 참이면 새 페이지에서 시작(본문 문단에만 적용).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub page_break: Option<bool>,
@@ -362,9 +443,25 @@ pub fn collect_violations(script: &ActionScript, whitelist: &HashSet<String>) ->
     script
         .edits
         .iter()
-        .filter(|edit| !whitelist.contains(&edit.target_id))
+        .filter(|edit| !is_allowed_target(edit, whitelist))
         .map(|edit| edit.target_id.clone())
         .collect()
+}
+
+/// 문서 전체를 가리키는 target_id 토큰(전역 찾아 바꾸기 전용, F-293e8c99).
+///
+/// 구간 스코프 요청(serialize::build_scoped_context)에서는 화이트리스트에 넣지 않는다 —
+/// 구간 밖까지 바꾸는 전역 치환은 스코프 위반이기 때문이다.
+pub const DOC_SCOPE_TARGET: &str = "doc";
+
+/// 이 편집의 target_id가 허용되는가. 문단/셀 ID는 화이트리스트 membership으로 판정하고,
+/// 문서 스코프 토큰은 "화이트리스트에 있고 + 실제로 전역 치환 payload일 때"만 허용한다
+/// (다른 payload가 "doc"을 target으로 잡는 환각을 막는다).
+fn is_allowed_target(edit: &Edit, whitelist: &HashSet<String>) -> bool {
+    if edit.target_id == DOC_SCOPE_TARGET {
+        return whitelist.contains(DOC_SCOPE_TARGET) && edit.payload.replace_text.is_some();
+    }
+    whitelist.contains(&edit.target_id)
 }
 
 /// provider에 주입할 출력 JSON Schema(스펙 3장)를 생성한다.
@@ -390,7 +487,7 @@ pub fn action_script_schema() -> Value {
                         "payload": {
                             "type": "object",
                             "properties": {
-                                "type": { "type": "string", "enum": ["paragraph", "table", "image", "table_edit", "clone_table", "format", "chart"] },
+                                "type": { "type": "string", "enum": ["paragraph", "table", "image", "table_edit", "clone_table", "format", "chart", "replace_text", "table_formula", "footnote", "paste_html"] },
                                 "text": { "type": "string" },
                                 "style": {
                                     "type": "string",
@@ -462,11 +559,48 @@ pub fn action_script_schema() -> Value {
                                         "text_color": { "type": "string", "description": "글자 색 #RRGGBB" }
                                     }
                                 },
+                                "replace_text": {
+                                    "type": "object",
+                                    "description": "type=\"replace_text\"일 때: 문서 전체에서 찾아 바꾸기. 같은 문자열을 여러 문단에서 바꿀 때는 문단마다 REPLACE를 내지 말고 반드시 이걸 한 번 써라. command=REPLACE, target_id=\"doc\"(문서 전체를 뜻하는 고정값). 본문과 표 셀 안을 모두 바꾼다.",
+                                    "properties": {
+                                        "query": { "type": "string", "description": "찾을 문자열(정확히 일치). 비우면 적용되지 않는다." },
+                                        "new_text": { "type": "string", "description": "바꿀 문자열. 빈 문자열이면 찾은 부분을 지운다." },
+                                        "case_sensitive": { "type": "boolean", "description": "대소문자 구분(기본 false)" },
+                                        "scope": { "type": "string", "enum": ["all", "first"], "description": "all=전부 바꾸기(기본), first=처음 한 건만" }
+                                    },
+                                    "required": ["query", "new_text"]
+                                },
+                                "paste_html": {
+                                    "type": "object",
+                                    "description": "type=\"paste_html\"일 때: HTML을 서식을 유지한 채 문서에 넣는다. 굵기·기울임·목록·표가 살아 있는 내용을 넣어야 할 때 쓴다(순수 텍스트면 그냥 payload.text를 쓰는 게 낫다). command=REPLACE면 그 문단 내용을 대신하고, INSERT_AFTER/INSERT_BEFORE면 새 문단을 만들어 거기에 넣는다. target_id는 본문 문단 ID 또는 최상위 표 셀 ID.",
+                                    "properties": {
+                                        "html": { "type": "string", "description": "붙여넣을 HTML 조각. 예: \"<p><b>제목</b></p><ul><li>항목</li></ul>\"" }
+                                    },
+                                    "required": ["html"]
+                                },
+                                "footnote": {
+                                    "type": "object",
+                                    "description": "type=\"footnote\"일 때: 각주를 달거나 뗀다. [달기] command=REPLACE, target_id는 각주를 달 본문 문단 ID, text에 각주 내용을 넣는다(문단 본문은 바뀌지 않는다). anchor_text를 주면 그 문자열 바로 뒤에 표식이 붙고, 생략하면 문단 끝에 붙는다. [떼기] command=DELETE, target_id는 각주 ID(sec[S].p[P].fn[C].p[I]) — 각주가 표식까지 사라진다. 각주 '내용만' 고칠 때는 payload.type 없이 그 각주 ID에 REPLACE 하면 된다.",
+                                    "properties": {
+                                        "text": { "type": "string", "description": "달 각주의 내용(달기에만 필요)" },
+                                        "anchor_text": { "type": "string", "description": "이 문자열 바로 뒤에 각주 표식을 단다. 문단 안에서 유일해야 한다. 생략하면 문단 끝." }
+                                    }
+                                },
+                                "table_formula": {
+                                    "type": "object",
+                                    "description": "type=\"table_formula\"일 때: 표의 값을 직접 계산해 셀에 적는다. 합계·평균·곱셈 같은 계산을 요청받으면 절대 직접 암산해서 숫자를 text로 넣지 말고 이걸 쓴다(원본 값이 바뀌어도 다시 계산할 수 있고 계산 실수가 없다). command=REPLACE, target_id는 그 표 안의 아무 셀 ID. 주의: row/col은 0-기준 정수지만 formula 안의 셀 참조는 A1 표기다(첫 행이 1, 첫 열이 A).",
+                                    "properties": {
+                                        "row": { "type": "integer", "description": "결과를 쓸 셀의 행(0-기준)" },
+                                        "col": { "type": "integer", "description": "결과를 쓸 셀의 열(0-기준)" },
+                                        "formula": { "type": "string", "description": "계산식. 예: \"=SUM(B2:B5)\", \"=A1+B2*3\". 셀 참조는 A1 표기." }
+                                    },
+                                    "required": ["row", "col", "formula"]
+                                },
                                 "table_edit": {
                                     "type": "object",
                                     "description": "type=\"table_edit\"일 때: 기존 표의 구조 편집. target_id는 그 표 안의 아무 셀 ID(예: sec[0].p[2].tbl[0].cell[0].p[0]). command는 REPLACE를 쓴다.",
                                     "properties": {
-                                        "op": { "type": "string", "enum": ["insert_row", "insert_col", "delete_row", "delete_col", "merge_cells"] },
+                                        "op": { "type": "string", "enum": ["insert_row", "insert_col", "delete_row", "delete_col", "merge_cells", "split_cell"] },
                                         "row": { "type": "integer", "description": "기준 행(0-기준) — insert_row/delete_row" },
                                         "col": { "type": "integer", "description": "기준 열(0-기준) — insert_col/delete_col" },
                                         "below": { "type": "boolean", "description": "insert_row: 기준 행 아래에 삽입(기본 true)" },
@@ -485,6 +619,19 @@ pub fn action_script_schema() -> Value {
                                             "type": "array",
                                             "description": "insert_row/insert_col: 새 행/열에 채울 셀 텍스트(순서대로, 선택)",
                                             "items": { "type": "string" }
+                                        },
+                                        "into_rows": { "type": "integer", "description": "split_cell: 셀을 몇 줄로 나눌지(기본 1)" },
+                                        "into_cols": { "type": "integer", "description": "split_cell: 셀을 몇 칸으로 나눌지(기본 1)" },
+                                        "equal_row_height": { "type": "boolean", "description": "split_cell: 나뉜 줄 높이를 균등하게(기본 true)" },
+                                        "range": {
+                                            "type": "object",
+                                            "description": "split_cell: 주면 이 범위 안의 셀들을 각각 into_rows×into_cols로 분할한다(0-기준, 끝 포함).",
+                                            "properties": {
+                                                "start_row": { "type": "integer" },
+                                                "start_col": { "type": "integer" },
+                                                "end_row": { "type": "integer" },
+                                                "end_col": { "type": "integer" }
+                                            }
                                         }
                                     },
                                     "required": ["op"]
@@ -656,6 +803,182 @@ mod tests {
         )
         .unwrap();
         assert!(collect_violations(&script, &whitelist(&["sec[0].p[0]"])).is_empty());
+    }
+
+    #[test]
+    fn parses_paste_html_and_round_trips() {
+        let raw = r#"{"edits":[
+            {"command":"INSERT_AFTER","target_id":"sec[0].p[3]",
+             "payload":{"type":"paste_html","paste_html":{"html":"<p><b>제목</b></p><ul><li>항목</li></ul>"}}}
+        ]}"#;
+        let script = parse_action_script(raw).unwrap();
+        let spec = script.edits[0].payload.paste_html.as_ref().unwrap();
+        assert!(spec.html.contains("<b>제목</b>"));
+        let json = serde_json::to_string(&script).unwrap();
+        assert_eq!(parse_action_script(&json).unwrap(), script);
+    }
+
+    #[test]
+    fn action_script_schema_exposes_all_editing_kinds() {
+        // AI가 낼 수 있는 편집 어휘 전체 — 여기 없는 건 AI가 할 수 없는 일이다.
+        let schema = action_script_schema().to_string();
+        for kind in [
+            "paragraph",
+            "table",
+            "image",
+            "table_edit",
+            "clone_table",
+            "format",
+            "chart",
+            "replace_text",
+            "table_formula",
+            "footnote",
+            "paste_html",
+        ] {
+            assert!(schema.contains(kind), "스키마에 payload type이 없습니다: {}", kind);
+        }
+    }
+
+    #[test]
+    fn parses_footnote_and_round_trips() {
+        let raw = r#"{"edits":[
+            {"command":"REPLACE","target_id":"sec[0].p[4]",
+             "payload":{"type":"footnote","footnote":{"text":"한국연구재단(2026)","anchor_text":"유의미했다"}}},
+            {"command":"DELETE","target_id":"sec[0].p[4].fn[1].p[0]","payload":{"type":"footnote"}}
+        ]}"#;
+        let script = parse_action_script(raw).unwrap();
+        let add = script.edits[0].payload.footnote.as_ref().unwrap();
+        assert_eq!(add.text.as_deref(), Some("한국연구재단(2026)"));
+        assert_eq!(add.anchor_text.as_deref(), Some("유의미했다"));
+        // 떼기는 footnote 객체 없이 type만 오는 게 정상 — 갈래는 payload.type으로 가른다.
+        assert_eq!(script.edits[1].payload.kind.as_deref(), Some("footnote"));
+        assert!(script.edits[1].payload.footnote.is_none());
+        let json = serde_json::to_string(&script).unwrap();
+        assert_eq!(parse_action_script(&json).unwrap(), script);
+    }
+
+    #[test]
+    fn footnote_content_only_edit_stays_untyped() {
+        // F-191fd6 하위 호환: payload.type이 없으면 '각주 내용만' 수정하는 기존 경로다.
+        let raw = r#"{"edits":[
+            {"command":"REPLACE","target_id":"sec[0].p[4].fn[1].p[0]","payload":{"text":"새 내용"}}
+        ]}"#;
+        let script = parse_action_script(raw).unwrap();
+        assert!(script.edits[0].payload.kind.is_none());
+        assert!(script.edits[0].payload.footnote.is_none());
+    }
+
+    #[test]
+    fn parses_table_formula_and_round_trips() {
+        let raw = r#"{"edits":[
+            {"command":"REPLACE","target_id":"sec[0].p[3].tbl[0].cell[0].p[0]",
+             "payload":{"type":"table_formula","table_formula":{"row":5,"col":1,"formula":"=SUM(B2:B5)"}}}
+        ]}"#;
+        let script = parse_action_script(raw).unwrap();
+        let spec = script.edits[0].payload.table_formula.as_ref().unwrap();
+        assert_eq!((spec.row, spec.col), (5, 1));
+        assert_eq!(spec.formula, "=SUM(B2:B5)");
+        let json = serde_json::to_string(&script).unwrap();
+        assert_eq!(parse_action_script(&json).unwrap(), script);
+    }
+
+    #[test]
+    fn action_script_schema_warns_against_mental_arithmetic() {
+        // 계산을 요청받았을 때 모델이 암산한 숫자를 text로 넣지 않도록 스키마가 막아야 한다.
+        let schema = action_script_schema().to_string();
+        assert!(schema.contains("table_formula") && schema.contains("formula"));
+        assert!(schema.contains("암산"));
+        // 0-기준 좌표와 A1 표기가 섞이는 실수를 막는 안내.
+        assert!(schema.contains("A1 표기"));
+    }
+
+    #[test]
+    fn parses_split_cell_and_round_trips() {
+        // F-6daa56b3: merge_cells의 짝. 분할 수·균등 높이·범위가 모두 살아남아야 한다.
+        let raw = r#"{"edits":[
+            {"command":"REPLACE","target_id":"sec[0].p[2].tbl[1].cell[0].p[0]",
+             "payload":{"type":"table_edit","table_edit":{"op":"split_cell","row":1,"col":2,
+              "into_rows":2,"into_cols":3,"equal_row_height":false,
+              "range":{"start_row":1,"start_col":0,"end_row":3,"end_col":0}}}}
+        ]}"#;
+        let script = parse_action_script(raw).unwrap();
+        let spec = script.edits[0].payload.table_edit.as_ref().unwrap();
+        assert_eq!(spec.op, "split_cell");
+        assert_eq!(spec.into_rows, Some(2));
+        assert_eq!(spec.into_cols, Some(3));
+        assert_eq!(spec.equal_row_height, Some(false));
+        assert_eq!(spec.range.as_ref().unwrap().end_row, 3);
+        let json = serde_json::to_string(&script).unwrap();
+        assert_eq!(parse_action_script(&json).unwrap(), script);
+    }
+
+    #[test]
+    fn action_script_schema_offers_split_alongside_merge() {
+        // 병합만 있고 분할이 없으면 모델이 셀을 나눠 달라는 요청에 표를 다시 그린다.
+        let schema = action_script_schema().to_string();
+        assert!(schema.contains("split_cell") && schema.contains("merge_cells"));
+        assert!(schema.contains("into_rows") && schema.contains("into_cols"));
+    }
+
+    #[test]
+    fn doc_scope_target_allowed_only_for_replace_text() {
+        // F-293e8c99: "doc"은 전역 찾아 바꾸기 전용 스코프 토큰이다. 다른 payload가
+        // 문서 전체를 target으로 잡는 환각은 화이트리스트 위반으로 걸러야 한다.
+        let script = parse_action_script(
+            r#"{"edits":[
+                {"command":"REPLACE","target_id":"doc",
+                 "payload":{"type":"replace_text","replace_text":{"query":"2025","new_text":"2026"}}},
+                {"command":"REPLACE","target_id":"doc",
+                 "payload":{"type":"paragraph","text":"문서 전체를 이걸로"}}
+            ]}"#,
+        )
+        .unwrap();
+
+        let violations = collect_violations(&script, &whitelist(&["doc"]));
+        assert_eq!(violations, vec!["doc".to_string()]);
+    }
+
+    #[test]
+    fn doc_scope_target_rejected_when_not_whitelisted() {
+        // 구간 스코프 요청(build_scoped_context)은 "doc"을 화이트리스트에 넣지 않는다 —
+        // 구간 밖까지 바꾸는 전역 치환은 스코프 위반이므로 거부돼야 한다.
+        let script = parse_action_script(
+            r#"{"edits":[
+                {"command":"REPLACE","target_id":"doc",
+                 "payload":{"type":"replace_text","replace_text":{"query":"a","new_text":"b"}}}
+            ]}"#,
+        )
+        .unwrap();
+
+        let violations = collect_violations(&script, &whitelist(&["sec[0].p[0]"]));
+        assert_eq!(violations, vec!["doc".to_string()]);
+    }
+
+    #[test]
+    fn parses_replace_text_and_round_trips() {
+        let raw = r#"{"edits":[
+            {"command":"REPLACE","target_id":"doc","payload":{"type":"replace_text",
+             "replace_text":{"query":"2025년","new_text":"2026년","case_sensitive":true,"scope":"first"}}}
+        ]}"#;
+        let script = parse_action_script(raw).unwrap();
+        let spec = script.edits[0].payload.replace_text.as_ref().unwrap();
+        assert_eq!(spec.query, "2025년");
+        assert_eq!(spec.new_text, "2026년");
+        assert_eq!(spec.case_sensitive, Some(true));
+        assert_eq!(spec.scope.as_deref(), Some("first"));
+        // 재직렬화 라운드트립 — mod.rs가 파싱 결과를 다시 직렬화해 프런트로 보낸다.
+        let json = serde_json::to_string(&script).unwrap();
+        let again = parse_action_script(&json).unwrap();
+        assert_eq!(script, again);
+    }
+
+    #[test]
+    fn action_script_schema_exposes_replace_text() {
+        let schema = action_script_schema().to_string();
+        assert!(schema.contains("replace_text"));
+        assert!(schema.contains("case_sensitive"));
+        // 모델이 문단마다 REPLACE를 나열하지 않도록 유도하는 안내가 스키마에 있어야 한다.
+        assert!(schema.contains("문단마다 REPLACE를 내지 말고"));
     }
 
     #[test]

@@ -1,0 +1,31 @@
+id: F-4f6d826e
+slug: ai-paste-html
+title: "AI HTML 붙여넣기 — 웹/워드 내용을 서식 유지한 채 반입 (순수 텍스트로만 들어오던 것 대체)"
+status: done
+modules:
+  - apps/desktop/src-tauri/src/ai/schema.rs
+  - apps/studio-host/src/core/ai-bridge.ts
+  - apps/studio-host/src/core/ai-apply.ts
+acceptance_criteria:
+  - id: AC-3a67c205
+    ears: event
+    condition: "When AI가 본문 문단 ID에 payload.type=\"paste_html\"를 낼 때"
+    text: "The system shall HTML을 파싱해 그 위치에 서식을 유지한 채 반입한다 — REPLACE는 문단 내용을 비우고 붙여넣고, INSERT_AFTER/BEFORE는 새 문단을 만들어 거기에 붙여넣는다."
+    test_refs: ["apps/studio-host/src/core/ai-paste-html.test.ts", "apps/desktop/src-tauri/src/ai/schema.rs"]
+    notes: "## Why\n2026-07-27 실측: pasteHtml/pasteHtmlInCell이 엔진에 있는데 AI 경로 호출 0건이라 웹/워드 내용이 항상 순수 텍스트로만 들어왔다(표·굵기·목록이 날아간다).\n## Decision\napplyOne의 기존 분기(isTableEdit/isImageEdit)와 같은 자리에 넣어 문단 인덱스 부기(shiftFrom/changed)를 그대로 쓴다."
+  - id: AC-23263148
+    ears: ubiquitous
+    text: "The system shall 붙여넣기로 늘어난 문단 수를 getParagraphCount 전후 차로 재어 뒤따르는 편집의 문단 인덱스 보정과 diff 표시에 반영한다."
+    test_refs: ["apps/studio-host/src/core/ai-paste-html.test.ts"]
+    notes: "HTML은 문단을 몇 개 만들지 사전에 알 수 없다 — 텍스트 삽입처럼 줄 수로 세지 못하므로 실측한다. 측정 API가 없으면 0으로 본다(내림차순 적용이라 문서 정합에는 영향 없음)."
+  - id: AC-0ce99419
+    ears: optional
+    condition: "Where 최상위 표 셀 ID가 target이면"
+    text: "The system shall pasteHtmlInCell로 그 셀에 붙여넣는다 — 중첩 표 셀은 지원하지 않고 사유를 보고한다."
+    test_refs: ["apps/studio-host/src/core/ai-paste-html.test.ts"]
+    notes: "중첩 경로용 by-path HTML 붙여넣기 API가 엔진에 없다."
+  - id: AC-68d21e9c
+    ears: unwanted
+    condition: "If html이 비었거나 붙여넣기 API가 없는 환경이면"
+    text: "The system shall 문서를 변경하지 않고 사유를 skipped로 보고한다."
+    test_refs: ["apps/studio-host/src/core/ai-paste-html.test.ts"]

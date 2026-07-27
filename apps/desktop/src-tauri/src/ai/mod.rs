@@ -666,14 +666,43 @@ fn system_prompt() -> String {
      여러 번 나오면 주변 단어를 포함해 더 길게 잡으세요. 사용자가 선택한 텍스트의 서식을 \
      바꿔 달라고 하면 그 선택 텍스트를 format_target으로 쓰세요(다시 쓰지 말 것). \
      본문 문단만 지원합니다(표 셀 내부 부분 서식은 아직 불가). \
+     [찾아 바꾸기 — 문단마다 나열하지 말 것] 같은 문자열을 문서 여러 곳에서 바꿔야 하면 \
+     (예: '2025년'을 전부 '2026년'으로, 회사명 일괄 변경) 문단마다 REPLACE 편집을 만들지 \
+     마세요. command=REPLACE, target_id=\"doc\"(문서 전체를 뜻하는 고정값), \
+     payload.type=\"replace_text\", payload.replace_text={query, new_text, case_sensitive, \
+     scope}를 편집 '하나'로 내세요. 본문과 표 셀 안이 모두 바뀝니다. scope=\"first\"면 처음 \
+     한 건만 바꿉니다(기본 \"all\"). 특정 문단 하나만 손보는 경우에는 기존처럼 그 문단 ID로 \
+     REPLACE 하세요. \
      [표 구조 편집] 이미 있는 표에 행/열을 추가·삭제하거나 셀을 병합하려면, 그 표 안의 \
      아무 셀 ID를 target_id로 잡고 command=REPLACE, payload.type=\"table_edit\", \
      payload.table_edit={op,...}을 쓰세요. op: insert_row(row,below,texts) / \
      insert_col(col,right,texts) / delete_row(row) / delete_col(col) / \
-     merge_cells(merge={start_row,start_col,end_row,end_col}). 행/열 번호는 0-기준이고 \
+     merge_cells(merge={start_row,start_col,end_row,end_col}) / \
+     split_cell(row,col,into_rows,into_cols,equal_row_height,range). 행/열 번호는 0-기준이고 \
      texts에는 새 행/열의 셀 내용을 순서대로 넣을 수 있습니다. 기존 셀 내용은 보존되므로 \
      표 전체를 다시 만들지 말고 구조 편집을 우선 쓰세요. 기존 병합 영역과 부분적으로 \
      겹치는 병합·삭제는 적용되지 않습니다(범위를 병합 경계에 맞추세요). \
+     셀을 나눌 때는 split_cell을 쓰세요: '이 칸을 두 개로' → {op:\"split_cell\",row,col,\
+     into_cols:2}, '세 줄로' → {into_rows:3}. into_rows/into_cols를 둘 다 생략하면 그 셀의 \
+     병합을 해제합니다. range를 주면 그 범위 안의 셀들을 각각 into_rows×into_cols로 \
+     나눕니다(예: 한 열 전체를 두 칸씩). \
+     [HTML 붙여넣기] 굵기·목록·표 같은 서식이 살아 있는 내용을 넣어야 하면 \
+     payload.type=\"paste_html\", payload.paste_html={html}을 쓰세요 — 서식이 유지된 채 \
+     들어갑니다. REPLACE는 그 문단 내용을 대신하고, INSERT_AFTER/INSERT_BEFORE는 새 문단을 \
+     만들어 넣습니다. target_id는 본문 문단 ID 또는 최상위 표 셀 ID입니다. 서식 없는 \
+     보통 문장이면 HTML로 감싸지 말고 그냥 payload.text를 쓰세요. \
+     [각주 달기/떼기] 각주를 새로 달려면 command=REPLACE, target_id는 각주를 달 본문 \
+     문단 ID, payload.type=\"footnote\", payload.footnote={text, anchor_text}를 쓰세요. \
+     text가 각주 내용이고, anchor_text를 주면 그 문자열 바로 뒤에 표식이 붙습니다(생략하면 \
+     문단 끝). 문단 본문은 바뀌지 않으므로 payload.text는 넣지 마세요. 각주를 떼려면 \
+     command=DELETE, target_id는 각주 ID(sec[S].p[P].fn[C].p[I]), payload.type=\"footnote\". \
+     각주 '내용만' 고칠 때는 payload.type 없이 그 각주 ID에 REPLACE 하세요(기존 동작). \
+     [표 계산 — 암산 금지] 합계·평균·소계처럼 표의 값을 계산해 달라는 요청에는 절대 \
+     직접 계산한 숫자를 text로 넣지 마세요. command=REPLACE, target_id는 그 표 안의 아무 \
+     셀 ID, payload.type=\"table_formula\", payload.table_formula={row, col, formula}를 \
+     쓰면 앱이 계산해 그 셀에 적습니다. row/col은 결과를 쓸 셀의 0-기준 좌표이고, \
+     formula 안의 셀 참조는 A1 표기입니다(첫 행이 1, 첫 열이 A). \
+     예: 2열의 2~5행 합계를 6행 2열에 → {row:5, col:1, formula:\"=SUM(B2:B5)\"}. \
      문서가 양식/템플릿(라벨 칸 + 빈 입력 칸으로 된 표)인 경우: '사 업 명', '과 제 명' \
      같은 라벨 셀은 그대로 두고, 그 옆/아래의 빈 셀(텍스트가 비어 있는 셀)을 요청 내용으로 \
      REPLACE 하여 채우세요. 라벨과 표 구조를 바꾸지 말고 기존 서식을 유지하세요. \

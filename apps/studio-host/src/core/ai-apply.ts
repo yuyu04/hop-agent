@@ -7,6 +7,7 @@
  */
 
 import type { ActionScript, Edit, ResearchNoteCover, ResearchNoteEntry } from './ai-bridge';
+import { DOC_SCOPE_TARGET } from './ai-bridge';
 import { DEFAULT_COMPILED_THEME, type CompiledTheme } from './doc-theme';
 
 /** `applyActionScript`가 의존하는 최소 WASM 편집 표면(WasmBridge가 구조적으로 충족). */
@@ -25,6 +26,54 @@ export interface WasmEditing {
     rows: number,
     cols: number,
   ): { ok: boolean; paraIdx: number; controlIdx: number };
+  // 표 셀 분할(F-6daa56b3). 병합만 되고 분할이 안 되던 비대칭을 없앤다.
+  // 구형 WasmBridge 호환을 위해 선택 멤버 — 없으면 사유를 보고하고 건너뛴다.
+  /** 병합된 셀을 나눈다(병합 해제). */
+  splitTableCell?(
+    sec: number,
+    parentPara: number,
+    controlIdx: number,
+    row: number,
+    col: number,
+  ): { ok: boolean; cellCount: number };
+  /** 셀 하나를 nRows줄 × mCols칸으로 분할한다. */
+  splitTableCellInto?(
+    sec: number,
+    parentPara: number,
+    controlIdx: number,
+    row: number,
+    col: number,
+    nRows: number,
+    mCols: number,
+    equalRowHeight: boolean,
+    mergeFirst: boolean,
+  ): { ok: boolean; cellCount: number };
+  /** 범위 안의 셀들을 각각 nRows줄 × mCols칸으로 분할한다. */
+  splitTableCellsInRange?(
+    sec: number,
+    parentPara: number,
+    controlIdx: number,
+    startRow: number,
+    startCol: number,
+    endRow: number,
+    endCol: number,
+    nRows: number,
+    mCols: number,
+    equalRowHeight: boolean,
+  ): { ok: boolean; cellCount: number };
+  /**
+   * 표 셀 계산식을 평가한다(F-8eb1f86f). writeResult=true면 결과를 셀에 기입한다.
+   * 반환은 `{"ok":true,"result":<num>,"formula":"…"}` JSON 문자열. 평가 실패는 throw.
+   */
+  evaluateTableFormula?(
+    sec: number,
+    parentPara: number,
+    controlIdx: number,
+    targetRow: number,
+    targetCol: number,
+    formula: string,
+    writeResult: boolean,
+  ): string;
   /** 표 셀 영역을 병합한다(0-기준 행/열, 끝 포함). */
   mergeTableCells(
     sec: number,
@@ -98,6 +147,33 @@ export interface WasmEditing {
     fieldId: number,
     value: string,
   ): { ok: boolean; fieldId: number; oldValue: string; newValue: string };
+  // HTML 붙여넣기(F-4f6d826e). 서식(굵기·목록·표)을 유지한 채 반입한다.
+  // 구형 WasmBridge 호환을 위해 선택 멤버 — 없으면 사유를 보고하고 건너뛴다.
+  pasteHtml?(sec: number, para: number, charOffset: number, html: string): string;
+  pasteHtmlInCell?(
+    sec: number,
+    parentPara: number,
+    controlIdx: number,
+    cellIdx: number,
+    cellParaIdx: number,
+    charOffset: number,
+    html: string,
+  ): string;
+  /** 구역의 문단 수. HTML이 문단을 몇 개 만들었는지 재는 데 쓴다. */
+  getParagraphCount?(sec: number): number;
+  // 문서 전역 찾아 바꾸기(F-293e8c99). 문단마다 REPLACE를 나열하는 대신 한 번에 치환한다.
+  // 구형 WasmBridge에도 붙을 수 있게 선택 멤버로 둔다(없으면 사유를 보고하고 건너뛴다).
+  searchAllText?(
+    query: string,
+    caseSensitive: boolean,
+    includeCells?: boolean,
+  ): Array<{ sec: number; para: number; charOffset: number; length: number; cellContext?: unknown }>;
+  replaceAll?(query: string, newText: string, caseSensitive: boolean): { ok: boolean; count?: number };
+  replaceOne?(
+    query: string,
+    newText: string,
+    caseSensitive: boolean,
+  ): { ok: boolean; sec?: number; para?: number; charOffset?: number; newLength?: number };
   // 머리말/꼬리말 편집(F-191fd6). get*/create*는 JSON 문자열을 반환한다.
   getHeaderFooter(sec: number, isHeader: boolean, applyTo: number): string;
   createHeaderFooter(sec: number, isHeader: boolean, applyTo: number): string;
@@ -125,6 +201,19 @@ export interface WasmEditing {
     hfParaIdx: number,
     charOffset: number,
   ): string;
+  // 각주 달기/떼기(F-3e2d0f9a). 구형 WasmBridge 호환을 위해 선택 멤버.
+  /** 본문 문단의 charOffset 위치에 각주를 새로 단다. */
+  insertFootnote?(
+    sec: number,
+    para: number,
+    charOffset: number,
+  ): { ok: boolean; paraIdx: number; controlIdx: number; footnoteNumber: number };
+  /** 각주를 표식까지 제거한다. */
+  deleteFootnote?(
+    sec: number,
+    para: number,
+    controlIdx: number,
+  ): { ok: boolean; deletedNumber?: number };
   // 각주 텍스트 편집(F-191fd6). REPLACE/DELETE만 지원(문단 분할 API 미노출).
   getFootnoteInfo(
     sec: number,
@@ -442,13 +531,16 @@ type LocatedEdit =
   | { kind: 'cell'; edit: Edit; cell: CellTarget; order: number }
   | { kind: 'hf'; edit: Edit; hf: HeaderFooterTarget; order: number }
   | { kind: 'fn'; edit: Edit; fn: FootnoteTarget; order: number }
-  | { kind: 'field'; edit: Edit; fieldId: number; order: number };
+  | { kind: 'field'; edit: Edit; fieldId: number; order: number }
+  | { kind: 'doc'; edit: Edit; order: number };
 
 function locatedSec(item: LocatedEdit): number {
   if (item.kind === 'body') return item.sec;
   if (item.kind === 'cell') return item.cell.sec;
   if (item.kind === 'hf') return item.hf.sec;
   if (item.kind === 'field') return 0;
+  // 문서 전역 편집은 어느 구역에도 속하지 않는다 — 정렬 최하위(가장 마지막 적용).
+  if (item.kind === 'doc') return -1;
   return item.fn.sec;
 }
 function locatedPara(item: LocatedEdit): number {
@@ -456,6 +548,7 @@ function locatedPara(item: LocatedEdit): number {
   if (item.kind === 'cell') return item.cell.parentPara;
   // 머리말/꼬리말·누름틀은 본문 인덱스와 무관 — 항상 마지막에 적용되도록 -1.
   if (item.kind === 'hf' || item.kind === 'field') return -1;
+  if (item.kind === 'doc') return -1;
   return item.fn.para;
 }
 
@@ -485,11 +578,35 @@ export function applyActionScript(
       !isImageEdit(edit) &&
       !isCloneTableEdit(edit) &&
       !isTableStructEdit(edit) &&
+      !isReplaceTextEdit(edit) &&
+      !isTableFormulaEdit(edit) &&
+      !isFootnoteEdit(edit) &&
+      !isPasteHtmlEdit(edit) &&
       !isFormatEdit(edit);
     if (needsText && (edit.payload.text ?? '') === '') {
       skipped.push({
         targetId: edit.target_id,
         reason: '새 텍스트(payload.text)가 비어 있어 건너뜀 — 모델이 본문을 채우지 못했습니다.',
+      });
+      return;
+    }
+
+    // 문서 전역 편집(찾아 바꾸기) — 문단이 아니라 문서 전체가 대상이다(F-293e8c99).
+    if (edit.target_id === DOC_SCOPE_TARGET) {
+      if (!isReplaceTextEdit(edit)) {
+        skipped.push({
+          targetId: edit.target_id,
+          reason: `target_id="${DOC_SCOPE_TARGET}"는 전역 찾아 바꾸기(payload.type="replace_text")에만 쓸 수 있습니다.`,
+        });
+        return;
+      }
+      located.push({ kind: 'doc', edit, order });
+      return;
+    }
+    if (isReplaceTextEdit(edit)) {
+      skipped.push({
+        targetId: edit.target_id,
+        reason: `전역 찾아 바꾸기는 target_id="${DOC_SCOPE_TARGET}"로 지정해야 합니다(문단 ID 불가).`,
       });
       return;
     }
@@ -501,6 +618,14 @@ export function applyActionScript(
         skipped.push({
           targetId: edit.target_id,
           reason: '부분 서식(format)은 본문 문단만 지원합니다(표 셀 내부는 아직 불가).',
+        });
+        return;
+      }
+      // 중첩 표 셀에는 by-path HTML 붙여넣기 API가 없다 — 최상위 셀만 지원한다.
+      if (isPasteHtmlEdit(edit) && cell.path.length !== 1) {
+        skipped.push({
+          targetId: edit.target_id,
+          reason: '중첩 표 셀에는 HTML을 붙여넣을 수 없습니다(최상위 표 셀만 지원).',
         });
         return;
       }
@@ -551,6 +676,15 @@ export function applyActionScript(
         });
         return;
       }
+      // payload.type="footnote" + DELETE = 각주 자체를 뗀다(F-3e2d0f9a).
+      // payload.type이 없으면 기존 동작(내용만 비우기, F-191fd6)을 유지한다.
+      if (isFootnoteEdit(edit) && edit.command !== 'DELETE') {
+        skipped.push({
+          targetId: edit.target_id,
+          reason: '각주 ID에는 각주 떼기(DELETE)만 지정할 수 있습니다. 내용 수정은 payload.type 없이 REPLACE 하세요.',
+        });
+        return;
+      }
       located.push({ kind: 'fn', edit, fn: footnote, order });
       return;
     }
@@ -570,6 +704,20 @@ export function applyActionScript(
       });
       return;
     }
+    if (isTableFormulaEdit(edit)) {
+      skipped.push({
+        targetId: edit.target_id,
+        reason: '표 계산식(table_formula)은 그 표 안의 셀 ID를 target_id로 지정해야 합니다.',
+      });
+      return;
+    }
+    if (isFootnoteEdit(edit) && edit.command !== 'REPLACE') {
+      skipped.push({
+        targetId: edit.target_id,
+        reason: '각주 달기는 본문 문단 ID에 command=REPLACE로 지정해야 합니다.',
+      });
+      return;
+    }
     located.push({ kind: 'body', edit, sec: target.sec, para: target.para, order });
   });
 
@@ -582,6 +730,12 @@ export function applyActionScript(
     const byPos =
       locatedSec(b) - locatedSec(a) || locatedPara(b) - locatedPara(a);
     if (byPos !== 0) return byPos;
+    // 표 계산식은 같은 위치의 다른 편집(셀 채움·행 추가) 뒤에 둔다 — 먼저 계산하면
+    // 낡은 값을 합산한다("합계 행 추가하고 합계 계산해줘"). 계산식끼리는 입력 정순.
+    const aFormula = isTableFormulaEdit(a.edit);
+    const bFormula = isTableFormulaEdit(b.edit);
+    if (aFormula !== bFormula) return aFormula ? 1 : -1;
+    if (aFormula && bFormula) return a.order - b.order;
     if (isTableStructEdit(a.edit) && isTableStructEdit(b.edit)) return a.order - b.order;
     // 누름틀도 입력 정순 — 같은 필드를 여러 번 만지면 마지막 지시가 남는다.
     if (a.kind === 'field' && b.kind === 'field') return a.order - b.order;
@@ -600,6 +754,7 @@ export function applyActionScript(
     try {
       if (item.kind === 'cell') {
         if (isTableStructEdit(item.edit)) applyTableEdit(wasm, item.edit, item.cell);
+        else if (isTableFormulaEdit(item.edit)) applyTableFormula(wasm, item.edit, item.cell);
         else applyOneCell(wasm, item.edit, item.cell);
       } else if (item.kind === 'field') {
         // 누름틀 값만 교체 — 서식·구조는 템플릿 그대로(F-10a6a5).
@@ -611,7 +766,17 @@ export function applyActionScript(
       } else if (item.kind === 'hf') {
         applyOneHeaderFooter(wasm, item.edit, item.hf);
       } else if (item.kind === 'fn') {
-        applyOneFootnote(wasm, item.edit, item.fn);
+        if (isFootnoteEdit(item.edit)) applyDeleteFootnote(wasm, item.fn);
+        else applyOneFootnote(wasm, item.edit, item.fn);
+      } else if (item.kind === 'doc') {
+        // 전역 치환 — 바뀐 본문 문단들을 changed에 실어 diff/부분승인이 동작하게 한다.
+        for (const hit of applyReplaceText(wasm, item.edit)) {
+          if (!changed.some((c) => c.sec === hit.sec && c.para === hit.para)) changed.push(hit);
+        }
+      } else if (isFootnoteEdit(item.edit)) {
+        // 각주 달기 — 본문 텍스트는 그대로, 표식과 각주만 추가된다.
+        applyInsertFootnote(wasm, item.edit, item.sec, item.para);
+        changed.push({ sec: item.sec, para: item.para });
       } else if (isFormatEdit(item.edit)) {
         // 부분 서식 — 텍스트는 그대로, 지정 범위 런에만 글자 서식을 입힌다.
         applyFormatEdit(wasm, item.edit, item.sec, item.para);
@@ -752,6 +917,10 @@ function applyOne(
         createTableAt(wasm, sec, para + 1, edit);
       } else if (isImageEdit(edit)) {
         insertImageAt(wasm, sec, para + 1, edit, images);
+      } else if (isPasteHtmlEdit(edit)) {
+        const extra = pasteHtmlAt(wasm, sec, para + 1, edit);
+        if (pageBreak) wasm.insertPageBreak(sec, para + 1, 0);
+        return extra;
       } else {
         // 새 문단은 style 미지정 시 body 기본 — 미적용 시 문단 간격 0으로 빽빽해진다.
         const extra = fillBodyLines(wasm, sec, para + 1, lines, edit.payload.style ?? 'body');
@@ -770,6 +939,10 @@ function applyOne(
         createTableAt(wasm, sec, para, edit);
       } else if (isImageEdit(edit)) {
         insertImageAt(wasm, sec, para, edit, images);
+      } else if (isPasteHtmlEdit(edit)) {
+        const extra = pasteHtmlAt(wasm, sec, para, edit);
+        if (pageBreak) wasm.insertPageBreak(sec, para, 0);
+        return extra;
       } else {
         const extra = fillBodyLines(wasm, sec, para, lines, edit.payload.style ?? 'body');
         if (pageBreak) wasm.insertPageBreak(sec, para, 0);
@@ -781,6 +954,7 @@ function applyOne(
     case 'REPLACE': {
       const length = wasm.getParagraphLength(sec, para);
       if (length > 0) wasm.deleteText(sec, para, 0, length);
+      if (isPasteHtmlEdit(edit)) return pasteHtmlAt(wasm, sec, para, edit);
       return fillBodyLines(wasm, sec, para, lines, edit.payload.style);
     }
     case 'DELETE': {
@@ -903,6 +1077,208 @@ function isFormatEdit(edit: Edit): boolean {
   return edit.payload.type === 'format' && !!edit.payload.char_format;
 }
 
+/** HTML 붙여넣기(F-4f6d826e) — 서식을 유지한 채 반입한다. */
+function isPasteHtmlEdit(edit: Edit): boolean {
+  return edit.payload.type === 'paste_html' && !!edit.payload.paste_html;
+}
+
+/** paste_html.html을 꺼내 검증한다. 비어 있으면 오류를 던져 skipped로 보고되게 한다. */
+function requireHtml(edit: Edit): string {
+  const html = (edit.payload.paste_html?.html ?? '').trim();
+  if (!html) throw new Error('붙여넣을 HTML(paste_html.html)이 비어 있습니다.');
+  return html;
+}
+
+/**
+ * 본문 문단에 HTML을 붙여넣고 '늘어난 문단 수'를 돌려준다(F-4f6d826e).
+ *
+ * 텍스트 삽입과 달리 HTML이 문단을 몇 개 만들지는 미리 알 수 없어서 붙여넣기 전후의
+ * 문단 수를 재서 구한다. 이 값이 호출 측의 shiftFrom/changed 보정에 쓰인다.
+ * 측정 API가 없으면 0으로 본다 — 편집은 문단 인덱스 내림차순으로 적용되므로 뒤따르는
+ * 편집은 이미 적용된 뒤라 문서 정합에는 영향이 없고 diff 표시만 덜 정확해진다.
+ */
+function pasteHtmlAt(wasm: WasmEditing, sec: number, para: number, edit: Edit): number {
+  if (!wasm.pasteHtml) {
+    throw new Error('이 환경에서는 HTML 붙여넣기를 지원하지 않습니다.');
+  }
+  const html = requireHtml(edit);
+  const before = wasm.getParagraphCount?.(sec);
+  wasm.pasteHtml(sec, para, 0, html);
+  const after = wasm.getParagraphCount?.(sec);
+  if (typeof before !== 'number' || typeof after !== 'number') return 0;
+  return Math.max(0, after - before);
+}
+
+/** 최상위 표 셀에 HTML을 붙여넣는다(F-4f6d826e). 중첩 셀은 호출 전에 걸러진다. */
+function pasteHtmlInCellAt(
+  wasm: WasmEditing,
+  c: CellTarget,
+  controlIdx: number,
+  cellIdx: number,
+  cellParaIdx: number,
+  edit: Edit,
+): void {
+  if (!wasm.pasteHtmlInCell) {
+    throw new Error('이 환경에서는 표 셀 HTML 붙여넣기를 지원하지 않습니다.');
+  }
+  wasm.pasteHtmlInCell(c.sec, c.parentPara, controlIdx, cellIdx, cellParaIdx, 0, requireHtml(edit));
+}
+
+/**
+ * 각주 달기/떼기(F-3e2d0f9a). payload.type="footnote"의 유무가 기존 F-191fd6 동작
+ * (각주 '내용만' 수정)과 새 동작(각주 자체 달기/떼기)을 가른다 — 하위 호환.
+ */
+function isFootnoteEdit(edit: Edit): boolean {
+  return edit.payload.type === 'footnote';
+}
+
+/**
+ * 본문 문단에 각주를 새로 단다(F-3e2d0f9a).
+ *
+ * anchor_text가 있으면 그 문자열 바로 뒤에, 없으면 문단 끝에 표식을 붙인다. 대상이
+ * 없거나 문단에 여러 번 나오면 오류를 던져 skipped로 보고한다(모호하면 적용 금지 —
+ * F-04a91c format_target과 같은 규칙). 문단 본문은 바뀌지 않는다.
+ */
+function applyInsertFootnote(wasm: WasmEditing, edit: Edit, sec: number, para: number): void {
+  if (!wasm.insertFootnote) {
+    throw new Error('이 환경에서는 각주 달기를 지원하지 않습니다.');
+  }
+  const spec = edit.payload.footnote ?? {};
+  const text = spec.text ?? '';
+  if (text.trim() === '') {
+    throw new Error('각주 내용(footnote.text)이 비어 있습니다.');
+  }
+  const length = wasm.getParagraphLength(sec, para);
+  let charOffset = length;
+  const anchor = (spec.anchor_text ?? '').trim();
+  if (anchor) {
+    if (!wasm.getTextRange) {
+      throw new Error('이 환경에서는 각주 위치 지정(anchor_text)을 지원하지 않습니다.');
+    }
+    const chars = Array.from(wasm.getTextRange(sec, para, 0, length));
+    const needle = Array.from(anchor);
+    const first = indexOfChars(chars, needle);
+    if (first < 0) {
+      throw new Error(`문단에서 각주를 달 위치를 찾지 못했습니다: "${preview(anchor)}"`);
+    }
+    if (indexOfChars(chars, needle, first + 1) >= 0) {
+      throw new Error(
+        `각주 위치 문자열이 문단에 여러 번 나타나 적용하지 않았습니다(더 길게 지정하세요): "${preview(anchor)}"`,
+      );
+    }
+    charOffset = first + needle.length;
+  }
+  const made = wasm.insertFootnote(sec, para, charOffset);
+  if (!made?.ok) throw new Error('각주를 달지 못했습니다.');
+  // 갓 만든 각주는 비어 있고 끝에 자동번호 표식만 있다 — 내용은 앞(0)에 넣는다
+  // (applyOneFootnote가 쓰는 규약과 동일).
+  wasm.insertTextInFootnote(sec, made.paraIdx, made.controlIdx, 0, 0, text);
+}
+
+/** 각주를 표식까지 문서에서 제거한다(F-3e2d0f9a). 내용만 비우는 것과 다르다. */
+function applyDeleteFootnote(wasm: WasmEditing, t: FootnoteTarget): void {
+  if (!wasm.deleteFootnote) {
+    throw new Error('이 환경에서는 각주 떼기를 지원하지 않습니다.');
+  }
+  const result = wasm.deleteFootnote(t.sec, t.para, t.controlIdx);
+  if (!result?.ok) throw new Error('각주를 떼지 못했습니다.');
+}
+
+/** 표 셀 계산식(F-8eb1f86f) — target은 그 표 안의 셀 ID. */
+function isTableFormulaEdit(edit: Edit): boolean {
+  return edit.payload.type === 'table_formula' && !!edit.payload.table_formula;
+}
+
+/**
+ * 표의 값을 rhwp 계산 엔진으로 구해 대상 셀에 기입한다(F-8eb1f86f).
+ *
+ * AI가 암산한 숫자를 글자로 넣으면 틀리기 쉽고 원본 값이 바뀌어도 갱신되지 않는다.
+ * 잘못된 수식·범위는 엔진이 오류로 거부하므로(→ throw → skipped) 셀에 쓰레기 값이
+ * 들어가지 않는다. 최상위 표만 지원한다(중첩 표는 좌표 체계가 다르다).
+ */
+function applyTableFormula(wasm: WasmEditing, edit: Edit, c: CellTarget): void {
+  const spec = edit.payload.table_formula!;
+  if (c.path.length !== 1) {
+    throw new Error('중첩 표의 계산식은 지원하지 않습니다(최상위 표 셀 ID를 지정하세요).');
+  }
+  if (!wasm.evaluateTableFormula) {
+    throw new Error('이 환경에서는 표 계산식을 지원하지 않습니다.');
+  }
+  const formula = (spec.formula ?? '').trim();
+  if (!formula) throw new Error('table_formula.formula가 비어 있습니다.');
+  if (typeof spec.row !== 'number' || spec.row < 0 || typeof spec.col !== 'number' || spec.col < 0) {
+    throw new Error('table_formula.row/col이 필요합니다(0-기준 정수).');
+  }
+  const { controlIndex: ci } = c.path[0];
+  // write_result=true — 계산만 하고 안 쓰는 건 편집이 아니라 질의라 이 경로에 없다.
+  const raw = wasm.evaluateTableFormula(c.sec, c.parentPara, ci, spec.row, spec.col, formula, true);
+  // 엔진은 실패 시 throw하지만, ok=false JSON을 주는 구현도 조용히 넘기지 않는다.
+  try {
+    const parsed = JSON.parse(raw) as { ok?: boolean };
+    if (parsed.ok === false) throw new Error(`수식을 계산하지 못했습니다: ${preview(formula)}`);
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith('수식을')) throw error;
+    // JSON이 아니면 엔진이 성공 문자열만 준 것으로 본다(throw했다면 여기 오지 않는다).
+  }
+}
+
+/** 문서 전역 찾아 바꾸기(F-293e8c99) — target_id는 문서 스코프 토큰이어야 한다. */
+function isReplaceTextEdit(edit: Edit): boolean {
+  return edit.payload.type === 'replace_text' && !!edit.payload.replace_text;
+}
+
+/**
+ * 문서 전역에서 query를 new_text로 치환한다(F-293e8c99).
+ *
+ * 문단마다 REPLACE 편집을 나열하는 대신 rhwp 전역 치환 프리미티브를 한 번 부른다.
+ * 치환 전에 searchAllText로 위치를 모아 두고, 그중 본문 문단 좌표만 돌려준다 —
+ * 호출 측이 changed에 실어 diff/부분 승인이 동작하게 하기 위해서다(표 셀 매치는
+ * changed 모델이 본문 문단만 다루므로 제외하되, 치환 자체는 셀 안까지 수행된다).
+ *
+ * 한 건도 못 찾으면 오류를 던져 skipped(사유)로 보고되게 한다 — 조용한 성공 금지.
+ */
+function applyReplaceText(wasm: WasmEditing, edit: Edit): ChangedPara[] {
+  const spec = edit.payload.replace_text!;
+  const query = spec.query ?? '';
+  if (query === '') {
+    throw new Error('찾을 문자열(replace_text.query)이 비어 있습니다.');
+  }
+  const newText = spec.new_text ?? '';
+  const caseSensitive = spec.case_sensitive ?? false;
+  const first = spec.scope === 'first';
+  if (!wasm.replaceAll || !wasm.replaceOne) {
+    throw new Error('이 환경에서는 전역 찾아 바꾸기를 지원하지 않습니다.');
+  }
+
+  // 치환 전 위치 수집(치환 후에는 원문이 사라져 찾을 수 없다). 실패해도 치환은 진행한다.
+  let hits: ChangedPara[] = [];
+  if (wasm.searchAllText) {
+    try {
+      const all = wasm.searchAllText(query, caseSensitive, true);
+      const bodyHits = all.filter((h) => !h.cellContext);
+      hits = (first ? bodyHits.slice(0, 1) : bodyHits).map((h) => ({ sec: h.sec, para: h.para }));
+    } catch {
+      hits = []; // 위치 수집 실패 — 치환 결과에는 영향 없고 diff 표시만 생략된다.
+    }
+  }
+
+  if (first) {
+    const one = wasm.replaceOne(query, newText, caseSensitive);
+    if (!one.ok) throw new Error(`문서에서 "${preview(query)}"를 찾지 못했습니다.`);
+    if (typeof one.sec === 'number' && typeof one.para === 'number') {
+      return [{ sec: one.sec, para: one.para }];
+    }
+    return hits;
+  }
+
+  const result = wasm.replaceAll(query, newText, caseSensitive);
+  const count = result.count ?? 0;
+  if (!result.ok || count === 0) {
+    throw new Error(`문서에서 "${preview(query)}"를 찾지 못했습니다(치환 0건).`);
+  }
+  return hits;
+}
+
 /** 표시용 — 앞 30자만, 길면 말줄임표. */
 function preview(text: string): string {
   return text.length > 30 ? `${text.slice(0, 30)}…` : text;
@@ -1008,6 +1384,46 @@ function applyTableEdit(wasm: WasmEditing, edit: Edit, c: CellTarget): void {
       const m = spec.merge;
       if (!m) throw new Error('table_edit.merge(병합 범위)가 필요합니다.');
       wasm.mergeTableCells(c.sec, c.parentPara, ci, m.start_row, m.start_col, m.end_row, m.end_col);
+      break;
+    }
+    case 'split_cell': {
+      // 병합(merge_cells)의 짝 — 셀 하나를 N줄×M칸으로 나누거나 병합을 해제한다.
+      const nRows = spec.into_rows ?? 1;
+      const nCols = spec.into_cols ?? 1;
+      if (nRows < 1 || nCols < 1) {
+        throw new Error('table_edit.into_rows/into_cols는 1 이상이어야 합니다.');
+      }
+      const equalHeight = spec.equal_row_height ?? true;
+      const range = spec.range;
+      if (range) {
+        if (nRows === 1 && nCols === 1) {
+          throw new Error('범위 분할에는 into_rows 또는 into_cols가 2 이상이어야 합니다.');
+        }
+        if (!wasm.splitTableCellsInRange) {
+          throw new Error('이 환경에서는 범위 셀 분할을 지원하지 않습니다.');
+        }
+        wasm.splitTableCellsInRange(
+          c.sec, c.parentPara, ci,
+          range.start_row, range.start_col, range.end_row, range.end_col,
+          nRows, nCols, equalHeight,
+        );
+        break;
+      }
+      const row = requireIdx(spec.row, 'row');
+      const col = requireIdx(spec.col, 'col');
+      if (nRows === 1 && nCols === 1) {
+        // 분할 수를 안 줬으면 '병합 해제'로 해석한다(한글의 셀 나누기와 같은 동작).
+        if (!wasm.splitTableCell) {
+          throw new Error('이 환경에서는 셀 병합 해제를 지원하지 않습니다.');
+        }
+        wasm.splitTableCell(c.sec, c.parentPara, ci, row, col);
+        break;
+      }
+      if (!wasm.splitTableCellInto) {
+        throw new Error('이 환경에서는 셀 분할을 지원하지 않습니다.');
+      }
+      // mergeFirst=false — 대상은 셀 하나뿐이라 먼저 병합할 것이 없다.
+      wasm.splitTableCellInto(c.sec, c.parentPara, ci, row, col, nRows, nCols, equalHeight, false);
       break;
     }
     default:
@@ -2187,7 +2603,8 @@ function applyOneCell(wasm: WasmEditing, edit: Edit, c: CellTarget): void {
         const length = wasm.getCellParagraphLength(c.sec, c.parentPara, ci, ce, cp);
         if (length > 0) wasm.deleteTextInCell(c.sec, c.parentPara, ci, ce, cp, 0, length);
         if (edit.command === 'REPLACE') {
-          fillCellLinesFlat(wasm, c, ci, ce, cp, lines);
+          if (isPasteHtmlEdit(edit)) pasteHtmlInCellAt(wasm, c, ci, ce, cp, edit);
+          else fillCellLinesFlat(wasm, c, ci, ce, cp, lines);
         }
         return;
       }
@@ -2195,13 +2612,15 @@ function applyOneCell(wasm: WasmEditing, edit: Edit, c: CellTarget): void {
         // 현재 문단 끝에서 분할 → 새 문단(cp+1)에 텍스트(다줄이면 줄마다) 삽입.
         const length = wasm.getCellParagraphLength(c.sec, c.parentPara, ci, ce, cp);
         wasm.splitParagraphInCell(c.sec, c.parentPara, ci, ce, cp, length);
-        fillCellLinesFlat(wasm, c, ci, ce, cp + 1, lines);
+        if (isPasteHtmlEdit(edit)) pasteHtmlInCellAt(wasm, c, ci, ce, cp + 1, edit);
+        else fillCellLinesFlat(wasm, c, ci, ce, cp + 1, lines);
         return;
       }
       case 'INSERT_BEFORE': {
         // 오프셋 0에서 분할 → 빈 문단이 cp에 생기고 원문은 cp+1로 밀린다. cp에 삽입.
         wasm.splitParagraphInCell(c.sec, c.parentPara, ci, ce, cp, 0);
-        fillCellLinesFlat(wasm, c, ci, ce, cp, lines);
+        if (isPasteHtmlEdit(edit)) pasteHtmlInCellAt(wasm, c, ci, ce, cp, edit);
+        else fillCellLinesFlat(wasm, c, ci, ce, cp, lines);
         return;
       }
     }

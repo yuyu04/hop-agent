@@ -1,0 +1,31 @@
+id: F-6daa56b3
+slug: ai-table-split-cell
+title: "AI 표 셀 분할 — table_edit.split_cell (병합만 되고 분할이 안 되던 비대칭 해소)"
+status: done
+modules:
+  - apps/desktop/src-tauri/src/ai/schema.rs
+  - apps/studio-host/src/core/ai-bridge.ts
+  - apps/studio-host/src/core/ai-apply.ts
+acceptance_criteria:
+  - id: AC-9b408109
+    ears: event
+    condition: "When AI가 table_edit.op=\"split_cell\"을 into_rows/into_cols와 함께 낼 때"
+    text: "The system shall 지정 셀(row,col)을 into_rows줄 × into_cols칸으로 분할한다 — 생략된 값은 1, equal_row_height는 기본 true."
+    test_refs: ["apps/studio-host/src/core/ai-table-split-cell.test.ts", "apps/desktop/src-tauri/src/ai/schema.rs"]
+    notes: "## Why\n2026-07-27 실측: table_edit에 merge_cells는 있는데 분할이 없어 사용자에게 비대칭이 그대로 노출됐다(엔진에는 splitTableCell/Into/InRange가 있는데 AI 경로 호출 0건).\n## Decision\nmerge_cells와 같은 table_edit 어휘 안에 op=\"split_cell\" 추가. 엔진 의미를 그대로 따른다 — splitTableCell=병합 해제, splitTableCellInto=N×M 분할, splitTableCellsInRange=범위 일괄 분할."
+  - id: AC-a6afde14
+    ears: event
+    condition: "When into_rows/into_cols 없이 op=\"split_cell\"만 낼 때"
+    text: "The system shall 그 셀의 병합을 해제한다(splitTableCell) — 병합 해제와 N×M 분할을 한 동작으로 다룬다."
+    test_refs: ["apps/studio-host/src/core/ai-table-split-cell.test.ts"]
+  - id: AC-883d8f47
+    ears: optional
+    condition: "Where range(start_row,start_col,end_row,end_col)가 주어지면"
+    text: "The system shall 범위 안의 셀들을 각각 into_rows×into_cols로 분할한다(splitTableCellsInRange)."
+    test_refs: ["apps/studio-host/src/core/ai-table-split-cell.test.ts"]
+  - id: AC-acd88469
+    ears: unwanted
+    condition: "If row/col이 없거나 into_rows·into_cols가 모두 1 이하여 분할이 아무 일도 하지 않거나 중첩 표이면"
+    text: "The system shall 표를 변경하지 않고 사유를 skipped로 보고한다."
+    test_refs: ["apps/studio-host/src/core/ai-table-split-cell.test.ts"]
+    notes: "기존 table_edit 방어 패턴(requireIdx, 중첩 표 거부)과 동일. 분할 API가 없는 환경도 사유 보고."

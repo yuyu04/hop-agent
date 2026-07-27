@@ -115,8 +115,25 @@ export interface DocumentContext {
 
 export type EditCommand = 'INSERT_BEFORE' | 'INSERT_AFTER' | 'REPLACE' | 'DELETE';
 
+/**
+ * 문서 전역 편집을 가리키는 target_id 고정값(F-293e8c99). 문단 ID가 아니라 "문서 전체"다.
+ * Rust `ai::schema::DOC_SCOPE_TARGET`과 같은 값이어야 한다.
+ */
+export const DOC_SCOPE_TARGET = 'doc';
+
 export interface EditPayload {
-  type?: 'paragraph' | 'table' | 'image' | 'table_edit' | 'clone_table' | 'format' | 'chart';
+  type?:
+    | 'paragraph'
+    | 'table'
+    | 'image'
+    | 'table_edit'
+    | 'clone_table'
+    | 'format'
+    | 'chart'
+    | 'replace_text'
+    | 'table_formula'
+    | 'footnote'
+    | 'paste_html';
   text?: string;
   style?: string;
   /** type="image"일 때 삽입할 첨부 이미지의 0-기준 인덱스(첨부 순서). */
@@ -158,14 +175,65 @@ export interface EditPayload {
     /** 글자 색 #RRGGBB. */
     text_color?: string;
   };
+  /**
+   * type="replace_text"일 때: 문서 전역 찾아 바꾸기(F-293e8c99). target_id는 `DOC_SCOPE_TARGET`.
+   * 같은 문자열을 여러 문단에서 바꿀 때 문단별 REPLACE를 나열하는 대신 이 편집 하나를 쓴다.
+   */
+  replace_text?: {
+    query: string;
+    new_text: string;
+    /** 대소문자 구분(기본 false). */
+    case_sensitive?: boolean;
+    /** 'all'=전부(기본) | 'first'=첫 건만. */
+    scope?: 'all' | 'first';
+  };
+  /**
+   * type="paste_html"일 때: HTML을 서식 유지한 채 넣는다(F-4f6d826e).
+   * target_id는 본문 문단 ID 또는 최상위 표 셀 ID.
+   */
+  paste_html?: {
+    /** 붙여넣을 HTML 조각. */
+    html: string;
+  };
+  /**
+   * type="footnote"일 때: 각주 달기/떼기(F-3e2d0f9a).
+   * 달기 = 본문 문단 ID + REPLACE, 떼기 = 각주 ID + DELETE.
+   * (payload.type 없이 각주 ID에 REPLACE 하면 기존처럼 '내용만' 고친다 — F-191fd6.)
+   */
+  footnote?: {
+    /** 달 각주의 내용(달기에만 필요). */
+    text?: string;
+    /** 이 문자열 바로 뒤에 표식을 단다(생략=문단 끝). 문단 안에서 유일해야 한다. */
+    anchor_text?: string;
+  };
+  /**
+   * type="table_formula"일 때: 표 값을 엔진이 계산해 셀에 기입한다(F-8eb1f86f).
+   * target_id는 그 표 안의 셀 ID. row/col은 0-기준이지만 formula의 셀 참조는 A1 표기다.
+   */
+  table_formula?: {
+    /** 결과를 쓸 셀의 행(0-기준). */
+    row: number;
+    /** 결과를 쓸 셀의 열(0-기준). */
+    col: number;
+    /** 계산식. 예: '=SUM(B2:B5)'. */
+    formula: string;
+  };
   /** type="table_edit"일 때: 기존 표의 구조 편집(행/열 추가·삭제, 셀 병합). target_id는 그 표의 셀 ID. */
   table_edit?: {
-    op: 'insert_row' | 'insert_col' | 'delete_row' | 'delete_col' | 'merge_cells';
+    op: 'insert_row' | 'insert_col' | 'delete_row' | 'delete_col' | 'merge_cells' | 'split_cell';
     row?: number;
     col?: number;
     below?: boolean;
     right?: boolean;
     merge?: { start_row: number; start_col: number; end_row: number; end_col: number };
+    /** split_cell: 셀을 몇 줄로 나눌지(기본 1). F-6daa56b3. */
+    into_rows?: number;
+    /** split_cell: 셀을 몇 칸으로 나눌지(기본 1). */
+    into_cols?: number;
+    /** split_cell: 나뉜 줄 높이를 균등하게(기본 true). */
+    equal_row_height?: boolean;
+    /** split_cell: 주면 이 범위 안의 셀들을 각각 into_rows×into_cols로 분할한다. */
+    range?: { start_row: number; start_col: number; end_row: number; end_col: number };
     /** 새 행/열의 셀 텍스트(순서대로, 선택). */
     texts?: string[];
   };

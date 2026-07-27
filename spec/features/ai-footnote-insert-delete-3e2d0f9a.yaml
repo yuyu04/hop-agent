@@ -1,0 +1,32 @@
+id: F-3e2d0f9a
+slug: ai-footnote-insert-delete
+title: "AI 각주 달기/떼기 — 기존 각주 텍스트 편집만 되던 것에 삽입·삭제 추가"
+status: done
+modules:
+  - apps/desktop/src-tauri/src/ai/schema.rs
+  - apps/studio-host/src/core/ai-bridge.ts
+  - apps/studio-host/src/core/ai-apply.ts
+acceptance_criteria:
+  - id: AC-32c5bf39
+    ears: event
+    condition: "When AI가 본문 문단 ID에 command=REPLACE·payload.type=\"footnote\"를 낼 때"
+    text: "The system shall 그 문단에 각주를 새로 달고 footnote.text를 각주 내용으로 넣는다 — 문단 본문은 그대로 둔다."
+    test_refs: ["apps/studio-host/src/core/ai-footnote.test.ts", "apps/desktop/src-tauri/src/ai/schema.rs"]
+    notes: "## Why\n2026-07-27 실측: F-191fd6으로 기존 각주의 '내용 수정'만 됐고 insertFootnote/deleteFootnote는 AI 경로 호출 0건이라 각주를 새로 달거나 띃 수가 없었다.\n## Decision\n삽입은 format 편집과 같은 성격(본문은 그대로, 부가 정보만 변경)이라 command=REPLACE + 본문 문단 target. insertFootnote가 돌려주는 (paraIdx, controlIdx)로 insertTextInFootnote를 불러 내용을 채운다."
+  - id: AC-a76a06be
+    ears: optional
+    condition: "Where footnote.anchor_text가 주어지면"
+    text: "The system shall 그 문자열 바로 뒤에 각주 표식을 달고, 생략되면 문단 끝에 단다 — anchor_text가 문단에 없거나 여러 번 나타나면 적용하지 않고 사유를 보고한다."
+    test_refs: ["apps/studio-host/src/core/ai-footnote.test.ts"]
+    notes: "모호하면 적용 금지 — F-04a91c format_target과 동일한 규칙과 구현(indexOfChars 재사용)."
+  - id: AC-685d0bfd
+    ears: event
+    condition: "When 각주 ID에 command=DELETE·payload.type=\"footnote\"를 낼 때"
+    text: "The system shall 각주 자체를 문서에서 제거한다(표식 포함) — payload.type이 없는 기존 DELETE는 내용만 비우는 F-191fd6 동작을 그대로 유지한다."
+    test_refs: ["apps/studio-host/src/core/ai-footnote.test.ts", "apps/desktop/src-tauri/src/ai/schema.rs"]
+    notes: "하위 호환 — payload.type=\"footnote\" 유무로 '각주 제거'와 '내용 비우기'를 가른다."
+  - id: AC-929bdf7d
+    ears: unwanted
+    condition: "If 각주 삽입에 text가 비었거나 엔진이 각주 생성·제거를 거부하면"
+    text: "The system shall 문서를 변경하지 않고 사유를 skipped로 보고한다."
+    test_refs: ["apps/studio-host/src/core/ai-footnote.test.ts"]

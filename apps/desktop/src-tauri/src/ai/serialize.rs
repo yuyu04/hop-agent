@@ -7,6 +7,7 @@
 //! 표 내부 셀 텍스트의 행렬 직렬화는 후속 작업으로 남긴다. PR1은 문단 단위
 //! 직렬화로 직렬화→화이트리스트→검증 경로 전체를 확립한다.
 
+use super::schema::DOC_SCOPE_TARGET;
 use rhwp::DocumentCore;
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
@@ -123,7 +124,7 @@ pub fn build_windowed_context(
     nodes.extend(collect_footnotes(core));
     nodes.extend(collect_fields(core));
 
-    Ok(assemble(nodes, total_sections, cursor_path, collect_form_tables(core)))
+    Ok(assemble(nodes, total_sections, cursor_path, collect_form_tables(core), true))
 }
 
 /// 직렬화 노드: (id, text, 추정 헤딩 수준).
@@ -261,7 +262,7 @@ pub fn build_full_context(
     nodes.extend(collect_header_footers(core, total_sections));
     nodes.extend(collect_footnotes(core));
     nodes.extend(collect_fields(core));
-    Ok(assemble(nodes, total_sections, None, collect_form_tables(core)))
+    Ok(assemble(nodes, total_sections, None, collect_form_tables(core), true))
 }
 
 /// 지정한 ID들만 직렬화한다(구간 교정 등 스코프 요청용). 화이트리스트도 같은 ID들로
@@ -278,7 +279,7 @@ pub fn build_scoped_context(
     nodes.extend(collect_footnotes(core));
     nodes.extend(collect_fields(core));
     nodes.retain(|(id, _, _)| ids.contains(id));
-    Ok(assemble(nodes, total_sections, None, collect_form_tables(core)))
+    Ok(assemble(nodes, total_sections, None, collect_form_tables(core), false))
 }
 
 /// `sec[<s>].p[<p>]` 형식의 커서 경로를 `(section, paragraph)`로 파싱한다.
@@ -344,6 +345,7 @@ fn assemble(
     total_sections: u32,
     cursor_path: Option<String>,
     form_tables: Vec<FormTable>,
+    allow_doc_scope: bool,
 ) -> (DocumentContext, HashSet<String>) {
     let mut content = Vec::with_capacity(nodes.len());
     let mut whitelist = HashSet::with_capacity(nodes.len());
@@ -351,6 +353,12 @@ fn assemble(
     for (id, text, heading) in nodes {
         whitelist.insert(id.clone());
         content.push(ContentNode::Paragraph { id, text, heading });
+    }
+
+    // 문서 전역 편집(찾아 바꾸기)용 스코프 토큰. 구간 스코프 요청에서는 넣지 않는다 —
+    // 구간 밖까지 바꾸는 전역 치환은 스코프 위반이다(F-293e8c99).
+    if allow_doc_scope {
+        whitelist.insert(DOC_SCOPE_TARGET.to_string());
     }
 
     // 양식 표 식별자도 화이트리스트에 넣어 clone_table.clone_from 좌표 환각을 막는다
@@ -810,7 +818,9 @@ mod tests {
         let first_id = context.content[0].id();
         assert_eq!(first_id, "sec[0].p[0]");
         assert!(whitelist.contains("sec[0].p[0]"));
-        assert_eq!(whitelist.len(), context.content.len());
+        // 노드 ID 전부 + 문서 전역 편집용 "doc" 스코프 토큰(F-293e8c99).
+        assert!(whitelist.contains(DOC_SCOPE_TARGET));
+        assert_eq!(whitelist.len(), context.content.len() + 1);
     }
 
     #[test]
@@ -840,7 +850,9 @@ mod tests {
                 node.id()
             );
         }
-        assert_eq!(whitelist.len(), context.content.len());
+        // 노드 ID 전부 + "doc" 스코프 토큰(F-293e8c99).
+        assert!(whitelist.contains(DOC_SCOPE_TARGET));
+        assert_eq!(whitelist.len(), context.content.len() + 1);
     }
 
     #[test]
@@ -902,7 +914,8 @@ mod tests {
         let (context, whitelist) = build_windowed_context(&core, Some((0, 1)), false).unwrap();
         // 본문 3 + 머리말/꼬리말 placeholder 2.
         assert_eq!(context.content.len(), 5);
-        assert_eq!(whitelist.len(), 5);
+        // +1 = "doc" 스코프 토큰.
+        assert_eq!(whitelist.len(), 6);
     }
 
     #[test]
@@ -915,7 +928,7 @@ mod tests {
         assert_eq!(context.content.len(), 13);
         assert_eq!(context.content[0].id(), "sec[0].p[10]");
         assert_eq!(context.content[10].id(), "sec[0].p[20]");
-        assert_eq!(whitelist.len(), 13);
+        assert_eq!(whitelist.len(), 14); // 13 노드 + "doc" 스코프 토큰
         assert!(whitelist.contains("sec[0].p[15]"));
         assert!(!whitelist.contains("sec[0].p[0]"));
         assert_eq!(
@@ -1487,7 +1500,7 @@ mod tests {
         let (context, whitelist) = build_full_context(&core).unwrap();
         // 본문 30 + hf placeholder 2.
         assert_eq!(context.content.len(), 32);
-        assert_eq!(whitelist.len(), 32);
+        assert_eq!(whitelist.len(), 33); // 32 노드 + "doc" 스코프 토큰
         assert!(whitelist.contains("sec[0].p[0]"));
         assert!(whitelist.contains("sec[0].p[29]"));
     }

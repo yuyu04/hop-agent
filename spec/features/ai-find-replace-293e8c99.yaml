@@ -1,0 +1,31 @@
+id: F-293e8c99
+slug: ai-find-replace
+title: "AI 찾아 바꾸기 — 문서 전역 치환을 엔진 프리미티브로 (문단별 REPLACE 나열 대체)"
+status: done
+modules:
+  - apps/desktop/src-tauri/src/ai/schema.rs
+  - apps/studio-host/src/core/ai-bridge.ts
+  - apps/studio-host/src/core/ai-apply.ts
+acceptance_criteria:
+  - id: AC-9e6d67b7
+    ears: event
+    condition: "When AI가 payload.type=\"replace_text\"인 편집을 target_id=\"doc\"으로 낼 때"
+    text: "The system shall 문서 전역에서 query를 new_text로 치환하고(scope=\"all\" 기본, \"first\"면 첫 건만) 치환 건수를 보고한다 — 본문뿐 아니라 표 셀 안의 일치도 포함한다."
+    test_refs: ["apps/studio-host/src/core/ai-find-replace.test.ts", "apps/desktop/src-tauri/src/ai/schema.rs"]
+    notes: "## Why\n2026-07-27 실측: 전역 치환 프리미티브(replaceAll/replaceOne)가 엔진과 편집기 UI(ui/find-dialog.ts)에는 있는데 AI 경로에서 호출 0건이었다. 그래서 \"전 문서에서 2025→2026\" 요청에 AI가 문단마다 REPLACE edit를 만들어야 했다 — 100군데면 edit 100개(토큰 폭증·누락·승인 UI 도배).\n## Decision\npayload.type=\"replace_text\" + target_id=\"doc\"(문서 스코프 센티넬). WasmBridge.replaceAll/replaceOne이 이미 타입 있는 결과를 주므로 그대로 쓴다. searchAllText로 먼저 위치를 모아 changed(본문 문단)에 실어 diff/부분승인이 동작하게 한다."
+  - id: AC-1d102b69
+    ears: ubiquitous
+    text: "The system shall 대소문자 구분을 case_sensitive로 받되 생략 시 구분하지 않는다(기본 false)."
+    test_refs: ["apps/studio-host/src/core/ai-find-replace.test.ts"]
+  - id: AC-c210e841
+    ears: unwanted
+    condition: "If query가 비었거나 문서에서 한 건도 일치하지 않으면"
+    text: "The system shall 문서를 변경하지 않고 사유를 skipped로 보고한다 — 조용히 성공으로 처리하지 않는다."
+    test_refs: ["apps/studio-host/src/core/ai-find-replace.test.ts", "apps/desktop/src-tauri/src/ai/schema.rs"]
+    notes: "침묵 금지 원칙. count=0도 실패로 보고해야 사용자가 오타/공백 차이를 안다."
+  - id: AC-fadccede
+    ears: state
+    condition: "While 같은 스크립트에 문단 단위 편집이 함께 있는 동안"
+    text: "The system shall 전역 치환을 모든 문단 편집이 끝난 뒤 마지막에 적용한다 — 문단 인덱스 기준 정렬(내림차순)에서 문서 스코프를 최하위로 둬 앞선 편집의 target_id가 어긋나지 않게 한다."
+    test_refs: ["apps/studio-host/src/core/ai-find-replace.test.ts"]
+    notes: "hf/field가 para=-1로 마지막에 적용되는 기존 패턴을 따른다. sec=-1,para=-1 → 정렬 최하위."
