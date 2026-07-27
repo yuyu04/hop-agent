@@ -43,8 +43,9 @@ use ai::{
     ai_cancel_request, ai_delete_api_key, ai_extract_pdf_images, ai_fetch_image,
     ai_get_document_context, ai_has_api_key, ai_list_skills, ai_list_themes, ai_open_skills_dir,
     ai_open_themes_dir,
-    ai_render_pdf_figure_pages, ai_request_edit, ai_extract_text, ai_set_api_key,
-    ai_set_document_sensitivity,
+    ai_parse_research_note_docx, ai_parse_research_note_pdf, ai_render_pdf_figure_pages,
+    ai_request_edit, ai_extract_text,
+    ai_set_api_key, ai_set_document_sensitivity,
 };
 use state::AppState;
 use updates::{get_update_state, restart_to_apply_update, start_update_install};
@@ -133,6 +134,8 @@ pub fn run() {
             ai_has_api_key,
             ai_set_document_sensitivity,
             ai_extract_text,
+            ai_parse_research_note_docx,
+            ai_parse_research_note_pdf,
             ai_fetch_image,
             ai_extract_pdf_images,
             ai_render_pdf_figure_pages,

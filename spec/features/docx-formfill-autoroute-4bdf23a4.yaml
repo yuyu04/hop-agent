@@ -1,0 +1,19 @@
+id: F-4bdf23a4
+slug: docx-formfill-autoroute
+title: "연구노트 docx 첨부 시 일반 전송도 결정적 양식 변환으로 자동 라우팅"
+status: done
+modules:
+  - apps/studio-host/src/ui/agent-sidebar.ts
+acceptance_criteria:
+  - id: AC-fac31de7
+    ears: event
+    condition: "When 일반 전송(send)에 경로 있는 .docx 첨부가 있고 그게 연구노트 구조로 파싱되면"
+    text: "The system shall LLM(aiRequestEdit) 대신 결정적 경로(runDocxFormFill)로 라우팅한다 — 자연어 명령이나 빈 명령이어도 '양식 항목 추가' 칩 없이 동일한 변환이 일어난다."
+    test_refs: ["apps/studio-host/src/ui/agent-sidebar.test.ts"]
+    notes: "## Why\n사용자가 쬉을 몰라도 자연스럽게 '이 docx를 양식에 채워줘'라고 쓰는 게 자연스럽다. send() 시작에서 .docx(경로) 첨부를 감지해 runDocxFormFill 시도. 이미 구현된 파싱·매핑·복제 경로 재사용."
+  - id: AC-7feef89b
+    ears: unwanted
+    condition: "If 첨부된 docx가 연구노트 구조가 아니면(파싱 실패)"
+    text: "The system shall 기존 LLM 편집 경로로 그대로 폴백한다 — 일반 문서를 참조한 편집 지시는 영향받지 않는다."
+    test_refs: ["apps/studio-host/src/ui/agent-sidebar.test.ts"]
+    notes: "## Decision\nrunDocxFormFill은 aiParseResearchNoteDocx 실패 시 appendUserTurn 전에 false를 반환(부수효 없음). send()는 false면 기존 guard/LLM 경로로 진행."

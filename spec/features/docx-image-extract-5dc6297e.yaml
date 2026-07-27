@@ -1,0 +1,18 @@
+id: F-5dc6297e
+slug: docx-image-extract
+title: "docx 본문 인라인 이미지 추출 — 위치·바이트·크기를 EntryRecord에 담는다 (Phase B-1)\">\n<parameter name=\"status\">in_progress"
+status: done
+modules:
+  - apps/desktop/src-tauri/src/ai/docx.rs
+acceptance_criteria:
+  - id: AC-085522b6
+    ears: event
+    condition: "When 연구노트 docx 본문에 인라인 그림(<w:drawing>/<a:blip r:embed>)이 있으면"
+    text: "The system shall 각 그림을 EntryRecord의 이미지 목록으로 추출한다 — rId→document.xml.rels→media 바이트(base64), 크기(<wp:extent> EMU→px), 그리고 본문 내 위치(몇 번째 body 문단 뒤인지)를 담는다."
+    test_refs: ["apps/desktop/src-tauri/src/ai/docx.rs"]
+    notes: "## Why\n연구노트 docx 본문에 그림 9개(rId8~16, media PNG). 현재 파서는 텍스트만 추출해 그림이 HWP로 안 넘어간다. Phase B-1: 추출까지(app-side, 포크 불필요). 삽입(insertPictureInCell)은 B-2(rhwp 포크).\n## Decision\nBlock enum += Image(rid,w_emu,h_emu). parse_blocks가 최상위 <w:p> 내 <a:blip r:embed>+<wp:extent>를 문서 순서로 포착. parse_docx_structure가 document.xml.rels(rId→media)를 파싱하고 zip에서 media 바이트를 읽어 base64. EntryRecord.images: Vec<EntryImage{after_body_index, data_base64, ext, width_px, height_px}>."
+  - id: AC-4e45e9c7
+    ears: ubiquitous
+    text: "The system shall 그림 추출 실패(rId 미해석·media 없음)시 해당 그림만 건너뛰고 텍스트 추출과 항목 구조는 그대로 유지한다(회귀 없음)."
+    test_refs: ["apps/desktop/src-tauri/src/ai/docx.rs"]
+    notes: "그림이 없거나 해석 안 되는 docx도 기존처럼 45/45 텍스트 추출이 동작해야 한다. images는 빈 Vec 기본."

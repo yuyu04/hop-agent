@@ -1,0 +1,24 @@
+id: F-157aa77d
+slug: attach-doc-native-dialog
+title: "문서 첨부 = 네이티브 open 다이얼로그(경로 확보) + 드롭 위치 판정 dpr 관대화"
+status: done
+modules:
+  - apps/studio-host/src/ui/agent-sidebar.ts
+acceptance_criteria:
+  - id: AC-49bfdc5e
+    ears: event
+    condition: "When 사용자가 문서 첨부 버튼을 누르고 Tauri 런타임이면"
+    text: "The system shall 네이티브 open 다이얼로그로 파일 경로를 받아 attachPaths로 첨부한다 — docx/pdf/hwp/hwpx도 경로가 있어 추출·첨부되며, '경로 없음으로 거부' 하지 않는다."
+    test_refs: ["apps/studio-host/src/ui/agent-sidebar.test.ts"]
+    notes: "## Why\n2026-06-22: docx 첨부가 드래그&드롭으로만 가능했는데(파일 입력은 네이티브 경로가 없어 addPickedDoc가 거부, agent-sidebar.ts:1901), 드롭 위치 판정이 취약해 둘 다 안 됨. 다이얼로그는 네이티브 경로를 주므로 추출이 가능하고 드롭 좌표 수학에 의존하지 않는다.\n## Decision\nattachDocBtn 클릭 → @tauri-apps/plugin-dialog open({multiple,filters})로 경로 배열 받아 attachPaths(). open 플러그인·권한은 이미 존재(tauri-bridge.ts:182, capabilities dialog:default)."
+  - id: AC-bc716cb2
+    ears: state
+    condition: "While Tauri 런타임이 아닌 때(웹/테스트)"
+    text: "The system shall 기존 HTML 파일 입력(docInput)으로 폴백한다 — 다이얼로그 import 실패 시 동작을 잃지 않는다."
+    test_refs: ["apps/studio-host/src/ui/agent-sidebar.test.ts"]
+    notes: "open() import를 try/catch로 감싸 실패면 this.docInput.click() 폴백."
+  - id: AC-0be9f792
+    ears: ubiquitous
+    text: "The system shall 드롭 위치 판정을 물리/논리 픽셀 해석 모두에 관대하게 한다 — 원본 좌표 또는 dpr로 나눈 좌표 중 하나라도 패널 영역에 들면 첨부로 처리한다."
+    test_refs: ["apps/studio-host/src/ui/drop-point-over-rect.test.ts"]
+    notes: "## Why\nTauri v2 drag-drop position의 물리/논리 픽셀 해석이 모호해 dpr=2(Retina)에서 좌표가 절반돼 패널 밖으로 계산→드롭 무시. dropPointOverRect(pos, rect, dpr)를 순수 함수로 추출해 두 해석 모두 검사."

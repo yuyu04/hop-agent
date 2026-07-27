@@ -52,3 +52,15 @@ Thumbs.db
 
 # vitest coverage (clad Coverage 게이트 생성물)
 coverage/
+
+# 로컬 실측 표본/산출물 (리포 루트에 떨어지는 작업 파일 — 커밋 대상 아님)
+/*.hwp
+/*.docx
+/*.pdf
+/*.png
+/연구노트/
+__pycache__/
+
+# 세션 스크래치 (하네스 리포트 · 에이전트 테스트 리포트)
+/.harness/
+**/.test-report-*.md

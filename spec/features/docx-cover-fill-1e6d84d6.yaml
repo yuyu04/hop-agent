@@ -1,0 +1,28 @@
+id: F-1e6d84d6
+slug: docx-cover-fill
+title: "docx 표지 메타를 HWP 표지에 채움 — 관리번호·기관/과제 정보·기록자 명단 (일괄 변환 표지 채움)"
+status: done
+modules:
+  - apps/studio-host/src/core/ai-apply.ts
+  - apps/studio-host/src/core/ai-bridge.ts
+  - apps/studio-host/src/ui/agent-sidebar.ts
+  - apps/desktop/src-tauri/src/ai/docx.rs
+acceptance_criteria:
+  - id: AC-8e9b6a9c
+    ears: event
+    condition: "When 연구노트형 docx를 구조 파싱할 때"
+    text: "The system shall 표지(기관명+연구과제명 라벨을 가진 2열 표와 그 앞 '관리번호' 문단)에서 CoverMeta(관리번호·기관명·부서명·연구과제명·연구 기간·연구책임자·기록자 명단)를 추출한다 — 라벨은 자간 공백('기 관 명')을 제거해 정규화 매칭하고, 기록자 명단은 번호 매김 값('1. 홍길동  2. 임꺽정…', 다행 가능)을 이름 리스트로 분해한다."
+    test_refs: ["apps/desktop/src-tauri/src/ai/docx.rs"]
+    notes: "## Why\n2026-07-03 실측: 변환 파이프라인에 표지 채움 단계가 없어 생성 HWP 표지가 베이스 폼 값(기록자 18명, 관리번호 RS-2026-…-001) 그대로 남았다 — docx는 14명·RS-2025-…-002.\n## Decision\ndocx.rs parse_cover(blocks): 목차/항목 파싱과 동일한 Block 리스트에서 결정적 추출. 못 찾으면 cover=None(항목/목차 변환은 그대로). PDF 경로는 cover=None."
+  - id: AC-0f4d1836
+    ears: event
+    condition: "When docx 일괄 변환이 표지 표(기관명+연구과제명 라벨)를 가진 HWP 양식에 적용될 때"
+    text: "The system shall applyCoverFill이 라벨 인접 값칸(기관명/부서명/연구과제명/연구 기간/연구책임자)을 docx 값으로 교체하고, '기록자' 라벨 뒤 명단 슬롯 칸들에 순서대로 기록자를 기입하며(슬롯 템플릿에 번호 접두사가 있으면 'N. 이름' 형식 유지), docx 명단보다 많은 잔여 슬롯은 비운다. 관리번호는 헤더 표 '관리번호' 셀의 첫 문단만 교체한다('(Serial No.)' 등 뒤 문단 보존)."
+    test_refs: ["apps/studio-host/src/core/cover-fill.test.ts"]
+    notes: "## Decision\n편집 스크립트가 아니라 TOC 후처리처럼 wasm 직접 호출(applyActionScript 직후, snapshot 안). cloneTableAt의 셀 채움 머신(getTableCellBboxes→deleteTextInCell→fillCellLinesFlat) 재사용. 값칸 해석은 resolveValueCell(COVER_LABELS) 재사용. 앱(runDocxFormFill)과 배치(docx-batch-convert.batch.ts) 동일 배선."
+  - id: AC-8dc6806e
+    ears: unwanted
+    condition: "If cover가 추출되지 않았거나(None) 표지 표/관리번호 표를 못 찾으면"
+    text: "The system shall 표지 채움을 건너뛰고 사유를 skipped로 보고하며(침묵 금지) 항목·목차 변환은 그대로 진행한다 — 빈 값 필드는 양식 값을 덮어쓰지 않는다."
+    test_refs: ["apps/studio-host/src/core/cover-fill.test.ts"]
+    notes: "cover=None → no-op {filled:0}. getTableCellBboxes 부재/실패 → skipped 사유 보고. docx 빈 값 필드는 건드리지 않음(양식 보존)."

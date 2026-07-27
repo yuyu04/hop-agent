@@ -19,5 +19,7 @@
       "@/*": ["./src/*", "../../third_party/rhwp/rhwp-studio/src/*"]
     }
   },
-  "include": ["src"]
+  "include": ["src"],
+  "//exclude": "src/tools 의 러너 파일(*.batch.ts)은 헤드리스 Node 전용이라 node: 내장 모듈을 쓴다 — 브라우저 번들 tsconfig(@types/node 없음)에서는 제외하고 vitest가 트랜스파일만 한다. 두 러너가 공유하는 로직(wasm-form-tables.ts)은 타입 검사 대상으로 남긴다.",
+  "exclude": ["src/**/*.batch.ts"]
 }

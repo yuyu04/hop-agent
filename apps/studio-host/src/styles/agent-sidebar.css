@@ -35,6 +35,11 @@
 .hop-ai-panel.open {
   transform: translateX(0);
 }
+/* 패널이 열리면 fixed 오버레이가 문서 오른쪽(스크롤바 포함)을 가린다. 본문 영역을
+   패널 폭만큼 줄여 문서와 세로 스크롤바가 패널 왼쪽에 보이게 한다. */
+body.hop-ai-open #studio-root {
+  width: calc(100vw - 380px);
+}
 .hop-ai-panel.hop-ai-dragover {
   outline: 2px dashed #2563eb;
   outline-offset: -4px;
@@ -565,8 +570,7 @@
   min-width: 0;
   box-sizing: border-box;
 }
-.hop-ai-attach-image,
-.hop-ai-attach-doc {
+.hop-ai-attach {
   border: none;
   background: transparent;
   font-size: 16px;
@@ -574,8 +578,7 @@
   padding: 4px;
   border-radius: 4px;
 }
-.hop-ai-attach-image:hover,
-.hop-ai-attach-doc:hover {
+.hop-ai-attach:hover {
   background: #eef0f3;
 }
 .hop-ai-send {

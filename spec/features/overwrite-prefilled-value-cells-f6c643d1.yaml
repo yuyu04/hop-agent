@@ -1,0 +1,23 @@
+id: F-f6c643d1
+slug: overwrite-prefilled-value-cells
+title: "채워진 양식의 값칸도 덮어쓰기 — 값칸 판정을 텍스트 유무가 아니라 라벨명 일치로"
+status: done
+modules:
+  - apps/studio-host/src/core/ai-apply.ts
+acceptance_criteria:
+  - id: AC-361cac4d
+    ears: event
+    condition: "When 복제 소스 양식의 값칸에 이미 샘플 텍스트가 있어도(이미 채워진 항목을 복제하는 경우)"
+    text: "The system shall resolveValueCell이 그 값칸을 값 대상으로 해석한다 — 후보 칸은 그 텍스트가 알려진 라벨명(필드 라벨 또는 메타 라벨)과 일치할 때만 거부하고, 단지 텍스트가 있다는 이유로 거부하지 않는다."
+    test_refs: ["apps/studio-host/src/core/overwrite-prefilled-value-cells.test.ts"]
+    notes: "## Why\n2026-06-22 실측+스크래치: 연구노트 엔트리 양식은 이미 채워진 템플릿이라 모든 값칸이 role=label(텍스트 있음). 기존 isLabelCell은 knownLabels(모든 비—input 셀 텍스트)에 들면 거부 → 제목·기록자·일자 값칸이 전부 거부돼 덮어쓰기 안 됨(buildFormFillMapping 스크래치 결과: 5개 필드 전부 skip, 본문만 채움).\n## Decision\n값칸 거부 기준을 '텍스트 유무'가 아니라 '라벨명 집합(META_LABELS ∪ entry.fields[].label) 일치'로 바꿈. 샘플값(홍길동,성춘향 / 2025.12.01 등)은 라벨명이 아니므로 값칸으로 인정되어 REPLACE된다. isLabelCell의 role==='label' 절은 제거."
+  - id: AC-29b04768
+    ears: ubiquitous
+    text: "The system shall 라벨↔라벨 인접 보호를 유지한다 — 후보 칸의 텍스트가 필드/메타 라벨명과 일치하면 값칸이 아니므로 아래 칸으로 폴백한다(예: 기록자 오른쪽이 확인자 라벨이면 아래로)."
+    test_refs: ["apps/studio-host/src/core/overwrite-prefilled-value-cells.test.ts"]
+  - id: AC-cbdced34
+    ears: unwanted
+    condition: "If 값칸이 비어 있거나 라벨이 가로 병합된 기존 경우이면"
+    text: "The system shall 기존 동작(빈 값칸 채움, F-addf13c1 병합 고려)을 그대로 유지한다 — 회귀 없음."
+    test_refs: ["apps/studio-host/src/core/overwrite-prefilled-value-cells.test.ts"]
+    notes: "## Why\n빈 값칸은 텍스트가 없어 라벨명 집합에 안 들므로 그대로 값칸으로 인정(기존 F-ae778890 동작). 병합에 가려진 좌표 건너뛰기(F-addf13c1)도 유지. 기존 전체 테스트 GREEN 유지가 회귀 가드."

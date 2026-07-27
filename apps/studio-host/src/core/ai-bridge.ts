@@ -39,6 +39,70 @@ export interface FormTable {
   cells: FormCell[];
 }
 
+/** docx 본문 인라인 이미지(Rust ai::docx::EntryImage serde 매핑, F-5dc6297e). */
+export interface ResearchNoteImage {
+  /** body_paragraphs의 몇 번째 단락 '뒤'에 넣을지(0=첫 단락 앞). */
+  after_body_index: number;
+  data_base64: string;
+  ext: string;
+  width_px: number;
+  height_px: number;
+}
+
+/** 본문 데이터 표 한 개(Rust ai::docx::EntryTable serde 매핑). 셀에 중첩 표로 삽입. */
+export interface ResearchNoteTable {
+  /** body_paragraphs의 몇 번째 단락 '뒤'에 넣을지(0=첫 단락 앞). */
+  after_body_index: number;
+  rows: number;
+  cols: number;
+  /** 셀 텍스트(row-major, rows×cols). */
+  cells: string[];
+}
+
+/** 연구노트 docx 한 항목(Rust ai::docx::EntryRecord serde 매핑, F-075bdb05/F-beb35fbb). */
+export interface ResearchNoteEntry {
+  title: string;
+  /** 본문 단락(계층 불릿 Ÿ/1./–/□① 보존, 평탄화 금지). */
+  body_paragraphs: string[];
+  recorders: string[];
+  confirmer: string;
+  record_date: string;
+  confirm_date: string;
+  /** 본문 인라인 이미지(없으면 빈 배열). */
+  images: ResearchNoteImage[];
+  /** 본문 데이터 표(없으면 빈 배열). */
+  body_tables?: ResearchNoteTable[];
+}
+
+/** 연구노트 목차 한 행. */
+export interface ResearchNoteTocItem {
+  no: string;
+  title: string;
+  date: string;
+}
+
+/** 표지(첫 페이지) 메타(Rust ai::docx::CoverMeta serde 매핑). 못 찾은 필드는 빈 값. */
+export interface ResearchNoteCover {
+  /** "관리번호 : RS-…" 줄 전체. */
+  manage_no: string;
+  org: string;
+  dept: string;
+  project: string;
+  period: string;
+  /** 연구책임자. */
+  lead: string;
+  /** 기록자 명단(번호 매김 값을 이름 리스트로 분해한 것). */
+  recorders: string[];
+}
+
+/** docx에서 추출한 연구노트 구조 전체(Rust ai::docx::ResearchNoteDoc serde 매핑). */
+export interface ResearchNoteDoc {
+  entries: ResearchNoteEntry[];
+  toc: ResearchNoteTocItem[];
+  /** 표지 메타 — 표지 표를 못 찾았거나 PDF 경로면 없음(표지는 채우지 않음). */
+  cover?: ResearchNoteCover | null;
+}
+
 export interface DocumentContext {
   document_metadata: {
     total_sections: number;
@@ -115,6 +179,37 @@ export interface EditPayload {
     clone_from: { section: number; paragraph: number; control_index: number };
     /** 채울 입력칸들(0-기준 row/col). 라벨칸은 생략(원본 보존). text는 \n으로 여러 줄. */
     cell_fills?: { row: number; col: number; text: string }[];
+    /**
+     * 본문 통셀에 넣을 인라인 이미지(F-5dc6297e/Phase B). row/col=본문 셀 좌표,
+     * after_para=셀 안 몇 번째 문단 뒤(채운 본문 단락 기준), data_base64=이미지 바이트.
+     */
+    body_images?: {
+      row: number;
+      col: number;
+      after_para: number;
+      data_base64: string;
+      ext: string;
+      width_px: number;
+      height_px: number;
+    }[];
+    /**
+     * 본문 통셀에 넣을 데이터 표(중첩 표). row/col=본문 셀 좌표, after_para=셀 안 몇 번째
+     * 문단 뒤, rows/cols/cells=표 내용(row-major).
+     */
+    body_tables?: {
+      row: number;
+      col: number;
+      after_para: number;
+      rows: number;
+      cols: number;
+      cells: string[];
+    }[];
+    /**
+     * 복제된 표의 데이터 행을 이 값으로 재구성한다(F-toc-chunk): 헤더 행(0)은 보존하고
+     * 기존 데이터 행을 모두 지운 뒤 각 항목 = 한 행으로 채운다. 목차를 페이지 분량씩
+     * 여러 표로 나눠 페이지마다 이어 보이게 할 때 쓴다(한 표 자동 페이지분할이 안 되는 경우).
+     */
+    toc_rows?: string[][];
   };
 }
 

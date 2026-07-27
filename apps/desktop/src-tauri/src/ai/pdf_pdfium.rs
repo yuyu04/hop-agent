@@ -43,6 +43,20 @@ pub fn render_query_pages_pdfium(
     out
 }
 
+/// 단일 페이지(1-기준)를 흰 배경 RGBA로 렌더한다(영역 크롭용). 라이브러리/페이지 없으면 None.
+pub fn render_single_page_pdfium(path: &str, page_number: usize, scale: f64) -> Option<RgbaImage> {
+    let pdfium = bind_pdfium()?;
+    let doc = pdfium.load_pdf_from_file(path, None).ok()?;
+    if page_number < 1 || page_number > i32::MAX as usize {
+        return None;
+    }
+    let page = doc.pages().get((page_number - 1) as i32).ok()?;
+    let config = PdfRenderConfig::new().scale_page_by_factor(scale as f32);
+    let bitmap = page.render_with_config(&config).ok()?;
+    let dynamic = bitmap.as_image().ok()?;
+    Some(composite_on_white(dynamic.into_rgba8()))
+}
+
 /// 실행 파일 옆 → 현재 디렉터리 → 시스템 순으로 pdfium을 찾아 바인딩한다.
 fn bind_pdfium() -> Option<Pdfium> {
     let exe_dir = std::env::current_exe()

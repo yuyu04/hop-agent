@@ -35,6 +35,7 @@ const DEFAULT_SKILLS: &[(&str, &str)] = &[
     ("사업계획서.md", include_str!("skills_default/proposal.md")),
     ("보고서.md", include_str!("skills_default/report.md")),
     ("문서-문체.md", include_str!("skills_default/style.md")),
+    ("한글-문서-편집.md", include_str!("skills_default/hwp_edit.md")),
 ];
 
 /// 스킬 폴더를 보장하고, 비어 있으면 기본 스킬을 기록한다.
@@ -42,16 +43,13 @@ fn ensure_dir_with_defaults(dir: &PathBuf) -> Result<(), String> {
     if !dir.exists() {
         std::fs::create_dir_all(dir).map_err(|e| format!("스킬 폴더 생성 실패: {}", e))?;
     }
-    // .md가 하나도 없으면 기본 스킬을 깐다(사용자가 지운 경우 강제로 되살리지는 않음).
-    let has_md = std::fs::read_dir(dir)
-        .map(|rd| {
-            rd.flatten()
-                .any(|e| e.path().extension().is_some_and(|x| x == "md"))
-        })
-        .unwrap_or(false);
-    if !has_md {
-        for (name, content) in DEFAULT_SKILLS {
-            let _ = std::fs::write(dir.join(name), content);
+    // 기본 스킬 중 '파일이 없는' 것만 보충한다. 폴더가 비어 처음 까는 경우는 물론,
+    // 앱 업데이트로 새 기본 스킬(예: 한글 문서 편집)이 추가됐을 때 기존 사용자에게도
+    // 전달된다. 이미 있는 파일(사용자가 편집한 것 포함)은 덮어쓰지 않는다.
+    for (name, content) in DEFAULT_SKILLS {
+        let path = dir.join(name);
+        if !path.exists() {
+            let _ = std::fs::write(&path, content);
         }
     }
     Ok(())

@@ -56,7 +56,7 @@ fn try_fix(bytes: &[u8]) -> Option<Vec<u8>> {
     }
 
     // 1) 섹션 스트림을 풀고 최상위 문단 LINE_SEG 위치를 수집한다.
-    let mut sections: Vec<(String, usize, Vec<u8>, Vec<Target>, i32)> = Vec::new();
+    let mut sections: Vec<SectionStream> = Vec::new();
     for path in section_paths {
         let sec_idx = section_index_from_path(&path)?;
         let raw = read_stream(&mut comp, &path)?;
@@ -152,6 +152,9 @@ pub(crate) struct Target {
     starts: Vec<usize>,
 }
 
+/// 섹션 스트림 작업 단위: (스트림 경로, 섹션 인덱스, 압축 해제 바이트, LINE_SEG 타깃, 본문 top).
+type SectionStream = (String, usize, Vec<u8>, Vec<Target>, i32);
+
 /// PAGE_DEF에서 본문 영역 원점(margin_top + margin_header)을 읽는다.
 fn read_body_top(data: &[u8]) -> i32 {
     let mut body_top = 0i32;
@@ -207,7 +210,7 @@ fn collect_targets(data: &[u8]) -> Vec<Target> {
 /// 같은 줄에 런이 여럿이면 최솟값(줄 윗변)을 쓴다.
 fn collect_render_line_y(
     core: &rhwp::DocumentCore,
-    sections: &[(String, usize, Vec<u8>, Vec<Target>, i32)],
+    sections: &[SectionStream],
 ) -> std::collections::HashMap<(usize, usize, usize), f64> {
     use std::collections::HashMap;
     // (sec, para) → 줄 시작 오프셋들(런을 줄에 배정할 기준).
@@ -390,6 +393,148 @@ mod tests {
         let orig_text = crate::ai::serialize::extract_all_text(&core).unwrap();
         let new_text = crate::ai::serialize::extract_all_text(&reloaded).unwrap();
         assert_eq!(orig_text, new_text);
+    }
+
+    /// [도구] 이미 생성된 연구노트 HWP의 '항목 표 위 빈 줄'을 압축해 캐노니컬하게 재저장한다
+    /// (파이프라인과 동일: compact + fix_linesegs). 한컴에서 첫 항목이 다음 페이지로 밀리는
+    /// 문제의 즉시 산출물용. 실행:
+    ///   HOP_IN=/abs/in.hwp HOP_OUT=/abs/out.hwp \
+    ///     cargo test --lib hwp_lineseg_fix::tests::compact_and_resave -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn compact_and_resave() {
+        let (Ok(inp), Ok(outp)) = (std::env::var("HOP_IN"), std::env::var("HOP_OUT")) else {
+            eprintln!("HOP_IN/HOP_OUT 미지정 — 건너뜀");
+            return;
+        };
+        let bytes = std::fs::read(&inp).expect("read in");
+        let mut core =
+            crate::state::editable_core_from_bytes(&bytes, "파싱 실패", "변환 실패").expect("load");
+        // (폐기) 빈 문단 압축 — 한컴 오피스가 손상으로 거부해 기본 OFF(HOP_COMPACT=1로만).
+        if std::env::var("HOP_COMPACT").as_deref() == Ok("1") {
+            let n_sec = core.document().sections.len();
+            for si in 0..n_sec {
+                let r = core
+                    .compact_leading_paras_before_tables_native(si)
+                    .expect("compact");
+                eprintln!("section {}: {}", si, r);
+            }
+        }
+        // 본문 영역 확장: 항목 구역(마지막)의 푸터/아래 여백을 줄여 항목 표가 들어갈 공간을
+        // 넓힌다(한컴은 머리말이 있는 항목 구역 첫 페이지에서 항목1 표를 다음 장으로 밀어냄).
+        // 표준 페이지 설정 변경뿐이라 한컴 오피스가 거부하지 않는다. env로 값 조정.
+        if let Ok(mf) = std::env::var("HOP_MARGIN_FOOTER") {
+            let sec = core.document().sections.len() - 1;
+            let mb = std::env::var("HOP_MARGIN_BOTTOM").unwrap_or_else(|_| "2834".into());
+            let json = format!(r#"{{"marginFooter":{},"marginBottom":{}}}"#, mf, mb);
+            let r = core.set_page_def_native(sec, &json).expect("page_def");
+            eprintln!("구역{} 여백 조정 {}: {}", sec, json, r);
+        }
+        // 내용 많은 항목(본문+중첩표)이 한 페이지를 넘으면 tac=true(인라인)라 분할 못 하고
+        // 잘리며 빈 페이지를 만든다. 항목 표를 '셀 단위 분할(pageBreak=1) + tac=false'로 바꿔
+        // 넘치는 본문 셀이 다음 페이지로 흐르게 한다(잘림·빈 페이지 없음). 목차 표에 이미 쓰는
+        // 안전한 설정이라 한컴이 거부하지 않는다.
+        if std::env::var("HOP_ENTRY_SPLIT").as_deref() == Ok("1") {
+            use rhwp::model::control::Control;
+            // 항목 표(6x3) 좌표 수집.
+            let mut locs: Vec<(usize, usize, usize)> = Vec::new();
+            for (si, s) in core.document().sections.iter().enumerate() {
+                for (pi, p) in s.paragraphs.iter().enumerate() {
+                    for (ci, c) in p.controls.iter().enumerate() {
+                        if matches!(c, Control::Table(t) if t.row_count == 6 && t.col_count == 3) {
+                            locs.push((si, pi, ci));
+                        }
+                    }
+                }
+            }
+            let n = locs.len();
+            for (si, pi, ci) in locs {
+                core.set_table_properties_native(
+                    si,
+                    pi,
+                    ci,
+                    r#"{"treatAsChar":false,"pageBreak":1,"textWrap":"TopAndBottom"}"#,
+                )
+                .expect("entry split props");
+            }
+            let _ = core.page_count();
+            eprintln!("항목 표 {}개 분할 가능 설정(tac=false, 셀단위 쪽나눔)", n);
+        }
+        // (실험) 목차 표를 페이지별 개별 표로 쪼개기 — 효과 없어 기본 OFF(HOP_RECHUNK=1로만 켬).
+        if std::env::var("HOP_RECHUNK").as_deref() == Ok("1") {
+            use rhwp::model::control::Control;
+            let rows_per_chunk: usize = std::env::var("HOP_TOCROWS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(14);
+            let mut found = None;
+            for (si, s) in core.document().sections.iter().enumerate() {
+                for (pi, p) in s.paragraphs.iter().enumerate() {
+                    for (ci, c) in p.controls.iter().enumerate() {
+                        if matches!(c, Control::Table(t) if t.row_count > 30) {
+                            found = Some((si, pi, ci));
+                        }
+                    }
+                }
+            }
+            if let Some((si, pi, ci)) = found {
+                let r = core
+                    .rechunk_toc_table_native(si, pi, ci, rows_per_chunk)
+                    .expect("rechunk");
+                eprintln!("목차 재청크 sec{} p{} ctrl{} ({}행/청크): {}", si, pi, ci, rows_per_chunk, r);
+            } else {
+                eprintln!("목차 표(행>30)를 찾지 못함 — 재청크 생략");
+            }
+        }
+        // (실험) 항목 구역을 앞 구역에 병합 — 효과 없어 기본 OFF(HOP_MERGE=1로만 켬).
+        if std::env::var("HOP_MERGE").as_deref() == Ok("1") {
+            let last = core.document().sections.len() - 1;
+            if last >= 1 {
+                let r = core.merge_section_into_previous_native(last).expect("merge");
+                eprintln!("merge section {} → {}: {}", last, last - 1, r);
+            }
+        }
+        // 그림 border 교정: 한컴에서 그림이 1/4로 축소되는 문제(border가 박스 크기로 잘못
+        // 들어감)를 원본 크기 기준으로 바로잡는다.
+        let fr = core.fix_picture_borders_native().expect("fix img borders");
+        eprintln!("그림 border 교정: {}", fr);
+
+        // 1차 저장 + lineseg 보정.
+        let fixed1 = fix_linesegs(core.export_hwp_native().expect("export"));
+
+        // 목차 쪽번호 재매김: 분할이 반영된 '정확한' 페이지네이션이 필요하므로, 1차 저장본을
+        // 다시 로드(재로드 시 셀 reflow로 분할이 페이지네이션에 반영)한 뒤 목차를 동기화한다.
+        let final_bytes = if std::env::var("HOP_SYNC_TOC").as_deref() == Ok("1") {
+            use rhwp::model::control::Control;
+            let mut core2 =
+                crate::state::editable_core_from_bytes(&fixed1, "재로드 파싱", "재로드 변환")
+                    .expect("reload");
+            let _ = core2.page_count();
+            let mut toc = None;
+            for (si, s) in core2.document().sections.iter().enumerate() {
+                for (pi, p) in s.paragraphs.iter().enumerate() {
+                    for (ci, c) in p.controls.iter().enumerate() {
+                        if matches!(c, Control::Table(t) if t.row_count > 30) {
+                            toc = Some((si, pi, ci));
+                        }
+                    }
+                }
+            }
+            if let Some((si, pi, ci)) = toc {
+                let r = core2
+                    .sync_toc_page_numbers_native(si, pi, ci)
+                    .expect("sync toc");
+                eprintln!("목차 쪽번호 재매김 sec{} p{} ctrl{}: {}", si, pi, ci, r);
+            } else {
+                eprintln!("목차 표(행>30) 없음 — 쪽번호 재매김 생략");
+            }
+            fix_linesegs(core2.export_hwp_native().expect("export2"))
+        } else {
+            fixed1
+        };
+
+        std::fs::write(&outp, &final_bytes).expect("write out");
+        eprintln!("저장: {} ({} bytes)", outp, final_bytes.len());
     }
 
     /// 한 쪽짜리 문서(누적==페이지 상대)는 사실상 변화가 없어야 한다(값 동등 보정).

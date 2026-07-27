@@ -25,9 +25,17 @@ import {
 import type { AiBridgeApi, AiImageInput } from '@/core/tauri-bridge';
 import {
   applyActionScript,
+  applyCoverFill,
   buildFormFillEdits,
+  buildTocRegenEdits,
+  entryRecordToFormFillEntry,
+  parseEntrySelection,
   parseCellTarget,
   parseParagraphTarget,
+  pickCoverHeaderTable,
+  pickCoverTable,
+  pickEntryFormTable,
+  pickTocTable,
   type ApplyResult,
   type ChangedPara,
   type FormSourceTable,
@@ -186,6 +194,24 @@ interface Conversation {
   messages: StoredMessage[];
 }
 
+/**
+ * 드롭 위치가 패널(rect, CSS 픽셀)에 들어오는지 — 물리/논리 픽셀 해석 모두에 관대하게 본다
+ * (F-157aa77d). Tauri v2 drag-drop의 position이 버전에 따라 물리(PhysicalPosition)일 수도
+ * 논리일 수도 있어, 원본 좌표와 dpr로 나눈 좌표 중 하나라도 rect에 들면 참으로 본다 —
+ * dpr=2(Retina)에서 좌표가 절반으로 계산돼 드롭이 무시되던 문제를 없앤다.
+ */
+export function dropPointOverRect(
+  pos: { x: number; y: number } | undefined,
+  rect: { left: number; right: number; top: number; bottom: number },
+  dpr: number,
+): boolean {
+  if (!pos) return false;
+  const d = dpr > 0 ? dpr : 1;
+  const inRect = (x: number, y: number): boolean =>
+    x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+  return inRect(pos.x, pos.y) || inRect(pos.x / d, pos.y / d);
+}
+
 export class AgentSidebar {
   private readonly panel: HTMLElement;
   private readonly tabBar: HTMLElement;
@@ -204,8 +230,7 @@ export class AgentSidebar {
   private readonly cancelBtn: HTMLButtonElement;
   private readonly statusArea: HTMLElement;
   private readonly chipsArea: HTMLElement;
-  private readonly imageInput: HTMLInputElement;
-  private readonly docInput: HTMLInputElement;
+  private readonly fileInput: HTMLInputElement;
   private readonly settingsPanel: HTMLElement;
   private readonly settingsModal: HTMLElement;
   private readonly menu: HTMLElement;
@@ -287,8 +312,7 @@ export class AgentSidebar {
     this.cancelBtn = built.cancelBtn;
     this.statusArea = built.statusArea;
     this.chipsArea = built.chipsArea;
-    this.imageInput = built.imageInput;
-    this.docInput = built.docInput;
+    this.fileInput = built.fileInput;
     this.settingsPanel = built.settingsPanel;
     this.settingsModal = built.settingsModal;
     this.menu = built.menu;
@@ -316,10 +340,8 @@ export class AgentSidebar {
     built.historyBtn.addEventListener('click', () => this.toggleHistory());
     built.settingsBtn.addEventListener('click', () => this.toggleMenu());
     built.settingsClose.addEventListener('click', () => this.toggleSettings(false));
-    built.attachImageBtn.addEventListener('click', () => this.imageInput.click());
-    built.attachDocBtn.addEventListener('click', () => this.docInput.click());
-    this.imageInput.addEventListener('change', () => void this.onImagePicked());
-    this.docInput.addEventListener('change', () => void this.onDocPicked());
+    built.attachBtn.addEventListener('click', () => void this.pickFilesViaDialog());
+    this.fileInput.addEventListener('change', () => void this.onFilesPicked());
     this.providerSelect.addEventListener('change', () => void this.onProviderChange());
     this.modelSelect.addEventListener('change', () => this.updateModelVisibility());
     built.keySaveBtn.addEventListener('click', () => void this.saveKey());
@@ -456,14 +478,8 @@ export class AgentSidebar {
       return; // 웹/테스트 런타임 — DOM drop 폴백 사용.
     }
 
-    const overPanel = (pos: { x: number; y: number } | undefined): boolean => {
-      if (!pos) return false;
-      const dpr = window.devicePixelRatio || 1;
-      const rect = this.panel.getBoundingClientRect();
-      const x = pos.x / dpr;
-      const y = pos.y / dpr;
-      return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
-    };
+    const overPanel = (pos: { x: number; y: number } | undefined): boolean =>
+      dropPointOverRect(pos, this.panel.getBoundingClientRect(), window.devicePixelRatio || 1);
 
     await webview.listen('tauri://drag-enter', (ev) => {
       const payload = ev.payload as { position?: { x: number; y: number } };
@@ -546,11 +562,15 @@ export class AgentSidebar {
   toggle(open?: boolean): void {
     const show = open ?? !this.panel.classList.contains('open');
     this.panel.classList.toggle('open', show);
+    // 패널은 fixed 오버레이(right:0, 380px)라 열리면 문서 스크롤바를 가린다. 본문 영역
+    // (#studio-root)을 패널 폭만큼 줄여 스크롤바가 패널 왼쪽에 보이게 한다.
+    document.body.classList.toggle('hop-ai-open', show);
   }
 
   dispose(): void {
     this.unsubscribe?.();
     if (this.copyHandler) document.removeEventListener('keydown', this.copyHandler, true);
+    document.body.classList.remove('hop-ai-open');
     this.clearPreview();
     this.panel.remove();
   }
@@ -829,6 +849,17 @@ export class AgentSidebar {
     if (!prompt) {
       this.setStatus('지시를 입력하세요.', 'warn');
       return;
+    }
+    // 자동 라우팅(F-4bdf23a4): 연구노트형 docx가 첨부돼 있으면 자연어 명령이어도 LLM 대신
+    // 결정적 양식 변환 경로로 보낸다('양식 항목 추가' 칩을 몰라도 됨). 연구노트 구조가 아니면
+    // runDocxFormFill이 false를 반환하고 아래 기존 LLM 편집 경로로 폴백한다(일반 편집 영향 없음).
+    if (this.session.state !== 'REQUESTING') {
+      const docxAtt = this.attachments.find((a) => a.path && /\.(docx|pdf)$/i.test(a.path));
+      const docId0 = docxAtt?.path ? this.deps.bridge.currentDocId() : null;
+      if (docxAtt?.path && docId0) {
+        const handled = await this.runDocxFormFill(docId0, docxAtt.path);
+        if (handled) return;
+      }
     }
     const guard = this.checkSendGuards();
     if (!guard) return;
@@ -1384,6 +1415,18 @@ export class AgentSidebar {
    */
   private async runFormFill(): Promise<void> {
     if (this.session.state === 'REQUESTING') return;
+    // 연구노트형 docx 첨부가 있으면 LLM 없는 결정적 일괄 변환 경로(F-beb35fbb). 구조가
+    // 연구노트가 아니면 runDocxFormFill이 false를 반환하고 아래 기존 AI 경로로 폴백한다.
+    const docxAtt = this.attachments.find((a) => a.path && /\.(docx|pdf)$/i.test(a.path));
+    if (docxAtt?.path) {
+      const docId0 = this.deps.bridge.currentDocId();
+      if (!docId0) {
+        this.setStatus('먼저 문서를 여세요.', 'warn');
+        return;
+      }
+      const handled = await this.runDocxFormFill(docId0, docxAtt.path);
+      if (handled) return;
+    }
     const guard = this.checkSendGuards();
     if (!guard) return;
     const { docId, provider, baseUrl } = guard;
@@ -1463,6 +1506,214 @@ export class AgentSidebar {
       this.setActiveStatus(`항목 ${result.applied}개 미리 추가${note} — 승인 또는 거절하세요.`, tone);
     } catch (error) {
       this.setActiveStatus(`양식 이어쓰기 실패: ${String(error)}`, 'error');
+    } finally {
+      this.setRequesting(false);
+    }
+  }
+
+  /**
+   * 연구노트 docx → 양식 일괄 변환(LLM 없음, F-beb35fbb). docx를 구조로 파싱해 각 항목을
+   * 양식 항목으로 매핑하고, 엔트리 양식 표를 항목마다 결정적 복제·채운다(내용은 docx에서
+   * 직접). 반환 true=처리함(성공 또는 명시적 거부), false=연구노트 구조가 아니라 폴백해야 함.
+   */
+  private async runDocxFormFill(docId: string, docxPath: string): Promise<boolean> {
+    let doc;
+    const isPdf = /\.pdf$/i.test(docxPath);
+    try {
+      // 확장자로 분기: PDF는 텍스트 줄 패턴, docx는 표 구조로 동일 스키마를 만든다.
+      doc = isPdf
+        ? await this.deps.bridge.aiParseResearchNotePdf(docxPath)
+        : await this.deps.bridge.aiParseResearchNoteDocx(docxPath);
+    } catch (e) {
+      // 연구노트형 문서가 아님 → 호출 측이 기존 AI 경로로 폴백한다.
+      this.log(`${isPdf ? 'PDF' : 'docx'} 구조 파싱 실패 → AI 경로로 폴백: ${String(e)}`);
+      return false;
+    }
+    const allEntries = doc.entries ?? [];
+    // 부분 선택(F-docx-select): 지시문에 "3~7번"·"처음 5개" 같은 선택이 있으면 그 항목만
+    // 변환한다. 선택이 없으면 전체. 목차도 선택분에 맞춰 거른다(원래 일련번호 보존).
+    const promptText = this.promptInput.value.trim();
+    const selection = parseEntrySelection(promptText, allEntries.length);
+    const entries = selection
+      ? allEntries.filter((_, i) => selection.has(i + 1))
+      : allEntries;
+    const selectedToc = selection
+      ? (doc.toc ?? []).filter((_, i) => selection.has(i + 1))
+      : (doc.toc ?? []);
+
+    this.requestMode = 'form_fill';
+    const userText =
+      promptText || '첨부한 연구노트 docx의 항목들을 이 양식으로 변환해줘';
+    if (selection) {
+      this.log(`부분 선택: 전체 ${allEntries.length}개 중 ${entries.length}개만 변환 (${[...selection].sort((a, b) => a - b).join(',')}번)`);
+    }
+    this.appendUserTurn(userText, this.attachments);
+    this.recordMessage('user', userText);
+    this.active = this.appendAssistantTurn();
+    this.promptInput.value = '';
+    this.attachments = [];
+    this.setRequesting(true);
+    // 세션 머신 전이(F-c63c3a91): accept()/reject()는 DIFF_PENDING에서만 동작하므로,
+    // 결정적 경로도 IDLE→REQUESTING(startRequest)→DIFF_PENDING(onReady)로 전이시켜야
+    // 승인이 문서에 반영된다. 미확정 Diff가 있으면 먼저 정리한다.
+    if (this.session.isPending) this.session.cancel();
+    this.session.startRequest();
+    try {
+      // AC-unwanted: 항목 0개면 거부(문서 변경 없음). parse가 항목을 못 찾으면 Err를 던지므로
+      // 여기 도달하면 보통 entries>0이지만, 방어적으로 한 번 더 본다.
+      if (!entries.length) {
+        const reason = 'docx에서 연구노트 항목을 찾지 못했습니다 — 문서를 변경하지 않았습니다.';
+        if (this.active) this.active.msgEl.textContent = reason;
+        this.recordMessage('assistant', reason);
+        this.setActiveStatus(reason, 'warn');
+        this.session.onFailed();
+        return true;
+      }
+      const context = await this.deps.bridge.aiGetDocumentContext(docId, false, null, true);
+      this.context = context;
+      const tables = (context.document_metadata.form_tables ?? []) as FormSourceTable[];
+      const source = pickEntryFormTable(tables);
+      if (!source) {
+        // AC-unwanted: 엔트리 양식 표가 없으면 거부 — 표를 새로 그리지 않는다(no compose).
+        const reason =
+          '엔트리 양식 표(제목·기록자·일자 라벨을 가진 반복 양식)를 찾지 못했습니다 — 문서를 변경하지 않았습니다.';
+        if (this.active) this.active.msgEl.textContent = reason;
+        this.recordMessage('assistant', reason);
+        this.setActiveStatus(reason, 'warn');
+        this.session.onFailed();
+        return true;
+      }
+      const anchor = lastBodyParagraphId(context);
+      if (!anchor) {
+        const reason = '새 항목을 넣을 본문 문단을 찾지 못했습니다.';
+        if (this.active) this.active.msgEl.textContent = reason;
+        this.setActiveStatus(reason, 'warn');
+        this.session.onFailed();
+        return true;
+      }
+      this.log(
+        `docx 일괄 변환: 항목 ${entries.length}개, 엔트리 양식 sec[${source.section}].p[${source.paragraph}].tbl[${source.control_index}] (${source.rows}×${source.cols})`,
+      );
+      const fillEntries = entries.map(entryRecordToFormFillEntry);
+      // page_break=true(기본): 항목마다 새 페이지에서 시작(1항목=1페이지). applyActionScript의
+      // clone_table 경로가 쪽나누기 후 고아 빈 문단을 삭제하므로 항목 사이 빈 페이지는 없다(F-32a1a7d2).
+      const plans = buildFormFillEdits(source, fillEntries, anchor);
+      // 목차 재생성(F-9a5045da): 파싱된 목차로 HWP 목차 표를 '하나의 표'로 재구성한다(정상 HWP
+      // 형태 — 표에 "쪽 경계에서 나눔(행 단위)"이 켜져 있어 한글이 페이지 경계에서 자동 분할).
+      // 임의 페이지 청킹은 제거. 한 표 자동분할이 한컴에서 안 풀리면 rhwp 직렬화 과제로 둔다.
+      const tocTable = pickTocTable(tables);
+      const tocItems = selectedToc.map((t, i) => ({ no: t.no || String(i + 1), title: t.title }));
+      const tocEdits = buildTocRegenEdits(tocTable, tocItems);
+      const script: ActionScript = { edits: [...plans.map((p) => p.edit), ...tocEdits] };
+      const skips = plans.flatMap((p) => p.skipped);
+      if (tocEdits.length) this.log(`목차 재생성: ${tocItems.length}개 항목으로 목차 표 재구성`);
+      if (skips.length) {
+        this.log(`셀 매핑 건너뜀 ${skips.length}건: ${skips.map((s) => `${s.label}(${s.reason})`).join(' / ')}`);
+      }
+
+      if (!this.snapshotDocument()) {
+        this.setActiveStatus('이 환경에서는 양식 변환을 미리 적용할 수 없습니다.', 'warn');
+        this.session.onFailed();
+        return true;
+      }
+      const result = applyActionScript(this.deps.bridge, script, [], this.compiledTheme);
+      // 표지 채움(F-cover-fill): docx 표지 메타(관리번호·기관/과제 정보·기록자 명단)를
+      // HWP 표지 표에 직접 채운다. 표지 표가 없거나 cover 미추출이면 no-op. snapshot 안.
+      if (doc.cover) {
+        const coverRes = applyCoverFill(
+          this.deps.bridge as unknown as WasmEditing,
+          pickCoverTable(tables),
+          pickCoverHeaderTable(tables),
+          doc.cover,
+        );
+        if (coverRes.filled > 0) this.log(`표지 채움: ${coverRes.filled}개 칸 갱신(기록자 ${doc.cover.recorders.length}명)`);
+        if (coverRes.skipped.length) {
+          this.log(`표지 건너뜀 ${coverRes.skipped.length}건: ${coverRes.skipped.map((s) => `${s.label}(${s.reason})`).join(' / ')}`);
+        }
+      }
+      // 목차 표를 자유배치(treatAsChar=false) + 행 단위 쪽나눔(pageBreak=2) + 위아래 배치로 —
+      // 46행이 한 페이지를 넘으면 다음 페이지로 행 경계에서 이어진다(F-form-fill-page-layout).
+      // 핵심: 글자처럼취급(treatAsChar=true) 표는 인라인이라 페이지 경계에서 안 나뉘고 클립되므로
+      // treatAsChar=false 가 필수다(검증: TAC=true → 1페이지 클립, false → 3페이지 흐름).
+      // snapshot 안이라 거절 시 복원된다.
+      if (tocTable && tocEdits.length) {
+        try {
+          (this.deps.bridge as unknown as WasmEditing).setTableProperties?.(
+            tocTable.section,
+            tocTable.paragraph,
+            tocTable.control_index,
+            { pageBreak: 2, treatAsChar: false, textWrap: 'TopAndBottom' },
+          );
+        } catch {
+          /* 표 속성 설정 실패는 무시(목차 내용은 정상) */
+        }
+      }
+      // 표 복제 시 표 뒤에 남는 빈 문단이 페이지를 가득 채운 표 다음으로 흘러 한컴에서
+      // 빈 페이지를 만든다(hop 뷰어는 흡수, 한컴은 빈 페이지 표시 — 고객은 한컴으로 봄).
+      // 다음이 쪽 나누기라 불필요하므로 제거한다(검증: 92→50쪽, 표 전부 보존). snapshot 안.
+      {
+        const sections = new Set<number>([source.section]);
+        const m = /sec\[(\d+)\]/.exec(anchor);
+        if (m) sections.add(Number(m[1]));
+        const obridge = this.deps.bridge as unknown as WasmEditing;
+        let removedTotal = 0;
+        for (const s of sections) {
+          try {
+            removedTotal += obridge.removeOrphanParasBeforePageBreaks?.(s)?.removed ?? 0;
+          } catch {
+            /* 정리 실패는 무시(내용은 정상) */
+          }
+        }
+        if (removedTotal > 0) this.log(`빈 페이지 제거: 표 뒤 빈 문단 ${removedTotal}개 정리(한컴 빈 페이지 방지)`);
+      }
+      // 원본 양식(샘플) 표 제거: 항목마다 복제하므로 원본은 빈 샘플로 남는다(첫 항목 앞 페이지).
+      // 그 표 + 바로 뒤 쪽 나누기를 제거해 첫 항목이 첫 페이지에서 시작하게 한다. 복제는
+      // 원본보다 뒤(높은 문단 인덱스)에 삽입되므로 source 좌표는 그대로 유효하다. snapshot 안.
+      try {
+        const r = (this.deps.bridge as unknown as WasmEditing).removeSourceFormTable?.(
+          source.section,
+          source.paragraph,
+          source.control_index,
+        );
+        if (r) this.log('원본 빈 양식 표 제거(첫 항목이 첫 페이지에서 시작)');
+      } catch {
+        /* 원본 표 제거 실패는 무시(항목 내용은 정상) */
+      }
+      // 구역 끝 '마지막 표 뒤' 빈 문단 제거 — 페이지를 꽉 채운 마지막 항목 표 뒤 빈 줄이
+      // 다음 페이지로 밀려 문서 끝에 빈 페이지가 남는 것을 막는다(2026-07 실측). snapshot 안.
+      try {
+        const t = (this.deps.bridge as unknown as WasmEditing).trimTrailingParasAfterLastTable?.(
+          source.section,
+        );
+        if (t && t.removed > 0) this.log(`문서 끝 빈 문단 ${t.removed}개 정리(끝 빈 페이지 방지)`);
+      } catch {
+        /* 정리 실패는 무시(내용은 정상) */
+      }
+      // NOTE: 빈 선행 문단 압축(compactLeadingParasBeforeTables)은 첫 항목 밀림을 못 고쳤고,
+      // DocInfo에 글자모양을 추가해 엄격한 한컴 오피스(윈도우)가 '파일 손상'으로 거부하게 만들어
+      // 제거했다. 첫 항목 밀림은 removeSourceFormTable의 '첫 표 흡수'(absorbedFirstTable)로 해결.
+      this.reflowAndRender();
+      this.applied = result;
+      this.pendingScript = script;
+      this.rejectedEdits = new Set();
+      // REQUESTING→DIFF_PENDING: 이제 accept()/reject()가 유효하다(F-c63c3a91).
+      if (!this.session.onReady()) return true;
+      this.renderDiff(script);
+      this.renderDecisionBar(script, result.changed);
+      this.setPreviewEnabled(true);
+      const summary =
+        `연구노트 ${entries.length}개 항목을 양식으로 변환해 추가했습니다(미리보기).` +
+        (tocEdits.length ? ` 목차도 ${tocItems.length}개로 재구성했습니다.` : '');
+      if (this.active) this.active.msgEl.textContent = summary;
+      this.recordMessage('assistant', summary);
+      const note = this.skipNote(result) + (skips.length ? ` · 셀 ${skips.length}건 미해석` : '');
+      const tone = result.applied === 0 ? 'warn' : 'info';
+      this.setActiveStatus(`항목 ${result.applied}개 미리 추가${note} — 승인 또는 거절하세요.`, tone);
+      return true;
+    } catch (error) {
+      this.session.onFailed();
+      this.setActiveStatus(`docx 일괄 변환 실패: ${String(error)}`, 'error');
+      return true;
     } finally {
       this.setRequesting(false);
     }
@@ -1744,10 +1995,14 @@ export class AgentSidebar {
 
   // ── 첨부 ─────────────────────────────────────────────────────
 
-  private async onImagePicked(): Promise<void> {
-    const files = Array.from(this.imageInput.files ?? []);
-    for (const file of files) await this.addImageFile(file);
-    this.imageInput.value = '';
+  /** 이미지·문서 공용 파일 입력에서 종류를 판별해 첨부한다(웹/테스트 폴백 경로). */
+  private async onFilesPicked(): Promise<void> {
+    const files = Array.from(this.fileInput.files ?? []);
+    for (const file of files) {
+      if (file.type.startsWith('image/')) await this.addImageFile(file);
+      else await this.addPickedDoc(file);
+    }
+    this.fileInput.value = '';
   }
 
   private async addPickedDoc(file: File): Promise<void> {
@@ -1759,10 +2014,33 @@ export class AgentSidebar {
     }
   }
 
-  private async onDocPicked(): Promise<void> {
-    const files = Array.from(this.docInput.files ?? []);
-    for (const file of files) await this.addPickedDoc(file);
-    this.docInput.value = '';
+  /**
+   * 첨부(F-157aa77d): Tauri 네이티브 open 다이얼로그로 파일 경로를 받아 attachPaths로
+   * 첨부한다 — 경로가 있어 이미지는 물론 docx/pdf/hwp/hwpx도 추출·첨부된다(파일 입력의
+   * '경로 없음' 거부 회피). Tauri 런타임이 아니면(웹/테스트) HTML 파일 입력으로 폴백한다.
+   */
+  private async pickFilesViaDialog(): Promise<void> {
+    try {
+      const { open } = await import('@tauri-apps/plugin-dialog');
+      const selected = await open({
+        multiple: true,
+        filters: [
+          {
+            name: '이미지·문서',
+            extensions: [
+              'png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp',
+              'pdf', 'hwp', 'hwpx', 'docx', 'txt', 'md', 'markdown', 'csv', 'json', 'html', 'htm', 'xml',
+            ],
+          },
+        ],
+      });
+      if (selected == null) return; // 사용자가 취소
+      const paths = Array.isArray(selected) ? selected : [selected];
+      await this.attachPaths(paths);
+    } catch {
+      // 웹/테스트 런타임 — 네이티브 다이얼로그 불가 → 파일 입력 폴백.
+      this.fileInput.click();
+    }
   }
 
   private async onPaste(event: ClipboardEvent): Promise<void> {
@@ -2655,10 +2933,8 @@ interface PanelParts {
   cancelBtn: HTMLButtonElement;
   statusArea: HTMLElement;
   chipsArea: HTMLElement;
-  imageInput: HTMLInputElement;
-  docInput: HTMLInputElement;
-  attachImageBtn: HTMLButtonElement;
-  attachDocBtn: HTMLButtonElement;
+  fileInput: HTMLInputElement;
+  attachBtn: HTMLButtonElement;
   settingsPanel: HTMLElement;
   keyRow: HTMLElement;
   keyInput: HTMLInputElement;
@@ -2806,19 +3082,16 @@ function buildPanel(): PanelParts {
   promptInput.rows = 3;
   promptInput.placeholder = '무엇을 바꿀까요?  (예: 표의 총 사업비를 10억으로)';
 
-  const imageInput = inputEl('hop-ai-image-input hop-ai-hidden', 'file', '');
-  imageInput.accept = 'image/*';
-  imageInput.multiple = true;
-  const docInput = inputEl('hop-ai-doc-input hop-ai-hidden', 'file', '');
-  docInput.accept = '.pdf,.txt,.md,.markdown,.csv,.json,.html,.xml';
-  docInput.multiple = true;
+  // 이미지·문서 공용 파일 입력(웹/테스트 폴백용). 네이티브 런타임에서는
+  // pickFilesViaDialog가 경로 기반으로 첨부하므로 이 입력은 폴백 경로에서만 쓰인다.
+  const fileInput = inputEl('hop-ai-file-input hop-ai-hidden', 'file', '');
+  fileInput.accept = 'image/*,.pdf,.hwp,.hwpx,.docx,.txt,.md,.markdown,.csv,.json,.html,.htm,.xml';
+  fileInput.multiple = true;
 
-  const attachImageBtn = btn('hop-ai-attach-image', '🖼');
-  attachImageBtn.title = '이미지 첨부';
-  const attachDocBtn = btn('hop-ai-attach-doc', '📎');
-  attachDocBtn.title = '문서 첨부 (텍스트)';
+  const attachBtn = btn('hop-ai-attach', '📎');
+  attachBtn.title = '이미지·문서 첨부';
   const composerLeft = el('div', 'hop-ai-composer-left');
-  composerLeft.append(attachDocBtn, attachImageBtn);
+  composerLeft.append(attachBtn);
 
   const providerSelect = document.createElement('select');
   providerSelect.className = 'hop-ai-provider';
@@ -2837,7 +3110,7 @@ function buildPanel(): PanelParts {
 
   const statusArea = el('div', 'hop-ai-status');
   const composer = el('div', 'hop-ai-composer');
-  composer.append(chipsArea, quickbar, promptInput, composerBar, statusArea, imageInput, docInput);
+  composer.append(chipsArea, quickbar, promptInput, composerBar, statusArea, fileInput);
 
   // 컴포저는 본문 영역에 두고, 빈 대화면 상단/대화 시작 시 하단으로 CSS order로 이동.
   const body = el('div', 'hop-ai-body');
@@ -2871,10 +3144,8 @@ function buildPanel(): PanelParts {
     cancelBtn,
     statusArea,
     chipsArea,
-    imageInput,
-    docInput,
-    attachImageBtn,
-    attachDocBtn,
+    fileInput,
+    attachBtn,
     settingsPanel,
     keyRow,
     keyInput,

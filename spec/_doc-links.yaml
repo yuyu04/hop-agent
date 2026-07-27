@@ -1,0 +1,8 @@
+# Cladding · Tier C — generated doc→spec / doc→doc link index (`clad sync`). Do not edit by hand.
+# Source of truth is the docs themselves; DOC_LINK_INTEGRITY validates resolution.
+schema: "0.1"
+docs:
+  "docs/DEVELOPMENT.md":
+    doc_links: ["docs/architecture/UPSTREAM.md", "docs/operations/DESKTOP_RELEASE.md"]
+  "docs/operations/DESKTOP_RELEASE.md":
+    doc_links: ["docs/architecture/UPSTREAM.md"]

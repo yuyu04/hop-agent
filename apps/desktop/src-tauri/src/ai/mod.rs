@@ -9,11 +9,13 @@ pub mod adapters;
 pub mod docx;
 #[cfg(test)]
 mod live_smoke;
+pub mod pdf_figures;
 pub mod pdf_images;
 pub mod pdf_pages;
 pub mod pdf_pdfium;
 #[cfg(target_os = "macos")]
 pub mod pdf_render;
+pub mod pdf_structure;
 pub mod provider;
 pub mod schema;
 pub mod secrets;
@@ -282,6 +284,34 @@ fn extract_text_blocking(path: &str) -> Result<String, String> {
         return Err("PDF/HWP/HWPX/DOCX 파일만 텍스트 추출을 지원합니다.".to_string());
     };
     Ok(truncate_chars(text, MAX_ATTACH_CHARS))
+}
+
+/// 연구노트형 docx를 구조(항목 + 목차)로 파싱해 JSON으로 반환한다(F-beb35fbb).
+/// docx→HWP 일괄 변환의 결정적 경로: 내용은 여기서 추출되고 LLM은 관여하지 않는다.
+/// 항목을 못 찾으면 parse_docx_structure가 사유와 함께 Err를 반환한다(빈 결과 위장 금지).
+#[tauri::command]
+pub async fn ai_parse_research_note_docx(path: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let bytes = std::fs::read(&path).map_err(|e| format!("파일을 읽을 수 없습니다: {}", e))?;
+        let doc = docx::parse_docx_structure(&bytes)?;
+        serde_json::to_string(&doc).map_err(|e| format!("연구노트 구조 직렬화 실패: {}", e))
+    })
+    .await
+    .map_err(|e| format!("docx 구조 파싱 태스크 실패: {}", e))?
+}
+
+/// 연구노트형 PDF를 구조(항목 + 목차)로 파싱해 JSON으로 반환한다(docx와 동일 스키마).
+/// PDF에는 표 구조가 없어 추출 텍스트의 줄 패턴으로 항목 경계를 복원하고, 표·그림은 해당
+/// 페이지를 렌더해 그 영역만 잘라 항목에 인라인 이미지로 붙인다(스크린샷 방식, pdf_figures).
+/// 항목을 못 찾으면 사유와 함께 Err — 호출 측이 LLM 경로로 폴백한다.
+#[tauri::command]
+pub async fn ai_parse_research_note_pdf(path: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let doc = pdf_structure::parse_pdf_structure_with_figures(&path)?;
+        serde_json::to_string(&doc).map_err(|e| format!("연구노트 구조 직렬화 실패: {}", e))
+    })
+    .await
+    .map_err(|e| format!("PDF 구조 파싱 태스크 실패: {}", e))?
 }
 
 /// 다운로드 이미지 최대 크기(바이트). 너무 큰 이미지는 거절한다.

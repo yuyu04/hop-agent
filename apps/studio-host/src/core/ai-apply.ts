@@ -6,7 +6,7 @@
  * 여기서는 순수하게 편집 변환만 수행해 테스트 가능하게 한다.
  */
 
-import type { ActionScript, Edit } from './ai-bridge';
+import type { ActionScript, Edit, ResearchNoteCover, ResearchNoteEntry } from './ai-bridge';
 import { DEFAULT_COMPILED_THEME, type CompiledTheme } from './doc-theme';
 
 /** `applyActionScript`가 의존하는 최소 WASM 편집 표면(WasmBridge가 구조적으로 충족). */
@@ -186,7 +186,7 @@ export interface WasmEditing {
     parentPara: number,
     controlIdx: number,
     pageHint?: number,
-  ): Array<{ cellIdx: number; col: number; row: number; colSpan: number }>;
+  ): Array<{ cellIdx: number; col: number; row: number; colSpan: number; w?: number; h?: number }>;
   setCellProperties?(
     sec: number,
     parentPara: number,
@@ -224,13 +224,42 @@ export interface WasmEditing {
     endOffset: number,
     propsJson: string,
   ): string;
-  /** 표 속성(쪽 나눔 등). pageBreak: 0=없음, 1=셀 단위, 2=행 단위. */
+  /**
+   * 표 속성(쪽 나눔 등). pageBreak: 0=없음, 1=셀 단위, 2=행 단위.
+   * treatAsChar=false + pageBreak=2 라야 표가 페이지 경계에서 행 단위로 분할된다
+   * (글자처럼취급 표는 인라인이라 안 나뉘고 클립됨 — 목차 다페이지 분할에 필요).
+   */
   setTableProperties?(
     sec: number,
     parentPara: number,
     controlIdx: number,
-    props: { pageBreak?: number },
+    props: { pageBreak?: number; treatAsChar?: boolean; textWrap?: string },
   ): { ok: boolean };
+  /**
+   * 표 문단과 쪽 나누기 문단 사이에 낀 빈 문단을 제거한다(한컴 빈 페이지 방지).
+   * 양식 이어쓰기에서 표 복제 시 표 뒤에 남는 빈 문단이 페이지를 가득 채운 표 다음으로
+   * 흘러 한컴에서 빈 페이지를 만든다 — 다음이 쪽 나누기라 불필요하므로 제거한다.
+   */
+  removeOrphanParasBeforePageBreaks?(sec: number): { removed: number };
+  /**
+   * 복제 원본인 빈 양식(샘플) 표 + 바로 뒤 쪽 나누기를 제거한다. 양식 이어쓰기는 원본
+   * 표를 항목마다 복제하므로 원본이 빈 샘플로 남는다(보통 첫 항목 앞 페이지). 그 표만
+   * 지우면(문단은 구역정의/머리말 보존) 뒤 쪽 나누기가 첫 항목을 다음 페이지로 밀고 빈
+   * 페이지가 남으므로, 쪽 나누기도 함께 제거해 첫 항목이 첫 페이지에서 시작하게 한다.
+   */
+  removeSourceFormTable?(sec: number, para: number, controlIdx: number): { removedBreak: boolean };
+  /**
+   * 구역 끝 '마지막 표 뒤'에 남은 빈 문단들을 제거한다(문서 끝 빈 페이지 방지). 마지막
+   * 항목 표가 페이지를 거의 꽉 채우므로 뒤에 남은 빈 문단 한 줄이 다음 페이지로 밀려
+   * 끝 빈 페이지가 된다. 표 뒤에 보이는 내용이 있으면 아무것도 지우지 않는다.
+   */
+  trimTrailingParasAfterLastTable?(sec: number): { removed: number };
+  /**
+   * 항목 표 '바로 위'의 빈 선행 문단(구역/쪽 나눔 문단)을 최소 높이로 압축한다. 항목 표가
+   * 페이지를 거의 꽉 채워 표 위 한 줄(~20px)이 한컴에서 표를 다음 페이지로 밀어내는 문제를
+   * 막는다 — 빈 줄을 접어 표가 페이지 상단 가까이서 시작하게 한다. 반환: 압축한 문단 수.
+   */
+  compactLeadingParasBeforeTables?(sec: number): { compacted: number };
   /**
    * 컨트롤(표·그림·도형)을 내부 클립보드에 복제한다(F-220afd). 같은 문서 내 복제이므로
    * doc-로컬 ID(border_fill/char_shape/para_shape)가 그대로 유효해 구조가 100% 보존된다.
@@ -257,6 +286,32 @@ export interface WasmEditing {
     extension: string,
     description?: string,
   ): { ok: boolean; paraIdx: number; controlIdx: number };
+  /** 표 셀 안에 그림을 넣는다(F-5dc6297e/Phase B). 선택 — 없으면 그림 삽입을 생략. */
+  insertPictureInCell?(
+    sec: number,
+    parentPara: number,
+    controlIdx: number,
+    cellIdx: number,
+    cellParaIdx: number,
+    imageData: Uint8Array,
+    width: number,
+    height: number,
+    naturalWidthPx: number,
+    naturalHeightPx: number,
+    extension: string,
+    description?: string,
+  ): { ok: boolean };
+  /** 표 셀 안에 중첩 표를 만들어 넣는다(본문 데이터 표). cellTextsJson=셀 텍스트 JSON 배열. */
+  createTableInCell?(
+    sec: number,
+    parentPara: number,
+    controlIdx: number,
+    cellIdx: number,
+    cellParaIdx: number,
+    rows: number,
+    cols: number,
+    cellTextsJson: string,
+  ): { ok: boolean };
 }
 
 /** 문서에 삽입할 이미지(첨부에서 디코드해 호출 측이 제공). */
@@ -685,7 +740,15 @@ function applyOne(
       wasm.splitParagraph(sec, para, length);
       if (isCloneTableEdit(edit)) {
         cloneTableAt(wasm, sec, para + 1, edit);
-      } else if (isTableEdit(edit)) {
+        // 복제 표를 새 페이지에서 시작시킨다(1항목=1페이지, 빈 페이지 없음 — F-32a1a7d2).
+        // 쪽나누기는 표 '앞' 앵커 문단 끝(para,length)에 넣는다: insert_page_break_native는
+        // 대상 문단을 split_at해 그 '뒤'에 쪽나누기 빈 문단을 만들고 컨트롤(표)은 원본에 남긴다.
+        // 따라서 표 문단(para+1)에 직접 넣으면 쪽나누기가 표 '뒤'로 가 빈 페이지가 생긴다(v5/v7
+        // 실측). 앵커(para)에 넣으면 쪽나누기 문단이 표 '앞'에 와 표가 새 페이지 머리에서 시작한다.
+        if (pageBreak) wasm.insertPageBreak(sec, para, length);
+        return 0;
+      }
+      if (isTableEdit(edit)) {
         createTableAt(wasm, sec, para + 1, edit);
       } else if (isImageEdit(edit)) {
         insertImageAt(wasm, sec, para + 1, edit, images);
@@ -1079,15 +1142,42 @@ function cloneTableAt(wasm: WasmEditing, sec: number, para: number, edit: Edit):
   const destPara = pasted.paraIdx;
   const destCtrl = pasted.controlIdx;
 
+  // 2.5) 목차 청크(F-toc-chunk): 복제본의 데이터 행을 toc_rows로 재구성한다 — 헤더(행 0)는
+  //      보존하고 기존 데이터 행을 하향 제거한 뒤, 청크 항목마다 한 행을 추가·채운다. 한 표가
+  //      페이지 경계를 자동으로 못 넘는 경우, 페이지 분량씩 복제해 헤더 반복하며 이어 보이게 한다.
+  const tocRows = spec.toc_rows;
+  if (tocRows && tocRows.length > 0) {
+    if (!wasm.getTableCellBboxes) {
+      throw new Error('복제된 표의 셀 좌표를 조회할 수 없어 목차 행을 채우지 못했습니다.');
+    }
+    const boxes0 = wasm.getTableCellBboxes(sec, destPara, destCtrl);
+    const maxRow = boxes0.reduce((m, b) => Math.max(m, b.row), 0);
+    for (let r = maxRow; r >= 1; r -= 1) wasm.deleteTableRow(sec, destPara, destCtrl, r);
+    for (let i = 0; i < tocRows.length; i += 1) {
+      wasm.insertTableRow(sec, destPara, destCtrl, i, true); // 행 i 아래 → 새 행 i+1
+      const line = wasm
+        .getTableCellBboxes(sec, destPara, destCtrl)
+        .filter((b) => b.row === i + 1)
+        .sort((a, b) => a.col - b.col);
+      tocRows[i].forEach((text, ci) => {
+        const cell = line[ci];
+        if (text && cell) wasm.insertTextInCell(sec, destPara, destCtrl, cell.cellIdx, 0, 0, text);
+      });
+    }
+    return; // 목차 청크는 cell_fills를 쓰지 않는다.
+  }
+
   // 3) (row,col) → 붙은 표의 셀 인덱스 매핑. 복제된 표의 실제 셀 좌표를 한 번만 조회한다.
   const fills = spec.cell_fills ?? [];
-  if (fills.length === 0) return; // 복제만 하고 채우지 않는 경우(빈 양식 추가).
+  const bodyImages = spec.body_images ?? [];
+  const bodyTables = spec.body_tables ?? [];
+  if (fills.length === 0 && bodyImages.length === 0 && bodyTables.length === 0) return; // 복제만(빈 양식 추가).
   if (!wasm.getTableCellBboxes) {
     // 좌표 조회 불가 — 복제는 성공했으니 구조는 보존된다. 채우기만 생략하지 않고
     // 명시적으로 오류로 본다(입력칸을 못 채우면 빈 양식이 된다).
     throw new Error('복제된 표의 셀 좌표를 조회할 수 없어 입력칸을 채우지 못했습니다.');
   }
-  let cells: Array<{ cellIdx: number; col: number; row: number; colSpan: number }>;
+  let cells: Array<{ cellIdx: number; col: number; row: number; colSpan: number; w?: number }>;
   try {
     cells = wasm.getTableCellBboxes(sec, destPara, destCtrl);
   } catch (e) {
@@ -1114,6 +1204,87 @@ function cloneTableAt(wasm: WasmEditing, sec: number, para: number, edit: Edit):
     if (length > 0) wasm.deleteTextInCell(sec, destPara, destCtrl, cellIdx, 0, 0, length);
     fillCellLinesFlat(wasm, target, destCtrl, cellIdx, 0, splitLines(fill.text));
   }
+
+  // 본문 통셀 인라인 이미지 삽입(F-5dc6297e/Phase B). 셀 문단 채움 뒤, 위치(after_para)에
+  // 그림을 넣는다. 인덱스 밀림 방지를 위해 after_para 내림차순으로 삽입한다. 그림 폭은 HWP
+  // 본문폭 상한으로 제한(과대 폭이면 비율 유지 축소). insertPictureInCell이 없으면 생략.
+  if (bodyImages.length > 0 && wasm.insertPictureInCell) {
+    const PX_TO_HU = 7200 / 96; // 96dpi에서 1px=75 HWPUNIT
+    const sorted = [...bodyImages].sort((a, b) => b.after_para - a.after_para);
+    for (const img of sorted) {
+      const cellIdx = cellAt.get(`${img.row},${img.col}`);
+      if (cellIdx === undefined) continue;
+      let bytes: Uint8Array;
+      try {
+        bytes = bytesFromBase64(img.data_base64);
+      } catch {
+        continue;
+      }
+      if (bytes.length === 0) continue;
+      // 본문 셀 폭(px)에 맞춰 그림을 키운다 — 셀 폭의 98%를 목표로(좌우 여백만 살짝).
+      // 작은 그림은 키우고 큰 그림은 줄여 셀에 꽉 차게(비율 유지). 셀 폭을 못 구하면
+      // A4 본문폭(560px) 폴백. 단, 원본의 4배를 넘는 과도한 확대는 화질 보호로 제한.
+      const cellW = cells.find((c) => c.row === img.row && c.col === img.col)?.w;
+      const targetWpx = Math.max(40, Math.floor((cellW ?? 560) * 0.98));
+      const natW = Math.max(1, img.width_px);
+      const natH = Math.max(1, img.height_px);
+      const dispWpx = Math.min(targetWpx, natW * 4);
+      const dispHpx = Math.max(1, Math.round((natH * dispWpx) / natW));
+      const wHu = Math.round(dispWpx * PX_TO_HU);
+      const hHu = Math.round(dispHpx * PX_TO_HU);
+      try {
+        wasm.insertPictureInCell(
+          sec,
+          destPara,
+          destCtrl,
+          cellIdx,
+          img.after_para,
+          bytes,
+          wHu,
+          hHu,
+          natW,
+          natH,
+          img.ext || 'png',
+          '',
+        );
+      } catch {
+        /* 그림 삽입 실패는 무시(본문 텍스트는 정상) */
+      }
+    }
+  }
+
+  // 본문 통셀 데이터 표 삽입(중첩 표). 셀 문단 채움 뒤, 위치(after_para)에 표를 넣는다.
+  // 인덱스 밀림 방지를 위해 after_para 내림차순으로 삽입. createTableInCell이 없으면 생략.
+  if (bodyTables.length > 0 && wasm.createTableInCell) {
+    const sorted = [...bodyTables].sort((a, b) => b.after_para - a.after_para);
+    for (const tbl of sorted) {
+      const cellIdx = cellAt.get(`${tbl.row},${tbl.col}`);
+      if (cellIdx === undefined) continue;
+      if (tbl.rows <= 0 || tbl.cols <= 0) continue;
+      try {
+        wasm.createTableInCell(
+          sec,
+          destPara,
+          destCtrl,
+          cellIdx,
+          tbl.after_para,
+          tbl.rows,
+          tbl.cols,
+          JSON.stringify(tbl.cells),
+        );
+      } catch {
+        /* 표 삽입 실패는 무시(본문 텍스트는 정상) */
+      }
+    }
+  }
+}
+
+/** base64 문자열을 바이트 배열로 디코드한다(atob 기반). */
+function bytesFromBase64(b64: string): Uint8Array {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i += 1) out[i] = bin.charCodeAt(i);
+  return out;
 }
 
 // ── 양식 이어쓰기: 라벨→값 매핑 + 결정적 복제 루프 (F-ae778890) ──────────────
@@ -1144,6 +1315,26 @@ export interface FormSourceTable {
 /** AI가 반환하는 한 항목(라벨→값 쌍의 집합). 표 구조 정보는 없다. */
 export interface FormFillEntry {
   fields: { label: string; value: string }[];
+  /**
+   * 라벨이 없는 '본문 통셀'에 채울 멀티단락 본문(선택). 소스 단락 1개 = 셀 문단 1개로
+   * 보존되며 한 줄로 평탄화하지 않는다(F-4d5d3e00). 없으면 본문 채움을 시도하지 않는다.
+   */
+  body?: string[];
+  /** 본문 통셀에 넣을 인라인 이미지(선택, F-5dc6297e/Phase B). after_body_index=단락 뒤 위치. */
+  images?: {
+    after_body_index: number;
+    data_base64: string;
+    ext: string;
+    width_px: number;
+    height_px: number;
+  }[];
+  /** 본문 통셀에 넣을 데이터 표(선택). after_body_index=단락 뒤 위치, cells=row-major. */
+  tables?: {
+    after_body_index: number;
+    rows: number;
+    cols: number;
+    cells: string[];
+  }[];
 }
 
 /** 라벨/값 비교용 정규화(공백 제거 + 소문자). '사 업 명' == '사업명' 같은 변형 흡수. */
@@ -1171,13 +1362,14 @@ export function resolveValueCell(
 ): { row: number; col: number } | null {
   const at = (row: number, col: number): FormSourceCell | undefined =>
     table.cells.find((c) => c.row === row && c.col === col);
-  // 후보 칸이 '라벨로 쓰이는 칸'이면 값칸이 아니다 — 건너뛴다.
+  // 후보 칸이 '라벨로 쓰이는 칸'이면 값칸이 아니다 — 건너뛴다. 판정 기준은 '텍스트 유무'가
+  // 아니라 '라벨명(knownLabels) 일치'다(F-f6c643d1): 이미 채워진 템플릿을 복제하는 경우
+  // 값칸에도 샘플 텍스트가 있는데(role=label), 텍스트가 있다고 거부하면 제목·기록자·일자
+  // 값칸이 전부 거부돼 덮어쓰기가 안 된다. 샘플값은 라벨명이 아니므로 값칸으로 인정한다.
   const isLabelCell = (c: FormSourceCell | undefined): boolean => {
     if (!c) return false;
-    const t = (c.text ?? '').trim();
-    if (t && knownLabels.has(normalizeLabel(t))) return true;
-    // role=label이고 내용이 있으면(안내 칸) 값칸으로 쓰지 않는다.
-    return c.role === 'label' && t.length > 0;
+    const t = normalizeLabel((c.text ?? '').trim());
+    return t.length > 0 && knownLabels.has(t);
   };
   const candidates = [
     { row: labelCell.row, col: labelCell.col + 1 }, // 1) 오른쪽
@@ -1186,16 +1378,81 @@ export function resolveValueCell(
   for (const cand of candidates) {
     if (cand.col >= table.cols || cand.row >= table.rows) continue;
     const cell = at(cand.row, cand.col);
+    // 후보 좌표에 실재 셀이 없으면(병합에 가려진 좌표) 값칸이 아니다 — 건너뛴다(F-addf13c1).
+    // 특히 라벨 칸 자신이 가로로 병합(예: '기록자' 1×2)되면 바로 오른쪽 좌표는 그 라벨의
+    // 병합 속에 가려져 실재 셀이 없다 → 여기서 거르지 않으면 가려진 좌표를 값칸으로 반환하고
+    // cloneTableAt이 그 칸을 건너뛰어 채움이 조용히 누락된다(아래 칸으로 폴백해야 한다).
+    // 빈 입력칸은 serialize가 role=input으로 cells에 포함하므로 실재 셀로 남아 영향이 없다.
+    if (!cell) continue;
     if (isLabelCell(cell)) continue; // 라벨칸은 값칸이 아니다.
     return { row: cand.row, col: cand.col };
   }
   return null;
 }
 
-/** 라벨→값 매핑 결과: 채울 cell_fills와 해석 못 한 라벨(사유). */
+/**
+ * 연구노트 양식의 메타 라벨 집합(정규화). 본문 통셀 식별 시 이 라벨이 든 전폭 셀은
+ * 본문이 아니라 구역 헤더이므로 제외한다.
+ */
+const META_LABELS = new Set(
+  ['제목', '기록자', '확인자', '기록 일자', '확인 일자'].map(normalizeLabel),
+);
+
+/**
+ * 소스 양식 표에서 '본문 통셀' 좌표를 결정적으로 찾는다(F-4d5d3e00 AC: 라벨 없는 전폭 셀).
+ *
+ * serialize.rs FormCell은 span을 노출하지 않지만, 병합 셀은 대표(좌상단) 좌표 1개로만
+ * cells에 들어온다(collect_form_tables). 따라서 '그 행에 셀이 하나뿐 + col===0'이면 전폭
+ * 병합 행이고, 그 셀이 메타 라벨(제목/기록자/…)도 아니고 이미 쓰인 값칸도 아니면 본문 통셀이다.
+ * 라벨/값 행(제목 2칸, 기록자 2칸 등)은 셀이 2개라 자연히 배제된다. 후보가 여럿이면 문서
+ * 순서(최소 row)의 첫 셀을 본문으로 본다. 해석 실패 시 null(호출 측이 사유를 skipped로 기록).
+ */
+export function resolveBodyCell(
+  table: FormSourceTable,
+  usedValueCells: Set<string>,
+): { row: number; col: number } | null {
+  const byRow = new Map<number, FormSourceCell[]>();
+  for (const c of table.cells) {
+    const arr = byRow.get(c.row) ?? [];
+    arr.push(c);
+    byRow.set(c.row, arr);
+  }
+  const rows = [...byRow.keys()].sort((a, b) => a - b);
+  for (const row of rows) {
+    const cells = byRow.get(row)!;
+    if (cells.length !== 1) continue; // 전폭 병합 행만(라벨/값 행은 셀≥2).
+    const cell = cells[0];
+    if (cell.col !== 0) continue;
+    if (usedValueCells.has(`${cell.row},${cell.col}`)) continue; // 이미 값칸으로 쓰임.
+    if (META_LABELS.has(normalizeLabel((cell.text ?? '').trim()))) continue; // 구역 헤더 제외.
+    return { row: cell.row, col: cell.col };
+  }
+  return null;
+}
+
+/** 라벨→값 매핑 결과: 채울 cell_fills와 해석 못 한 라벨(사유) + 본문 셀 이미지. */
 export interface FormFillMapping {
   cellFills: { row: number; col: number; text: string }[];
   skipped: { label: string; reason: string }[];
+  /** 본문 통셀에 넣을 이미지(본문 셀 좌표 + 위치/바이트). 본문 셀이 없으면 비어 있다. */
+  bodyImages: {
+    row: number;
+    col: number;
+    after_para: number;
+    data_base64: string;
+    ext: string;
+    width_px: number;
+    height_px: number;
+  }[];
+  /** 본문 통셀에 넣을 데이터 표(본문 셀 좌표 + 위치 + 내용). 본문 셀이 없으면 비어 있다. */
+  bodyTables: {
+    row: number;
+    col: number;
+    after_para: number;
+    rows: number;
+    cols: number;
+    cells: string[];
+  }[];
 }
 
 /**
@@ -1205,13 +1462,11 @@ export interface FormFillMapping {
  * 라벨 매칭은 정규화(공백/대소문자 무시) 후 완전일치 우선, 없으면 부분포함으로 찾는다.
  */
 export function buildFormFillMapping(table: FormSourceTable, entry: FormFillEntry): FormFillMapping {
-  // 소스 표의 모든 '라벨로 쓰이는 칸' 이름 집합(값칸 오인 방지용).
-  const knownLabels = new Set<string>();
-  for (const c of table.cells) {
-    const t = (c.text ?? '').trim();
-    if (t && c.role !== 'input') knownLabels.add(normalizeLabel(t));
-  }
-  // AI가 보낸 라벨도 라벨 후보로 추가(라벨↔라벨 인접 표 대응).
+  // 값칸 오인 방지용 '라벨명' 집합 — 메타 라벨(제목/기록자/…) + 이 항목이 채울 필드 라벨만
+  // 담는다. 소스 표의 '샘플 값칸 텍스트'는 넣지 않는다(F-f6c643d1): 채워진 템플릿을 복제할
+  // 때 값칸(샘플값)을 라벨로 오인해 거부하면 덮어쓰기가 안 되기 때문. 라벨↔라벨 인접 보호는
+  // 라벨명 일치로 충분히 보장된다(인접 라벨은 필드/메타 라벨명과 일치하므로 여전히 걸러진다).
+  const knownLabels = new Set<string>(META_LABELS);
   for (const f of entry.fields) knownLabels.add(normalizeLabel(f.label));
 
   const cellFills: { row: number; col: number; text: string }[] = [];
@@ -1248,7 +1503,405 @@ export function buildFormFillMapping(table: FormSourceTable, entry: FormFillEntr
     usedValueCells.add(key);
     cellFills.push({ row: value.row, col: value.col, text: field.value });
   }
-  return { cellFills, skipped };
+
+  // 본문 통셀 채움(F-4d5d3e00): 라벨이 없어 위 라벨→값칸 매핑으로는 닿지 않는 전폭 셀에
+  // 멀티단락 본문을 결정적으로 주입한다. body가 없거나 공백뿐이면 아무 것도 하지 않는다
+  // (회귀 없음 — AC: body 없는 항목은 기존 동작과 동일). cell_fills의 text에 담긴 '\n'은
+  // cloneTableAt→splitLines→fillCellLinesFlat 경로에서 단락별 셀 문단으로 풀린다(F-466f8e).
+  const bodyImages: FormFillMapping['bodyImages'] = [];
+  const bodyTables: FormFillMapping['bodyTables'] = [];
+  const bodyText = (entry.body ?? []).join('\n');
+  if (bodyText.trim().length > 0) {
+    const bodyCell = resolveBodyCell(table, usedValueCells);
+    if (!bodyCell) {
+      skipped.push({
+        label: '(본문)',
+        reason: '양식에서 본문 통셀(라벨 없는 전폭 셀)을 찾지 못해 본문을 채우지 못했습니다.',
+      });
+    } else {
+      usedValueCells.add(`${bodyCell.row},${bodyCell.col}`);
+      cellFills.push({ row: bodyCell.row, col: bodyCell.col, text: bodyText });
+      // 본문 통셀 인라인 이미지(F-5dc6297e/Phase B): 본문 셀 좌표 + docx 위치·바이트.
+      for (const img of entry.images ?? []) {
+        bodyImages.push({
+          row: bodyCell.row,
+          col: bodyCell.col,
+          after_para: img.after_body_index,
+          data_base64: img.data_base64,
+          ext: img.ext,
+          width_px: img.width_px,
+          height_px: img.height_px,
+        });
+      }
+      // 본문 통셀 데이터 표(중첩 표): 본문 셀 좌표 + docx 위치·내용.
+      for (const tbl of entry.tables ?? []) {
+        bodyTables.push({
+          row: bodyCell.row,
+          col: bodyCell.col,
+          after_para: tbl.after_body_index,
+          rows: tbl.rows,
+          cols: tbl.cols,
+          cells: tbl.cells,
+        });
+      }
+    }
+  }
+
+  return { cellFills, skipped, bodyImages, bodyTables };
+}
+
+// ── docx 일괄 변환: 파싱된 항목 → 양식 항목 매핑 + 엔트리 양식 선택 (F-beb35fbb) ──────
+//
+// LLM 왕복 없이 docx에서 직접 구동한다. parse_docx_structure(F-075bdb05)가 추출한 각
+// EntryRecord를 양식 항목(FormFillEntry)으로 변환하면, 본문은 F-4d5d3e00 본문 통셀 채우기가,
+// 라벨→값은 기존 매핑이 처리한다. 복제 소스는 '엔트리 양식 표'(제목+기록자+일자 라벨을 가진
+// 반복 템플릿)를 선택한다 — 대외비/목차/개요 같은 다른 양식 표는 고르지 않는다.
+
+/**
+ * 사용자 지시문에서 '몇 번 항목만' 선택을 파싱한다(docx 일괄 변환의 부분 선택).
+ * 1-기준 항목 번호 집합을 반환하며, 선택 표현이 없으면 null(=전체 변환).
+ * 지원: "3번만"·"3,5,9번"·"3~7"·"3-7"·"3부터 7까지"·"3에서 7"·"처음 5개"·"앞 5개"·
+ *       "마지막 3개"·"끝 3개"·"first 5"·"last 3". total로 범위를 클램프한다.
+ */
+export function parseEntrySelection(text: string, total: number): Set<number> | null {
+  if (total <= 0) return null;
+  const t = text.replace(/\s+/g, ' ');
+  const clamp = (n: number) => Math.min(Math.max(n, 1), total);
+  const sel = new Set<number>();
+
+  // 처음/앞/first K개
+  let m = t.match(/(?:처음|앞)\s*(\d+)\s*개|first\s+(\d+)/i);
+  if (m) {
+    const k = clamp(Number(m[1] ?? m[2]));
+    for (let i = 1; i <= k; i += 1) sel.add(i);
+    return sel.size ? sel : null;
+  }
+  // 마지막/끝/last K개
+  m = t.match(/(?:마지막|끝)\s*(\d+)\s*개|last\s+(\d+)/i);
+  if (m) {
+    const k = clamp(Number(m[1] ?? m[2]));
+    for (let i = total - k + 1; i <= total; i += 1) sel.add(clamp(i));
+    return sel.size ? sel : null;
+  }
+  // 범위: N~M / N-M / N부터 M까지 / N번부터 M번까지 / N에서 M / N to M
+  const ranges = t.matchAll(/(\d+)\s*번?\s*(?:~|-|–|부터|에서|to)\s*(\d+)\s*번?(?:\s*까지)?/gi);
+  let any = false;
+  for (const r of ranges) {
+    any = true;
+    let a = clamp(Number(r[1]));
+    let b = clamp(Number(r[2]));
+    if (a > b) [a, b] = [b, a];
+    for (let i = a; i <= b; i += 1) sel.add(i);
+  }
+  if (any) return sel.size ? sel : null;
+
+  // 개별/목록: "3, 5, 9번" / "3번" — '번' 앞의 (콤마 구분) 숫자 목록을 모두 선택('번'
+  // 동반 시에만 — 일반 문장의 숫자 오탐 방지).
+  if (/\d+\s*번/.test(t)) {
+    for (const r of t.matchAll(/(\d+(?:\s*,\s*\d+)*)\s*번/g)) {
+      for (const num of r[1].split(/\s*,\s*/)) sel.add(clamp(Number(num)));
+    }
+    if (sel.size) return sel;
+  }
+  return null;
+}
+
+/** 연구노트 항목(EntryRecord)을 양식 항목(FormFillEntry)으로 변환한다(F-beb35fbb AC). */
+export function entryRecordToFormFillEntry(rec: ResearchNoteEntry): FormFillEntry {
+  return {
+    fields: [
+      { label: '제목', value: rec.title },
+      { label: '기록자', value: rec.recorders.join(', ') },
+      { label: '확인자', value: rec.confirmer },
+      { label: '기록 일자', value: rec.record_date },
+      { label: '확인 일자', value: rec.confirm_date },
+    ],
+    body: rec.body_paragraphs,
+    images: rec.images,
+    tables: (rec.body_tables ?? []).map((t) => ({
+      after_body_index: t.after_body_index,
+      rows: t.rows,
+      cols: t.cols,
+      cells: t.cells,
+    })),
+  };
+}
+
+/**
+ * form_tables 중 '엔트리 양식 표'(반복되는 연구노트 항목 템플릿 = 사용자가 말한 '4페이지
+ * 양식')를 고른다. 판정: 셀에 '기록자' 라벨과 '기록 일자'(또는 '제목') 라벨을 함께 가진 표.
+ * 대외비(2행 1열)·목차(일련번호)·개요(과제명/키워드) 표는 이 조건을 만족하지 않아 배제된다.
+ * 없으면 null(→ 호출 측이 변환을 거부, 빈 결과 위장 금지).
+ */
+export function pickEntryFormTable(tables: FormSourceTable[]): FormSourceTable | null {
+  const has = (t: FormSourceTable, label: string): boolean =>
+    t.cells.some((c) => normalizeLabel((c.text ?? '').trim()) === normalizeLabel(label));
+  return (
+    tables.find((t) => has(t, '기록자') && (has(t, '기록 일자') || has(t, '제목'))) ?? null
+  );
+}
+
+/**
+ * form_tables 중 목차 표를 고른다(F-9a5045da) — 셀에 '일련'과 '비고' 텍스트를 함께 가진 표
+ * (연구노트 목차 헤더: 일련(쪽)번호 / 제목(내용) / 비고). 대외비·기관명·엔트리 양식 표는
+ * 이 조건을 만족하지 않는다. 없으면 null(→ 목차 재생성 생략).
+ */
+export function pickTocTable(tables: FormSourceTable[]): FormSourceTable | null {
+  const hasText = (t: FormSourceTable, needle: string): boolean =>
+    t.cells.some((c) => (c.text ?? '').includes(needle));
+  return tables.find((t) => hasText(t, '일련') && hasText(t, '비고')) ?? null;
+}
+
+/**
+ * 목차 표의 데이터 행을 파싱된 목차 항목으로 재구성하는 table_edit 편집 목록을 만든다
+ * (F-9a5045da). 헤더 행(0)은 보존하고, 기존 데이터 행을 하향으로 모두 delete_row 한 뒤
+ * 항목마다 insert_row(below)로 [no, title, ''(비고)] 행을 추가한다. applyActionScript가 같은
+ * 표의 구조 편집을 입력 순서대로 적용하므로(delete 하향 → insert 상향) 시퀀스가 결정적이다.
+ * tocTable이 null이거나 items가 비면 빈 배열(no-op) — 목차 미변경, 나머지 변환은 진행.
+ */
+/**
+ * 목차 항목을 '페이지 분량'씩 청크로 나눈다(F-toc-chunk). 한 표가 페이지 경계를 자동으로
+ * 넘지 못하므로(rhwp 직렬화 한계), 페이지마다 채울 만큼씩 나눠 표 여러 개로 만든다.
+ * 정확한 렌더 높이는 못 믿으니 제목 길이로 줄 수를 추정한다(열 폭 charsPerLine 기준,
+ * 길면 2줄+). 넘침=잘림이므로 용량(linesPerPage)은 보수적으로 잡는다(약간 덜 채움).
+ */
+export function chunkTocItems(
+  items: { no: string; title: string }[],
+  opts?: { charsPerLine?: number; linesPerPage?: number },
+): { no: string; title: string }[][] {
+  const charsPerLine = opts?.charsPerLine ?? 26;
+  const linesPerPage = opts?.linesPerPage ?? 18;
+  const chunks: { no: string; title: string }[][] = [];
+  let cur: { no: string; title: string }[] = [];
+  let curLines = 0;
+  for (const it of items) {
+    const lines = Math.max(1, Math.ceil((it.title?.length ?? 0) / charsPerLine));
+    if (cur.length > 0 && curLines + lines > linesPerPage) {
+      chunks.push(cur);
+      cur = [];
+      curLines = 0;
+    }
+    cur.push(it);
+    curLines += lines;
+  }
+  if (cur.length > 0) chunks.push(cur);
+  return chunks;
+}
+
+/**
+ * 목차 청크 하나를 '목차 표 복제 + 행 재구성'하는 clone_table 편집으로 만든다(F-toc-chunk).
+ * 원본 목차 표(tocTable)를 anchor 뒤/새 페이지에 복제하고, 복제본의 데이터 행을 이 청크로
+ * 재구성(toc_rows)한다 → 페이지마다 헤더 반복하며 목차가 이어진다.
+ */
+export function buildTocChunkCloneEdit(
+  tocTable: FormSourceTable,
+  chunkItems: { no: string; title: string }[],
+  anchorTargetId: string,
+): Edit {
+  return {
+    command: 'INSERT_AFTER',
+    target_id: anchorTargetId,
+    payload: {
+      type: 'clone_table',
+      page_break: true,
+      clone_table: {
+        clone_from: {
+          section: tocTable.section,
+          paragraph: tocTable.paragraph,
+          control_index: tocTable.control_index,
+        },
+        cell_fills: [],
+        toc_rows: chunkItems.map((it) => [it.no, it.title, '']),
+      },
+    },
+  };
+}
+
+export function buildTocRegenEdits(
+  tocTable: FormSourceTable | null,
+  items: { no: string; title: string }[],
+): Edit[] {
+  if (!tocTable || items.length === 0) return [];
+  const targetId = `sec[${tocTable.section}].p[${tocTable.paragraph}].tbl[${tocTable.control_index}].cell[0].p[0]`;
+  const edits: Edit[] = [];
+  const pushEdit = (table_edit: NonNullable<Edit['payload']['table_edit']>): void => {
+    edits.push({ command: 'REPLACE', target_id: targetId, payload: { type: 'table_edit', table_edit } });
+  };
+  // 새 행은 인접 행의 셀 스타일(테두리/배경/글꼴)을 상속한다(insert_row 템플릿). 헤더(행 0)는
+  // 회색 배경·강조라, 데이터 행을 전부 지우고 헤더 아래로 삽입하면 모든 목차 행이 헤더(제목)
+  // 스타일을 물려받아 "전부 제목줄"이 된다(흰 배경·기본 글꼴이 사라짐). 따라서 첫 데이터
+  // 행(행 1, 흰 배경·기본)을 '도너'로 남기고 그 아래로 삽입한 뒤, 마지막에 도너를 제거한다.
+  const hasDonor = tocTable.rows >= 2;
+  if (hasDonor) {
+    // 1) 도너(행 1)만 남기고 나머지 데이터 행을 하향 제거.
+    for (let r = tocTable.rows - 1; r >= 2; r -= 1) {
+      pushEdit({ op: 'delete_row', row: r });
+    }
+    // 2) 항목마다 도너(데이터 행) 아래로 삽입 — 데이터 스타일을 상속한다.
+    //    i번째는 행 (1+i) 아래에 삽입돼 도너 뒤로 순서대로 쌓인다.
+    items.forEach((item, i) => {
+      pushEdit({ op: 'insert_row', row: 1 + i, below: true, texts: [item.no, item.title, ''] });
+    });
+    // 3) 도너(원본 샘플 데이터 행, 여전히 행 1)를 제거 — 새 행들이 이미 데이터 스타일을 가졌다.
+    pushEdit({ op: 'delete_row', row: 1 });
+  } else {
+    // 폴백(데이터 행 없는 표): 헤더만 있으므로 헤더 아래로 삽입(구 동작).
+    items.forEach((item, i) => {
+      pushEdit({ op: 'insert_row', row: i, below: true, texts: [item.no, item.title, ''] });
+    });
+  }
+  return edits;
+}
+
+/**
+ * 표지(첫 페이지) 표를 고른다 — 정규화 라벨 '기관명'과 '연구과제명'을 함께 가진 표
+ * (연구노트 표지: 기관명/부서명/연구과제명/연구 기간/연구책임자/기록자 명단). 없으면 null
+ * (→ 표지 채움 생략, 항목/목차 변환은 그대로).
+ */
+export function pickCoverTable(tables: FormSourceTable[]): FormSourceTable | null {
+  const hasLabel = (t: FormSourceTable, label: string): boolean =>
+    t.cells.some((c) => normalizeLabel((c.text ?? '').trim()) === normalizeLabel(label));
+  return tables.find((t) => hasLabel(t, '기관명') && hasLabel(t, '연구과제명')) ?? null;
+}
+
+/** 표지 상단 관리번호 표를 고른다 — '관리번호' 텍스트를 포함한 셀이 있는 표. */
+export function pickCoverHeaderTable(tables: FormSourceTable[]): FormSourceTable | null {
+  return tables.find((t) => t.cells.some((c) => (c.text ?? '').includes('관리번호'))) ?? null;
+}
+
+/** 표지 라벨 집합(정규화) — 값칸 해석 시 라벨칸을 값칸으로 오인하지 않기 위한 목록. */
+const COVER_LABELS = new Set(
+  ['기관명', '부서명', '연구과제명', '연구 기간', '연구책임자', '기록자'].map(normalizeLabel),
+);
+
+/**
+ * docx 표지 메타를 HWP 표지 표에 직접 채운다(F-cover-fill). 편집 스크립트가 아니라
+ * TOC 후처리(setTableProperties)처럼 wasm을 직접 호출한다 — 원본 표를 제자리에서 채우는
+ * 경로는 clone_table(cell_fills)이 커버하지 않으므로, 같은 셀 채움 머신
+ * (getTableCellBboxes → deleteTextInCell → fillCellLinesFlat)을 재사용한다.
+ *
+ * - 라벨 값(기관명/부서명/연구과제명/연구 기간/연구책임자): resolveValueCell로 인접 값칸을
+ *   찾아 교체. docx에서 빈 값이면 그 필드는 건드리지 않는다(양식 값 보존).
+ * - 기록자 명단: '기록자' 라벨 뒤의 모든 칸을 명단 슬롯으로 보고 순서대로 "N. 이름"을
+ *   기입(슬롯 템플릿에 번호 접두사가 없으면 이름만). docx 명단보다 슬롯이 많으면 나머지를
+ *   비운다(템플릿 샘플 이름 잔존 방지).
+ * - 관리번호: 헤더 표의 '관리번호' 셀 첫 문단만 교체("(Serial No.)" 등 뒤 문단 보존).
+ *
+ * 반환: 채운 칸 수 + 건너뛴 필드(사유). 실패는 조용히 삼키지 않고 skipped로 보고한다.
+ */
+export function applyCoverFill(
+  wasm: WasmEditing,
+  coverTable: FormSourceTable | null,
+  headerTable: FormSourceTable | null,
+  cover: ResearchNoteCover | null | undefined,
+): { filled: number; skipped: { label: string; reason: string }[] } {
+  const skipped: { label: string; reason: string }[] = [];
+  let filled = 0;
+  if (!cover) return { filled, skipped };
+  if (!wasm.getTableCellBboxes) {
+    return { filled, skipped: [{ label: '표지', reason: '셀 좌표 조회 API 없음' }] };
+  }
+
+  // (row,col)→cellIdx 매핑을 표마다 한 번만 조회한다.
+  const cellIdxMap = (t: FormSourceTable): Map<string, number> | null => {
+    try {
+      const boxes = wasm.getTableCellBboxes!(t.section, t.paragraph, t.control_index);
+      const m = new Map<string, number>();
+      for (const b of boxes) m.set(`${b.row},${b.col}`, b.cellIdx);
+      return m;
+    } catch {
+      return null;
+    }
+  };
+  const fillCell = (t: FormSourceTable, idxMap: Map<string, number>, row: number, col: number, text: string): boolean => {
+    const cellIdx = idxMap.get(`${row},${col}`);
+    if (cellIdx === undefined) return false;
+    const target: CellTarget = {
+      sec: t.section,
+      parentPara: t.paragraph,
+      path: [{ controlIndex: t.control_index, cellIndex: cellIdx, cellParaIndex: 0 }],
+    };
+    const length = wasm.getCellParagraphLength(t.section, t.paragraph, t.control_index, cellIdx, 0);
+    if (length > 0) wasm.deleteTextInCell(t.section, t.paragraph, t.control_index, cellIdx, 0, 0, length);
+    fillCellLinesFlat(wasm, target, t.control_index, cellIdx, 0, splitLines(text));
+    return true;
+  };
+
+  if (coverTable) {
+    const idxMap = cellIdxMap(coverTable);
+    if (!idxMap) {
+      skipped.push({ label: '표지', reason: '표지 표 셀 좌표 조회 실패' });
+    } else {
+      const findLabelCell = (label: string): FormSourceCell | undefined =>
+        coverTable.cells.find(
+          (c) => normalizeLabel((c.text ?? '').trim()) === normalizeLabel(label),
+        );
+      // 1) 라벨 → 인접 값칸 필드들. docx 빈 값은 건드리지 않는다.
+      const fields: [string, string][] = [
+        ['기관명', cover.org],
+        ['부서명', cover.dept],
+        ['연구과제명', cover.project],
+        ['연구 기간', cover.period],
+        ['연구책임자', cover.lead],
+      ];
+      for (const [label, value] of fields) {
+        if (!value) continue;
+        const labelCell = findLabelCell(label);
+        if (!labelCell) {
+          skipped.push({ label, reason: '표지 표에 라벨 없음' });
+          continue;
+        }
+        const valueCell = resolveValueCell(coverTable, labelCell, COVER_LABELS);
+        if (!valueCell) {
+          skipped.push({ label, reason: '값칸 해석 실패' });
+          continue;
+        }
+        if (fillCell(coverTable, idxMap, valueCell.row, valueCell.col, value)) filled += 1;
+      }
+      // 2) 기록자 명단 슬롯: '기록자' 라벨 뒤(row-major)의 모든 칸. 명단을 순서대로 넣고
+      //    남는 슬롯은 비운다.
+      const recLabel = findLabelCell('기록자');
+      if (recLabel && cover.recorders.length > 0) {
+        const slots = coverTable.cells
+          .filter(
+            (c) =>
+              (c.row > recLabel.row || (c.row === recLabel.row && c.col > recLabel.col)) &&
+              !COVER_LABELS.has(normalizeLabel((c.text ?? '').trim())),
+          )
+          .sort((a, b) => a.row - b.row || a.col - b.col);
+        slots.forEach((slot, i) => {
+          const name = cover.recorders[i];
+          const numbered = /^\d+\s*\./.test((slot.text ?? '').trim());
+          const text = name ? (numbered ? `${i + 1}. ${name}` : name) : '';
+          // 빈 슬롯을 빈 값으로 다시 채우는 건 no-op이므로 건너뛴다.
+          if (text === '' && (slot.text ?? '').trim() === '') return;
+          if (fillCell(coverTable, idxMap, slot.row, slot.col, text)) filled += 1;
+        });
+      } else if (cover.recorders.length > 0) {
+        skipped.push({ label: '기록자', reason: '표지 표에 기록자 라벨 없음' });
+      }
+    }
+  } else if (cover.org || cover.recorders.length > 0) {
+    skipped.push({ label: '표지', reason: '표지 표를 찾지 못함' });
+  }
+
+  // 3) 관리번호 — 헤더 표 '관리번호' 셀의 첫 문단만 교체(뒤 문단 "(Serial No.)" 보존).
+  if (cover.manage_no) {
+    if (!headerTable) {
+      skipped.push({ label: '관리번호', reason: '관리번호 표를 찾지 못함' });
+    } else {
+      const cell = headerTable.cells.find((c) => (c.text ?? '').includes('관리번호'));
+      const idxMap = cell ? cellIdxMap(headerTable) : null;
+      if (!cell || !idxMap) {
+        skipped.push({ label: '관리번호', reason: '관리번호 셀 좌표 해석 실패' });
+      } else if (fillCell(headerTable, idxMap, cell.row, cell.col, cover.manage_no)) {
+        filled += 1;
+      } else {
+        skipped.push({ label: '관리번호', reason: '관리번호 셀 채움 실패' });
+      }
+    }
+  }
+  return { filled, skipped };
 }
 
 /** 항목 하나의 clone_table 편집 + 그 항목의 라벨 해석 실패 목록. */
@@ -1262,24 +1915,28 @@ export interface FormFillEditPlan {
  * (AC-6bdb1e17: clone-per-entry 루프). 표 구조는 AI가 결정하지 않는다 — clone_from은 항상
  * 소스 양식 표 좌표이고, cell_fills는 라벨→값칸 매핑(buildFormFillMapping)에서 나온다.
  *
- * 모든 항목을 같은 anchor 본문 문단 뒤(INSERT_AFTER)에 넣고 page_break=true로 새 페이지에서
- * 시작한다(spec이 위치를 명시하지 않아 가장 단순·안전한 선택: 문서 끝/새 페이지에 차례로
- * 추가). applyActionScript은 문단 인덱스 내림차순으로 적용하지만 같은 target_id의
- * INSERT_AFTER끼리는 입력 역순으로 적용돼 입력 정순(항목1, 항목2, …)으로 문서에 남는다.
+ * 모든 항목을 같은 anchor 본문 문단 뒤(INSERT_AFTER)에 넣는다. applyActionScript은 문단
+ * 인덱스 내림차순으로 적용하지만 같은 target_id의 INSERT_AFTER끼리는 입력 역순으로 적용돼
+ * 입력 정순(항목1, 항목2, …)으로 문서에 남는다.
+ *
+ * pageBreak: 항목마다 새 페이지에서 시작할지(기본 true — AI form_fill 경로 보존). docx 일괄
+ * 변환(F-form-fill-page-layout)은 false를 넘긴다 — insert_page_break_native가 표 앞에 고아
+ * 빈 문단을 남겨 항목 사이에 빈 페이지가 생기므로, 강제 나눔 없이 표가 자연스럽게 흐르게 한다.
  */
 export function buildFormFillEdits(
   table: FormSourceTable,
   entries: FormFillEntry[],
   anchorTargetId: string,
+  pageBreak = true,
 ): FormFillEditPlan[] {
   return entries.map((entry) => {
-    const { cellFills, skipped } = buildFormFillMapping(table, entry);
+    const { cellFills, skipped, bodyImages, bodyTables } = buildFormFillMapping(table, entry);
     const edit: Edit = {
       command: 'INSERT_AFTER',
       target_id: anchorTargetId,
       payload: {
         type: 'clone_table',
-        page_break: true,
+        page_break: pageBreak,
         clone_table: {
           clone_from: {
             section: table.section,
@@ -1287,6 +1944,8 @@ export function buildFormFillEdits(
             control_index: table.control_index,
           },
           cell_fills: cellFills,
+          body_images: bodyImages.length > 0 ? bodyImages : undefined,
+          body_tables: bodyTables.length > 0 ? bodyTables : undefined,
         },
       },
     };

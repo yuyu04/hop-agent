@@ -1,0 +1,19 @@
+id: F-32a1a7d2
+slug: form-fill-page-layout
+title: "양식 변환 페이지 배치 — 1항목=1페이지(빈 페이지 없이) + 목차 행 단위 쪽나눔"
+status: done
+modules:
+  - apps/studio-host/src/core/ai-apply.ts
+  - apps/studio-host/src/ui/agent-sidebar.ts
+acceptance_criteria:
+  - id: AC-c7d465fa
+    ears: event
+    condition: "When applyActionScript가 page_break=true인 clone_table INSERT_AFTER를 적용할 때"
+    text: "The system shall 복제 표가 새 페이지 머리에서 시작하도록 쪽나누기를 표 '앞' 앵커 문단 끝(para, length)에 넣는다 — 표 문단에 직접 넣으면 쪽나누기가 표 '뒤'로 가 빈 페이지가 생기므로, 앵커에 넣어 1항목=1페이지가 되고 항목 사이에 빈 페이지가 생기지 않게 한다."
+    test_refs: ["apps/studio-host/src/core/form-fill-page-layout.test.ts"]
+    notes: "## Why\n2026-06-22: 사용자 요구 '아무리 짧은 docx 항목이라도 하나의 연구노트=하나의 페이지'.\n## Root cause (Rust ground-truth)\ninsert_page_break_native는 대상 문단을 split_at(0)하는데 split_at은 텍스트만 새 문단으로 보내고 **컨트롤(표)은 원본 문단에 남긴다**(paragraph.rs: 'controls는 split되지 않으므로 원래 문단에만 유지'). 그래서 표 문단(para+1)에 insertPageBreak를 걸면: 표는 para+1에 남고 쪽나누기 빈 문단이 para+2(표 '뒤')에 생긴다 → 그 빈 문단이 빈 페이지. (실측: blank core에 표 생성 후 insertPageBreak(표문단) → 표 그대로, 다음 빈 문단에 쪽나누기.)\n## Decision\n쪽나누기를 표 '앞' 앵커(para, length=앵커 길이)에 넣는다 → 쪽나누기 빈 문단이 표 '앞'(para+1)에 와 표(para+2)가 새 페이지 머리에서 시작. 빈 페이지 없음. (이전 시도들: page_break off=흐름·1≠1페이지(v6); 표문단 뒤 쪽나누기=빈 페이지(v5/v7); deleteParagraph 미노출(v7) / mergeParagraph(paraIdx-1)=표 파괴(v8) — 모두 폐기.)"
+  - id: AC-cd7fd2d1
+    ears: ubiquitous
+    text: "The system shall buildFormFillEdits의 page_break 기본값을 true로 유지한다 — docx 일괄 변환은 인자 생략(또는 true)으로 호출해 1항목=1페이지가 되고, AI form_fill 경로(F-ae778890)도 같은 고아-제거 쪽나누기 동작을 공유한다."
+    test_refs: ["apps/studio-host/src/core/form-fill-page-layout.test.ts"]
+    notes: "pageBreak 파라미터 기본값 true. clone_table 쪽나누기 경로의 고아 제거는 모든 호출자(docx 일괄·AI form_fill)에 공통 적용된다(엄격한 개선). 추가로 runDocxFormFill은 목차 표를 setTableProperties({pageBreak:2}) 행 단위 쪽나눔으로 설정해 46행이 다음 페이지로 이어지게 한다."

@@ -1,8 +1,10 @@
+//! Tauri 데스크톱 백엔드 어댑터 — 웹 호스트의 추상 브리지(WasmBridge/AiBridge)를 실제
+//! `#[tauri::command]` invoke 호출과 파일시스템 플러그인에 연결한다. 코어 로직은 여기 없다.
 import { WasmBridge } from '@/core/wasm-bridge';
 import type { DocumentInfo } from '@/core/types';
 import { remove, stat } from '@tauri-apps/plugin-fs';
 import { finiteFileSize, readFileInChunks, writeFileInChunks } from './chunked-fs';
-import type { DocumentContext } from './ai-bridge';
+import type { DocumentContext, ResearchNoteDoc } from './ai-bridge';
 
 type DocumentFormat = 'hwp' | 'hwpx';
 
@@ -131,6 +133,10 @@ export interface AiBridgeApi {
   ): Promise<string>;
   /** HWP/HWPX 파일의 평문 텍스트를 추출한다(첨부용). */
   aiExtractText(path: string): Promise<string>;
+  /** 연구노트형 docx를 구조(항목 + 목차)로 파싱한다(F-beb35fbb, 결정적 일괄 변환용). */
+  aiParseResearchNoteDocx(path: string): Promise<ResearchNoteDoc>;
+  /** 연구노트형 PDF를 구조(항목 + 목차)로 파싱한다(docx와 동일 스키마, 텍스트 줄 패턴 기반). */
+  aiParseResearchNotePdf(path: string): Promise<ResearchNoteDoc>;
   /** URL에서 이미지를 내려받아 base64+MIME로 반환한다(웹뷰 CORS 우회). */
   aiFetchImage(url: string): Promise<{ dataBase64: string; mime: string }>;
   /** PDF에서 내장 이미지를 추출해 base64+MIME 목록으로 반환한다. */
@@ -384,6 +390,16 @@ export class TauriBridge extends WasmBridge implements DesktopBridgeApi, AiBridg
 
   async aiExtractText(path: string): Promise<string> {
     return this.invoke<string>('ai_extract_text', { path });
+  }
+
+  async aiParseResearchNoteDocx(path: string): Promise<ResearchNoteDoc> {
+    const json = await this.invoke<string>('ai_parse_research_note_docx', { path });
+    return JSON.parse(json) as ResearchNoteDoc;
+  }
+
+  async aiParseResearchNotePdf(path: string): Promise<ResearchNoteDoc> {
+    const json = await this.invoke<string>('ai_parse_research_note_pdf', { path });
+    return JSON.parse(json) as ResearchNoteDoc;
   }
 
   async aiFetchImage(url: string): Promise<{ dataBase64: string; mime: string }> {

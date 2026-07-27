@@ -747,7 +747,7 @@ fn collect_form_tables(core: &DocumentCore) -> Vec<FormTable> {
             // 허용: AI가 셀 내용으로 소스를 고르고 시스템 프롬프트가 clone-not-compose를 강제한다).
             // role("label"/"input")은 cells에 정보성 힌트로만 남는다(노출 게이트 아님).
             if rows >= 2 && cols >= 1 {
-                cells.sort_by(|a, b| (a.row, a.col).cmp(&(b.row, b.col)));
+                cells.sort_by_key(|c| (c.row, c.col));
                 tables.push(FormTable {
                     section: sec as u32,
                     paragraph: pp as u32,

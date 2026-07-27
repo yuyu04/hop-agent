@@ -1,0 +1,19 @@
+id: F-c63c3a91
+slug: docx-form-fill-decision-state
+title: "docx 일괄 변환 승인/거절 동작 — 세션 머신을 DIFF_PENDING으로 전이"
+status: done
+modules:
+  - apps/studio-host/src/ui/agent-sidebar.ts
+acceptance_criteria:
+  - id: AC-6b0b72e6
+    ears: event
+    condition: "When runDocxFormFill이 미리보기를 적용하고 결정 바를 띄울 때"
+    text: "The system shall AI 세션 머신을 startRequest→onReady로 전이시켜 DIFF_PENDING 상태로 둔다 — 그래야 승인(accept)이 문서에 반영되고 거절(reject)이 스냅샷을 롤백한다."
+    test_refs: ["apps/studio-host/src/core/ai-session.test.ts"]
+    notes: "## Why\n2026-06-22 실측: 사용자가 '승인 눌러도 반영이 안된다'. 원인: AiSessionMachine.accept()는 DIFF_PENDING에서만 유효한데(ai-session.ts), runDocxFormFill이 startRequest/onReady 전이를 호출하지 않아 세션이 IDLE에 머문→accept() no-op. 정상 AI 경로는 940/1196에서 전이한다.\n## Decision\nrunDocxFormFill: 처리 커밋 직후 startRequest(), 결정 바 직전 onReady(), 조기 거부·snapshot 실패·catch 경로에서 onFailed()로 IDLE 복귀."
+  - id: AC-c68260ab
+    ears: unwanted
+    condition: "If 변환이 거부되거나(항목 0·양식 없음·앵커 없음) 예외가 나면"
+    text: "The system shall 세션을 onFailed()로 IDLE로 되돌려 다음 요청이 정상 진행되게 한다(REQUESTING에 빨수한 상태로 남지 않는다)."
+    test_refs: ["apps/studio-host/src/core/ai-session.test.ts"]
+    notes: "## Why\nstartRequest()로 REQUESTING 진입 후 결정 바 없이 return하면 세션이 REQUESTING에 머무는다 → 다음 startRequest()는 괜찮지만 명시적 onFailed()로 정리한다."

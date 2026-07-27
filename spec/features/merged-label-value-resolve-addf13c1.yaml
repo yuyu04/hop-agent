@@ -1,0 +1,23 @@
+id: F-addf13c1
+slug: merged-label-value-resolve
+title: "가로 병합 라벨 칸의 값칸 해석 교정 — 병합에 가려진 좌표로 인한 채움 누락 방지"
+status: done
+modules:
+  - apps/studio-host/src/core/ai-apply.ts
+acceptance_criteria:
+  - id: AC-a5b8e2fc
+    ears: event
+    condition: "When 라벨 칸이 가로로 병합되어(예: 1×2) 바로 오른쪽 좌표가 그 라벨 자신의 병합에 가려 실재 셀이 아니면"
+    text: "The system shall 그 오른쪽 후보를 건너뛰고 아래 칸으로 값칸을 해석한다 — 값이 조용히 누락되지 않고 실제로 채워지게 한다."
+    test_refs: ["apps/studio-host/src/core/merged-label-value-resolve.test.ts"]
+    notes: "## Why\n2026-06-22 실측(연구노트-v3.hwp): docx 일괄 변환이 제목·본문은 채웠으나 기록자·기록 일자가 docx 값이 아닌 원본 템플릿 값으로 남음. 원인: '기록자'(2,0)·'기록 일자'(4,0) 라벨이 가로 1×2 병합이라 resolveValueCell이 오른쪽 후보로 병합에 가려진 (2,1)/(4,1)을 반환 → cloneTableAt이 그 좌표를 건너뛰어 채움이 누락. 확인자(2,2)는 col 2라 오른쪽이 표 밖→아래로 정상 매핑돼 차이가 났다.\n## Decision\nresolveValueCell 후보 루프에 '후보 좌표에 실재 셀이 없으면(at(cand)===undefined) 건너뛴' 가드를 추가. 빈 입력칸은 serialize.rs가 role=input으로 cells에 포함하므로 실재—병합에 가려진 좌표만 제외된다."
+  - id: AC-d24c9e57
+    ears: ubiquitous
+    text: "The system shall resolveValueCell이 표에 실재하는 셀 좌표만 반환한다 — 대표 셀이 없는(병합에 가려진) 좌표는 값칸으로 결코 반환하지 않는다."
+    test_refs: ["apps/studio-host/src/core/merged-label-value-resolve.test.ts"]
+  - id: AC-79f5e67f
+    ears: unwanted
+    condition: "If 라벨이 병합되지 않은 일반 칸이면"
+    text: "The system shall 기존 동작(오른쪽 실재 값칸 우선, 없으면 아래)을 그대로 유지한다 — F-ae778890 라벨→값 매핑 회귀 없음."
+    test_refs: ["apps/studio-host/src/core/merged-label-value-resolve.test.ts"]
+    notes: "## Why\n제목(0,0)처럼 비병합 라벨은 오른쪽 값칸이 실재하므로 그대로 반환돼야 한다. 기존 58개 form-fill 테스트 GREEN 유지가 이 AC의 회귀 가드다."

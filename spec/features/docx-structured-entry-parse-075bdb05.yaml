@@ -1,0 +1,35 @@
+id: F-075bdb05
+slug: docx-structured-entry-parse
+title: "docx → 구조화 항목 레코드 파싱 (연구노트 양식: 제목/본문/메타 + 목차)"
+status: done
+modules:
+  - apps/desktop/src-tauri/src/ai/docx.rs
+acceptance_criteria:
+  - id: AC-eb35e918
+    ears: event
+    condition: "When docx 바이트를 인제스트 소스로 받으면"
+    text: "The system shall word/document.xml의 최상위 블록을 문서 순서대로(표·단락 혼합) 파싱한다."
+    test_refs: ["apps/desktop/src-tauri/src/ai/docx.rs"]
+    notes: "기존 extract_docx_text(평문)와 별개의 구조 파서. <w:body> 직계 자식을 <w:tbl>/<w:p> 순서 보존으로 수집(현재 평문 추출은 순서·표 경계를 잃음)."
+  - id: AC-a4d6b41b
+    ears: ubiquitous
+    text: "The system shall 항목 경계('제목' 1행 표 시작부터 다음 '제목' 표 직전까지)를 식별해 각 항목을 {title, body_paragraphs[], recorders[], confirmer, record_date, confirm_date} 레코드로 추출한다."
+    test_refs: ["apps/desktop/src-tauri/src/ai/docx.rs"]
+    notes: "메타 표는 라벨-값 쌍(기록자/확인자/기록 일자/확인 일자). recorders는 콤마 분리 리스트. 검증된 구조(연구노트_2026년_1월 docx에서 45/45 완전 추출)."
+  - id: AC-ee8674e3
+    ears: ubiquitous
+    text: "The system shall 본문 단락의 계층 불릿(Ÿ/1./–/□①) 텍스트를 순서·들여쓰기 단서와 함께 보존한다."
+    test_refs: ["apps/desktop/src-tauri/src/ai/docx.rs"]
+    notes: "본문은 제목 표와 메타 표 사이의 <w:p> 단락들. 평탄화 금지 — HWP 채움 단계에서 문단 레벨 매핑에 쓰임."
+  - id: AC-80febe36
+    ears: event
+    condition: "When 목차 표가 존재하면"
+    text: "The system shall 목차를 일련번호/제목/날짜 레코드 목록으로 추출한다."
+    test_refs: ["apps/desktop/src-tauri/src/ai/docx.rs"]
+    notes: "목차는 헤더행(일련번호/제목(내용)/날짜) + N행. 항목 레코드와 별도 컬렉션으로 반환."
+  - id: AC-d654e905
+    ears: unwanted
+    condition: "If 예상 구조(제목/메타 표)가 아니거나 항목이 0개면"
+    text: "The system shall 빈·부분 결과 대신 사유를 담은 오류를 반환하고 panic하지 않는다."
+    test_refs: ["apps/desktop/src-tauri/src/ai/docx.rs"]
+    notes: "구조 불일치를 조용히 빈 리스트로 넘기면 상위 인제스트가 빈 HWP를 만들 수 있으므로 명시적 오류로 차단."

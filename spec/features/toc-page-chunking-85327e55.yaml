@@ -1,0 +1,26 @@
+id: F-85327e55
+slug: toc-page-chunking
+title: "목차 페이지 분할 — 페이지 분량씩 청크로 나눠 표를 복제·이어붙여 다음 페이지로 연결"
+status: done
+modules:
+  - apps/studio-host/src/core/ai-apply.ts
+  - apps/studio-host/src/core/ai-bridge.ts
+  - apps/studio-host/src/ui/agent-sidebar.ts
+acceptance_criteria:
+  - id: AC-cd78052c
+    ears: ubiquitous
+    text: "The system shall chunkTocItems가 목차 항목을 제목 길이로 줄 수를 추정해(charsPerLine 기준, 길면 2줄+) 페이지 용량(linesPerPage)까지 누적해 청크로 나눈다 — 고정 행 수가 아니라 세로 높이(추정)로 나눠 페이지를 채운다."
+    test_refs: ["apps/studio-host/src/core/toc-page-chunking.test.ts"]
+    notes: "## Why\n한 표가 페이지 경계를 자동으로 못 넘긴다(rhwp 직렬화 한계, 한컴·개발hop 모두 22/33에서 잘림). 정확한 렌더 높이는 못 믿으므로 제목 길이로 추정. 사용자 지적: 고정 행은 공간이 남거나 넘친다. charsPerLine=26, linesPerPage=18(넘침=잘림이므로 보수적)."
+  - id: AC-e7dd35a5
+    ears: event
+    condition: "When clone_table 페이로드에 toc_rows가 있으면"
+    text: "The system shall cloneTableAt이 복제본의 데이터 행을 toc_rows로 재구성한다 — 헤더 행(0)은 보존하고 기존 데이터 행을 제거한 뒤 청크 항목마다 한 행을 추가·채운다."
+    test_refs: ["apps/studio-host/src/core/toc-page-chunking.test.ts"]
+    notes: "## Decision\nclone_table.toc_rows: string[][]. cloneTableAt은 paste 후 getTableCellBboxes로 행 수 파악 → 헤더 제외 하향 deleteTableRow → insertTableRow(상향) + bbox로 셀 찾아 insertTextInCell. cell_fills 경로는 안 탄다(조기 return)."
+  - id: AC-ff60ad84
+    ears: event
+    condition: "When docx 일괄 변환의 목차가 한 페이지를 넘으면"
+    text: "The system shall 첫 청크는 원본 목차 표에 채우고 나머지 청크는 목차 표를 복제(새 페이지)해 헤더 반복하며 이어 붙인다 — buildTocChunkCloneEdit가 청크당 clone_table+toc_rows 편집을 만들고 원본 목차 표 문단을 anchor로 쓴다."
+    test_refs: ["apps/studio-host/src/core/toc-page-chunking.test.ts"]
+    notes: "## Decision\nrunDocxFormFill: chunkTocItems로 나눔 → chunk0=buildTocRegenEdits(원본 표), chunk1..=buildTocChunkCloneEdit(anchor=sec[tocSec].p[tocPara]). page_break=true + 고아 리문단 제거(F-32a1a7d2)로 새 페이지 머리에 온다."

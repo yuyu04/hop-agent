@@ -1,0 +1,30 @@
+id: F-9a5045da
+slug: toc-regenerate-from-docx
+title: "목차 재생성 — 파싱된 docx 목차로 HWP 목차 표를 행 단위로 재구성"
+status: done
+modules:
+  - apps/studio-host/src/core/ai-apply.ts
+  - apps/studio-host/src/ui/agent-sidebar.ts
+acceptance_criteria:
+  - id: AC-15cab948
+    ears: event
+    condition: "When docx 일괄 변환이 항목을 추가하고 파싱된 목차(ResearchNoteDoc.toc)가 있으면"
+    text: "The system shall HWP 목차 표의 데이터 행을 파싱된 목차로 재구성한다 — 기존 데이터 행을 제거하고 항목마다 [일련번호, 제목] 행을 추가하며 헤더 행은 보존한다."
+    test_refs: ["apps/studio-host/src/core/toc-regenerate-from-docx.test.ts"]
+    notes: "## Why\n사용자가 목차 수정을 두 번 강조. 45개 엔트리를 추가해도 목차 표는 옛 9줄 그대로라 실제 항목과 불일치. docx 파서가 이미 toc 45행을 추출하므로 그대로 쓴다.\n## Decision\nbuildTocRegenEdits(tocTable, items): Edit[] — table_edit delete_row(하향)로 헤더 제외 데이터 행을 전부 제거 후, insert_row(상향, below)로 항목마다 no/title 행을 추가. 비고 열은 비워 둔다. 새 행 셀 채움은 fillNewTableLine(getTableCellBboxes)가 처리."
+  - id: AC-99a62513
+    ears: ubiquitous
+    text: "The system shall 목차 표를 식별한다 — form_tables 중 셀에 일련 과 비고 텍스트를 함께 가진 표(대외비·기관명·엔트리 양식 표는 해당 없음)."
+    test_refs: ["apps/studio-host/src/core/toc-regenerate-from-docx.test.ts"]
+    notes: "## Decision\npickTocTable(tables): FormSourceTable|null — cells.some(text 포함 일련) && cells.some(text 포함 비고). 목차 표 헤더가 일련(쪽)번호 / 제목(내용) / 비고라 유일 식별."
+  - id: AC-7ee4a193
+    ears: ubiquitous
+    text: "The system shall 행 재구성을 table_edit(delete_row 하향 + insert_row 상향) ActionScript 편집으로 수행해 기존 미리보기/승인 흐름과 snapshot 롤백에 통합된다."
+    test_refs: ["apps/studio-host/src/core/toc-regenerate-from-docx.test.ts"]
+    notes: "## Why\napplyActionScript가 같은 표의 구조 편집(isTableStructEdit)을 입력 순서대로 적용한다. 따라서 delete 하향 후 insert 상향 시퀀스가 결정적이고, 동일 snapshot에서 엔트리 복제와 함께 원자적으로 승인/거절된다."
+  - id: AC-a60e230a
+    ears: unwanted
+    condition: "If 목차 표를 찾지 못하거나 파싱된 목차가 비어 있으면"
+    text: "The system shall 목차를 변경하지 않고(no-op) 나머지 엔트리 변환은 그대로 진행한다."
+    test_refs: ["apps/studio-host/src/core/toc-regenerate-from-docx.test.ts"]
+    notes: "## Why\n목차 재구성은 보조 단계 — 표를 못 찾아도 45개 엔트리 추가는 성공해야 한다. buildTocRegenEdits는 tocTable null 또는 items 빈 배열이면 빈 배열을 반환한다."

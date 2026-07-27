@@ -308,8 +308,9 @@ describe('F-220afd: clone-form-table-fill', () => {
         ]),
       );
 
-      // 복제 후 새 페이지 시작
-      expect(wasm.calls).toContain('insertPageBreak(0,4,0)');
+      // 쪽나누기는 표 '앞' 앵커 문단(para=3)에 넣어 표가 새 페이지 머리에서 시작한다
+      // (표 문단 뒤에 넣으면 빈 페이지가 생긴다 — F-32a1a7d2).
+      expect(wasm.calls).toContain('insertPageBreak(0,3,5)');
     });
   });
 
@@ -713,8 +714,8 @@ describe('F-220afd: clone-form-table-fill', () => {
       // 표 구조 변경 없음
       expect(wasm.calls.some((c) => c.startsWith('insertTableRow('))).toBe(false);
 
-      // 페이지 브레이크
-      expect(wasm.calls).toContain('insertPageBreak(0,6,0)');
+      // 페이지 브레이크 — 표 '앞' 앵커 문단(para=5)에 넣어 빈 페이지 없이 표가 새 페이지 시작.
+      expect(wasm.calls).toContain('insertPageBreak(0,5,4)');
     });
   });
 });

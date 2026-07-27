@@ -65,6 +65,11 @@ export class HwpDocument {
      */
     clipboardHasControl(): boolean;
     /**
+     * 항목 표 위 빈 선행 문단을 최소 높이로 압축(한컴에서 항목이 다음 페이지로 밀리는 것
+     * 방지 — 표가 페이지 상단 가까이서 시작하도록 여백 확보). 반환: `{"compacted":N}`
+     */
+    compactLeadingParasBeforeTables(section_idx: number): string;
+    /**
      * 배포용(읽기전용) 문서를 편집 가능한 일반 문서로 변환한다.
      *
      * 반환값: JSON `{"ok":true,"converted":true}` 또는 `{"ok":true,"converted":false}`
@@ -136,6 +141,11 @@ export class HwpDocument {
      *                 treatAsChar?: bool, colWidths?: [u32, ...] }
      */
     createTableEx(options_json: string): string;
+    /**
+     * 표 셀 안에 중첩 표를 만들어 넣는다(본문 데이터 표 이전). cell_texts_json = 셀
+     * 텍스트 JSON 배열(row-major). 반환: `{"ok":true}`
+     */
+    createTableInCell(section_idx: number, parent_para_idx: number, control_idx: number, cell_idx: number, cell_para_idx: number, rows: number, cols: number, cell_texts_json: string): string;
     /**
      * 책갈피 삭제
      */
@@ -898,6 +908,13 @@ export class HwpDocument {
      */
     insertPicture(section_idx: number, para_idx: number, char_offset: number, image_data: Uint8Array, width: number, height: number, natural_width_px: number, natural_height_px: number, extension: string, description: string): string;
     /**
+     * 표 셀 안에 그림을 넣는다(insertPicture의 셀 버전). 그림 문단을 셀의
+     * paragraphs[cell_para_idx] 위치에 삽입한다.
+     *
+     * 반환: JSON `{"ok":true}`
+     */
+    insertPictureInCell(section_idx: number, parent_para_idx: number, control_idx: number, cell_idx: number, cell_para_idx: number, image_data: Uint8Array, width: number, height: number, natural_width_px: number, natural_height_px: number, extension: string, description: string): string;
+    /**
      * 표에 열을 삽입한다.
      *
      * 반환값: JSON `{"ok":true,"rowCount":<N>,"colCount":<M>}`
@@ -1070,6 +1087,14 @@ export class HwpDocument {
      * 커서 위치의 누름틀 필드를 제거한다 (셀/글상자 내 문단).
      */
     removeFieldAtInCell(section_idx: number, parent_para_idx: number, control_idx: number, cell_idx: number, cell_para_idx: number, char_offset: number, is_textbox: boolean): string;
+    /**
+     * 표 문단과 쪽 나누기 문단 사이의 빈 문단을 제거(한컴 빈 페이지 방지). 반환: `{"removed":N}`
+     */
+    removeOrphanParasBeforePageBreaks(section_idx: number): string;
+    /**
+     * 원본 양식(샘플) 표 + 바로 뒤 쪽 나누기 제거. 반환: `{"removedBreak":bool}`
+     */
+    removeSourceFormTable(section_idx: number, parent_para_idx: number, control_idx: number): string;
     /**
      * 책갈피 이름 변경
      */
@@ -1343,6 +1368,10 @@ export class HwpDocument {
      */
     toggleHideHeaderFooter(page_index: number, is_header: boolean): string;
     /**
+     * 구역 끝 '마지막 표 뒤' 빈 문단들을 제거(문서 끝 빈 페이지 방지). 반환: `{"removed":N}`
+     */
+    trimTrailingParasAfterLastTable(section_idx: number): string;
+    /**
      * GroupShape를 풀어 자식 개체들을 개별로 복원한다.
      */
     ungroupShape(section_idx: number, para_idx: number, control_idx: number): string;
@@ -1446,6 +1475,7 @@ export interface InitOutput {
     readonly hwpdocument_clearActiveField: (a: number) => void;
     readonly hwpdocument_clearClipboard: (a: number) => void;
     readonly hwpdocument_clipboardHasControl: (a: number) => number;
+    readonly hwpdocument_compactLeadingParasBeforeTables: (a: number, b: number) => [number, number, number, number];
     readonly hwpdocument_convertToEditable: (a: number) => [number, number, number, number];
     readonly hwpdocument_copyControl: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly hwpdocument_copySelection: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
@@ -1458,6 +1488,7 @@ export interface InitOutput {
     readonly hwpdocument_createStyle: (a: number, b: number, c: number) => number;
     readonly hwpdocument_createTable: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
     readonly hwpdocument_createTableEx: (a: number, b: number, c: number) => [number, number, number, number];
+    readonly hwpdocument_createTableInCell: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => [number, number, number, number];
     readonly hwpdocument_deleteBookmark: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly hwpdocument_deleteEquationControl: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly hwpdocument_deleteFootnote: (a: number, b: number, c: number, d: number) => [number, number, number, number];
@@ -1600,6 +1631,7 @@ export interface InitOutput {
     readonly hwpdocument_insertPageBreak: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly hwpdocument_insertParagraph: (a: number, b: number, c: number) => [number, number, number, number];
     readonly hwpdocument_insertPicture: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number) => [number, number, number, number];
+    readonly hwpdocument_insertPictureInCell: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number, p: number) => [number, number, number, number];
     readonly hwpdocument_insertTableColumn: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
     readonly hwpdocument_insertTableRow: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
     readonly hwpdocument_insertText: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
@@ -1632,6 +1664,8 @@ export interface InitOutput {
     readonly hwpdocument_reflowLinesegs: (a: number) => number;
     readonly hwpdocument_removeFieldAt: (a: number, b: number, c: number, d: number) => [number, number];
     readonly hwpdocument_removeFieldAtInCell: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number];
+    readonly hwpdocument_removeOrphanParasBeforePageBreaks: (a: number, b: number) => [number, number, number, number];
+    readonly hwpdocument_removeSourceFormTable: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly hwpdocument_renameBookmark: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
     readonly hwpdocument_renderEquationPreview: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
     readonly hwpdocument_renderPageCanvas: (a: number, b: number) => [number, number, number];
@@ -1687,6 +1721,7 @@ export interface InitOutput {
     readonly hwpdocument_splitTableCellsInRange: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number) => [number, number, number, number];
     readonly hwpdocument_textToLogicalOffset: (a: number, b: number, c: number, d: number) => [number, number, number];
     readonly hwpdocument_toggleHideHeaderFooter: (a: number, b: number, c: number) => [number, number, number, number];
+    readonly hwpdocument_trimTrailingParasAfterLastTable: (a: number, b: number) => [number, number, number, number];
     readonly hwpdocument_ungroupShape: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly hwpdocument_updateClickHereProps: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number];
     readonly hwpdocument_updateConnectorsInSection: (a: number, b: number) => void;

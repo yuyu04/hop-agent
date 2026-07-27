@@ -362,6 +362,31 @@ function setupGlobalShortcuts(): void {
       }
     }
   }, false);
+
+  // 문서 복사 포커스 가드: 문서 본문 복사는 InputHandler의 숨은 textarea에 'copy' 이벤트가
+  // 닿아야 동작한다(textarea가 포커스여야 함). AI 패널을 열거나 다른 UI를 만지면 포커스가
+  // 그쪽으로 옮겨가 Ctrl/Cmd+C 가 문서 textarea 에 닿지 않아 복사가 안 먹는다. 화면상의
+  // 입력란(패널/대화상자/툴바)에 포커스인 경우는 그쪽 복사를 존중하고, 그 외(문서 영역·
+  // 포커스 유실)에는 문서 textarea 로 포커스를 보장해 복사가 동작하게 한다. capture 단계라
+  // 브라우저가 copy 이벤트를 만들기 전에 포커스를 잡는다.
+  document.addEventListener(
+    'keydown',
+    (e) => {
+      if (!(e.ctrlKey || e.metaKey) || (e.key !== 'c' && e.key !== 'C')) return;
+      // DOM 텍스트 선택(AI 패널 응답·대화상자 등)이 있으면 네이티브/패널 복사를 존중한다.
+      // 문서 본문 선택은 캔버스 커스텀 선택이라 DOM 선택이 아니므로 여기에 걸리지 않는다.
+      if ((window.getSelection?.()?.toString() ?? '').length > 0) return;
+      const ae = document.activeElement as HTMLElement | null;
+      if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)) {
+        // 화면에 보이는 입력란이면(패널/대화상자/툴바) 네이티브 복사를 그대로 둔다.
+        // 문서용 숨은 textarea 는 화면 밖(left:-9999px)이라 여기서 걸러지지 않는다.
+        const r = ae.getBoundingClientRect();
+        if (r.left > -1000 && r.width > 0) return;
+      }
+      if (inputHandler?.isActive()) inputHandler.focus();
+    },
+    true,
+  );
 }
 
 function setupFileInput(): void {
