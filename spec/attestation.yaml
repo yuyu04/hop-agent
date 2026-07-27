@@ -1,20 +1,64 @@
-# Cladding · Tier C — verification attestation (GREEN strict pre-push gate). Do not edit by hand.
-# One line per done feature: sha256 tree-hash of its modules at the last
-# attested verification. STALE_ATTESTATION compares; `clad check
-# --tier=pre-push --strict` GREEN refreshes. Content-anchored: survives
-# fresh clones and squash/rebase (suggested .gitattributes: merge=union).
-attested:
-  F-04a91c: acae7c3e73966c24
-  F-0858f2: aa01eb260f1c1224
-  F-10a6a5: aa4152dab27f23d0
-  F-191fd6: aa4152dab27f23d0
-  F-21a81b: aa4152dab27f23d0
-  F-220afd: f8b24a945dfa610a
-  F-466f8e: 69fc3b4c2d18be62
-  F-4e2261: 0a88ca4bfa152342
-  F-55a6a4: 75371658d7a7fd87
-  F-7a3dbe: 4ea5b66db3c2dfb0
-  F-ae778890: 9a67a77e0ed97c8d
-  F-d0dce3: fd12ea077bca4286
-  F-dc4b99: 974b6253a22f81eb
-  F-ffa7449b: 66c934d8e8ac6d54
+# Cladding · Tier C — verification attestation (v2). Written ONLY by a GREEN
+# `clad check --tier=pre-push --strict` gate — the file's one honest author.
+# Do not edit by hand.
+#
+#   attested_modules:  one line per module file across all done features,
+#                      value = sha256 of that file's bytes (16 hex). Editing a
+#                      file moves exactly its own line — not every co-owning
+#                      feature's — so parallel work rarely conflicts here.
+#   attested_features: one constant `ok` marker per done feature with modules.
+#                      STALE_ATTESTATION calls a feature fresh only when its
+#                      marker is present AND every module hash still matches.
+#
+# Merge conflict here? NEVER hand-resolve the hashes — keep either side and run
+# `clad check --tier=pre-push --strict`; the GREEN gate rewrites the truth.
+# Content-anchored: survives fresh clones and squash/rebase.
+attested_modules:
+  apps/desktop/src-tauri/src/ai/docx.rs: 471859ad979dcd49
+  apps/desktop/src-tauri/src/ai/mod.rs: 0573791ea5f4ef6b
+  apps/desktop/src-tauri/src/ai/pdf_pages.rs: 87f26b965922b062
+  apps/desktop/src-tauri/src/ai/pdf_pdfium.rs: 7fd2cbc41e92c72b
+  apps/desktop/src-tauri/src/ai/pdf_render.rs: 5391f3d93c2c2ac9
+  apps/desktop/src-tauri/src/ai/schema.rs: 4065fd05fb822475
+  apps/desktop/src-tauri/src/ai/serialize.rs: 1d79a346a0ac7fd9
+  apps/desktop/src-tauri/src/commands.rs: 1377b34010fc7f56
+  apps/desktop/src-tauri/src/docx_export.rs: cbfa5c5889e8bfd3
+  apps/desktop/src-tauri/src/hwp_table_fix.rs: e70c3701e9f64545
+  apps/desktop/src-tauri/src/lib.rs: a229978be859fe60
+  apps/studio-host/src/core/ai-apply.ts: 804f65a1788830f8
+  apps/studio-host/src/core/ai-bridge.ts: c13184c6dff85ffd
+  apps/studio-host/src/core/ai-diff.ts: a5692921ffdb80cb
+  apps/studio-host/src/core/ai-session.ts: 5534edd7c7e36ec3
+  apps/studio-host/src/core/chart-render.ts: 48b8c91bdf1a2430
+  apps/studio-host/src/core/tauri-bridge.ts: 1c95f5d3b9cc8598
+  apps/studio-host/src/ui/agent-sidebar.ts: 0874188bac2ab119
+  apps/studio-host/src/ui/ai-inline-diff.ts: bb8e2d0f24bec827
+attested_features:
+  F-04a91c: ok
+  F-075bdb05: ok
+  F-0858f2: ok
+  F-10a6a5: ok
+  F-157aa77d: ok
+  F-191fd6: ok
+  F-1e6d84d6: ok
+  F-21a81b: ok
+  F-220afd: ok
+  F-32a1a7d2: ok
+  F-46554fae: ok
+  F-466f8e: ok
+  F-4bdf23a4: ok
+  F-4d5d3e00: ok
+  F-4e2261: ok
+  F-55a6a4: ok
+  F-5dc6297e: ok
+  F-7a3dbe: ok
+  F-85327e55: ok
+  F-9a5045da: ok
+  F-addf13c1: ok
+  F-ae778890: ok
+  F-beb35fbb: ok
+  F-c63c3a91: ok
+  F-d0dce3: ok
+  F-dc4b99: ok
+  F-f6c643d1: ok
+  F-ffa7449b: ok

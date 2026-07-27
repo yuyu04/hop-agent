@@ -21,13 +21,31 @@ project:
     smoke_args: []
     expect_exit: 0
     is_safe_to_smoke: false
+  # GUI 엔트리를 스모크할 수 없으니(위 참조) 앱이 실제로 구동하는 코어를 헤드리스로 재실행한다.
+  # rhwp WASM + core/ai-apply를 앱과 같은 별칭·같은 진입 함수로 돌려 표지 채움 결과를
+  # HWP 바이트에 왕복시킨 뒤 값을 다시 읽어 확인한다 — exit-only 라이브니스가 아니라
+  # AC 결과 검증이다. 프로브 소스: apps/studio-host/src/tools/clad-smoke.smoke.ts
+  smoke:
+    - kind: cli
+      why: "표지 채움(F-1e6d84d6 AC-0f4d1836)을 rhwp WASM 왕복까지 재실행 — GUI 딜리버러블 대체"
+      run:
+        - pnpm
+        - --filter
+        - "@golbin/hop-studio-host"
+        - exec
+        - vitest
+        - run
+        - --config
+        - vitest.smoke.config.ts
+      expect:
+        exit: 0
+        token: "CLAD_SMOKE_OK cover_fill"
 
 features: []
 
 # Auto-maintained by `clad sync` (F-5b9f9f). Do not edit by hand.
 inventory:
-  features: 14
+  features: 28
   scenarios: 1
   capabilities: 6
   test_files: 0
-  last_synced: "2026-06-17"
