@@ -228,11 +228,14 @@ heading 힌트(F-0858f2)는 글자 크기·굵기 **휴리스틱 추정**이지 
 
 > ⚠️ **게이트 사각지대 — 반드시 알아야 할 것.**
 > `clad check`의 Unit tests 스테이지는 언어가 `typescript`라 **`vitest`만 돌린다.**
-> `cargo test`는 게이트에 없다. 실제로 F-293e8c99 구현 중 `serialize.rs`의 화이트리스트
-> 크기 단언 5건을 깨뜨렸는데 게이트는 GREEN이었고, 나중에 손으로 `cargo test`를 돌려서야
-> 발견했다. **Rust를 건드렸으면 `pnpm test:desktop`(= `cargo test`)을 직접 돌려라.**
-> (`project.smoke` 프로브로 묶는 건 프로브당 5초 상한 때문에 컴파일 시간을 감당 못 한다 —
-> CI 잡으로 거는 게 맞다.)
+> `cargo test`는 clad 게이트에 없다. 실제로 F-293e8c99 구현 중 `serialize.rs`의 화이트리스트
+> 크기 단언 5건을 깨뜨렸는데 clad 게이트는 GREEN이었고, 나중에 손으로 `cargo test`를
+> 돌려서야 발견했다. **Rust를 건드렸으면 `pnpm test:desktop`(= `cargo test`)을 직접 돌려라.**
+>
+> CI(`.github/workflows/ci.yml`)는 `pnpm test`를 돌리고 여기에 `cargo test`가 포함돼 있다.
+> 다만 2026-07-28까지 트리거가 `workflow_dispatch` 단독이라 **한 번도 자동 실행되지 않았다** —
+> 그래서 위 회귀를 CI도 못 잡았다. 지금은 `push`(main, feat/**) · `pull_request`에서 돈다.
+> (`project.smoke` 프로브로 묶는 건 프로브당 5초 상한 때문에 컴파일 시간을 감당 못 한다.)
 
 주의사항 (이미 값을 치른 것들):
 - **새 hop 모듈은 `hop-overrides.ts`에 등록해야 한다.** 안 하면 upstream 버전이 로드된다

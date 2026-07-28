@@ -14,7 +14,7 @@
 # `clad check --tier=pre-push --strict`; the GREEN gate rewrites the truth.
 # Content-anchored: survives fresh clones and squash/rebase.
 attested_modules:
-  apps/desktop/src-tauri/src/ai/docx.rs: 471859ad979dcd49
+  apps/desktop/src-tauri/src/ai/docx.rs: 568924b721f1a736
   apps/desktop/src-tauri/src/ai/mod.rs: 03634f1ae06a71ef
   apps/desktop/src-tauri/src/ai/pdf_pages.rs: 87f26b965922b062
   apps/desktop/src-tauri/src/ai/pdf_pdfium.rs: 7fd2cbc41e92c72b

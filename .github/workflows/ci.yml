@@ -1,6 +1,13 @@
 name: HOP CI
 
+# 자동 실행이 없으면(workflow_dispatch 단독) 사실상 CI가 없는 것과 같다 — 실제로
+# `cargo test`가 이 잡에 들어 있는데도(pnpm test → test:desktop) 한 번도 돌지 않아
+# Rust 테스트 회귀를 로컬 게이트에서만 잡을 수 있었다. clad 게이트는 vitest만 돌리므로
+# Rust 회귀를 막는 곳은 여기뿐이다.
 on:
+  push:
+    branches: ["main", "feat/**"]
+  pull_request:
   workflow_dispatch:
 
 permissions:
