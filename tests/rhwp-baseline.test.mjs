@@ -7,7 +7,10 @@ import test from 'node:test';
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const expectedRhwpVersion = '0.7.13';
-const expectedRhwpCommit = 'b3e16ef212af81ef37d973ddb86d6816d3804642';
+// 임시 포크(yuyu04/rhwp feat/hop-agent-native-ops) 커밋. upstream 기준은
+// b3e16ef2(v0.7.13)이고, edwardkim/rhwp에 PR이 머지되면 원복한다 —
+// 절차는 docs/architecture/UPSTREAM.md '임시 포크' 참조.
+const expectedRhwpCommit = 'f40c12f0f542cbf309898093183706a0379768c2';
 
 test('HOP keeps the rhwp renderer baseline aligned across submodule, vendored WASM, and native lockfile', async () => {
   const wasmPackage = JSON.parse(

@@ -4,8 +4,31 @@ HOP는 `edwardkim/rhwp`를 읽기 전용 upstream 의존성으로 사용한다.
 
 * upstream URL: `https://github.com/edwardkim/rhwp.git`
 * submodule 경로: `third_party/rhwp`
-* 기준 고정 커밋: `b3e16ef212af81ef37d973ddb86d6816d3804642` (`v0.7.13`)
+* upstream 기준 커밋: `b3e16ef212af81ef37d973ddb86d6816d3804642` (`v0.7.13`)
+* **현재 고정 커밋: `f40c12f0f542cbf309898093183706a0379768c2`** — 아래 '임시 포크' 참조
 * HOP 작업 브랜치: `main`
+
+### 임시 포크 (해소 대상)
+
+현재 submodule URL은 `https://github.com/yuyu04/rhwp.git`(브랜치
+`feat/hop-agent-native-ops`)을 가리킨다. 아래 소유권 규칙에 어긋나는 상태이며,
+의도적으로 한시적이다.
+
+이유: 양식 문서 후처리(`hwp_lineseg_fix.rs`)가 upstream에 없는 native 연산
+9종을 호출한다 — `compact_leading_paras_before_tables` ·
+`remove_orphan_paras_before_page_breaks` · `trim_trailing_paras_after_last_table` ·
+`remove_source_form_table` · `merge_section_into_previous` · `rechunk_toc_table` ·
+`sync_toc_page_numbers` · `fix_picture_borders` · `create_table_in_cell` /
+`insert_picture_in_cell`, 그리고 `set_table_properties`의 공개화.
+이 패치가 upstream에 없으면 **리포를 클론해도 `cargo build`가 실패한다**(E0599/E0624).
+
+해소 절차:
+
+1. `edwardkim/rhwp`에 `feat/hop-agent-native-ops` PR 제출
+2. 머지되면 `.gitmodules` URL을 `edwardkim/rhwp`로 원복하고 포인터를 머지 커밋으로 이동
+3. `tests/rhwp-baseline.test.mjs`의 `expectedRhwpCommit`과 이 문서를 함께 갱신
+
+`golbin/hop`도 `edwardkim/rhwp`를 가리키므로, 업스트림 기여를 하려면 1이 선행돼야 한다.
 
 ## 소유권 규칙
 
