@@ -1,3 +1,6 @@
 [submodule "third_party/rhwp"]
 	path = third_party/rhwp
-	url = https://github.com/edwardkim/rhwp.git
+	# 임시: hop-agent가 의존하는 양식 후처리 네이티브 연산(feat/hop-agent-native-ops)이
+	# 아직 edwardkim/rhwp에 머지되지 않아 포크를 가리킨다. PR이 머지되면 원복한다.
+	#   PR: https://github.com/edwardkim/rhwp (feat/hop-agent-native-ops)
+	url = https://github.com/yuyu04/rhwp.git
