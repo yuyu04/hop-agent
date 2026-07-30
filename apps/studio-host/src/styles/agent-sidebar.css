@@ -1,4 +1,64 @@
-/* AI Agent Sidebar — Cursor식 대화형 패널 (스레드 + 하단 컴포저) */
+/* AI Agent Sidebar — Cursor식 대화형 패널 (스레드 + 하단 컴포저)
+ *
+ * 시각 디자인은 Claude Design 프로젝트 "HOP AI편집 기능 리디자인"의
+ * `HOP AI 편집.dc.html` 우측 AI 편집 패널을 반영한다(따뜻한 종이 팔레트 +
+ * 남색 액센트). 색·간격·라운드·그림자를 아래 토큰으로 모아 두었으니 값을
+ * 직접 쓰지 말고 토큰을 참조한다.
+ *
+ * 디자인과 의도적으로 다른 점:
+ * - 아이콘: 시안은 coolicons 폰트(ci-*)를 쓰지만 이 앱에 원격 폰트·아이콘
+ *   의존이 없어 도입하지 않았다. 기존 글리프(＋ 🕘 ⋯ × ↑ 📎)를 유지하고
+ *   크기·색·히트영역만 시안에 맞췄다.
+ * - 서체: 시안은 Google Fonts(Noto Sans KR/JetBrains Mono/Nanum Myeongjo)를
+ *   불러오지만 데스크톱 앱에 네트워크 의존을 넣지 않는다. 시스템 스택 +
+ *   기존 monospace 를 쓰고 크기·굵기·역할만 반영했다.
+ * - 시안의 헤더 배지("문서 전체 인식됨")·컴포저 칩("선택 영역 · 15행")은
+ *   대응하는 실제 상태가 없어 넣지 않았다. 칩 줄은 실제 첨부(컨텍스트) 칩이
+ *   그 자리를 쓴다.
+ * - 하단 힌트는 실제 키 동작만 적는다(Enter 전송 / Shift+Enter 줄바꿈).
+ *   시안의 "⌘⏎ 전체 적용"은 구현이 없어 제외했다.
+ */
+
+.hop-ai-panel,
+.hop-ai-toggle {
+  /* 표면 */
+  --hop-ai-bg: #faf7f2;
+  --hop-ai-surface: #fff;
+  --hop-ai-surface-sunken: #fffdf9;
+  --hop-ai-warm-1: #f2ede4;
+  --hop-ai-warm-2: #f0ebe0;
+  --hop-ai-warm-3: #e8e3d8;
+  /* 글자 */
+  --hop-ai-ink: #1a1815;
+  --hop-ai-ink-2: #2c2925;
+  --hop-ai-ink-3: #46423c;
+  --hop-ai-muted: #6b665e;
+  --hop-ai-muted-2: #8e887e;
+  /* 액센트(남색) */
+  --hop-ai-accent: #1f3a5f;
+  --hop-ai-accent-hover: #1a2e4d;
+  --hop-ai-accent-tint: #e8edf4;
+  --hop-ai-accent-ink: #3b5c87;
+  /* 의미색 — diff/상태 */
+  --hop-ai-add-bg: #e7eee3;
+  --hop-ai-add-ink: #4a6b4a;
+  --hop-ai-del-bg: #f5e8e5;
+  --hop-ai-del-ink: #8c3a3a;
+  --hop-ai-warn-ink: #8a6420;
+  /* 선 */
+  --hop-ai-line: rgba(26, 24, 21, 0.08);
+  --hop-ai-line-strong: rgba(26, 24, 21, 0.14);
+  --hop-ai-hover: rgba(26, 24, 21, 0.06);
+  /* 형태 */
+  --hop-ai-r-sm: 6px;
+  --hop-ai-r-md: 8px;
+  --hop-ai-r-lg: 10px;
+  --hop-ai-r-pill: 999px;
+  --hop-ai-shadow-card: 0 1px 2px rgba(26, 24, 21, 0.04), 0 4px 12px rgba(26, 24, 21, 0.04);
+  --hop-ai-ease: 150ms cubic-bezier(0.2, 0, 0, 1);
+  /* 패널 폭 — body.hop-ai-open #studio-root 축소량과 반드시 같이 움직인다. */
+  --hop-ai-width: 448px;
+}
 
 .hop-ai-toggle {
   position: fixed;
@@ -9,7 +69,7 @@
   height: 44px;
   border-radius: 22px;
   border: none;
-  background: #2563eb;
+  background: var(--hop-ai-accent);
   color: #fff;
   font-weight: 700;
   cursor: pointer;
@@ -20,14 +80,16 @@
   position: fixed;
   top: 0;
   right: 0;
-  width: 380px;
+  width: var(--hop-ai-width);
   height: 100vh;
+  font-size: 13px;
+  color: var(--hop-ai-ink);
   z-index: 1001;
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
-  background: #f7f8fa;
-  border-left: 1px solid #d0d4da;
+  background: var(--hop-ai-bg);
+  border-left: 1px solid var(--hop-ai-line-strong);
   box-shadow: -2px 0 10px rgba(0, 0, 0, 0.08);
   transform: translateX(100%);
   transition: transform 0.18s ease;
@@ -38,10 +100,10 @@
 /* 패널이 열리면 fixed 오버레이가 문서 오른쪽(스크롤바 포함)을 가린다. 본문 영역을
    패널 폭만큼 줄여 문서와 세로 스크롤바가 패널 왼쪽에 보이게 한다. */
 body.hop-ai-open #studio-root {
-  width: calc(100vw - 380px);
+  width: calc(100vw - var(--hop-ai-width));
 }
 .hop-ai-panel.hop-ai-dragover {
-  outline: 2px dashed #2563eb;
+  outline: 2px dashed var(--hop-ai-accent);
   outline-offset: -4px;
 }
 .hop-ai-panel.hop-ai-dragover::after {
@@ -51,8 +113,8 @@ body.hop-ai-open #studio-root {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(37, 99, 235, 0.06);
-  color: #2563eb;
+  background: rgba(31, 58, 95, 0.06);
+  color: var(--hop-ai-accent);
   font-weight: 700;
   pointer-events: none;
   z-index: 1100;
@@ -61,34 +123,45 @@ body.hop-ai-open #studio-root {
 .hop-ai-header {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 10px 12px;
-  border-bottom: 1px solid #e0e3e8;
+  gap: 2px;
+  padding: 12px 14px 12px 18px;
+  border-bottom: 1px solid rgba(26, 24, 21, 0.06);
+  flex: none;
 }
 .hop-ai-title {
   flex: 1;
   font-weight: 700;
   font-size: 14px;
+  letter-spacing: -0.01em;
 }
+/* 헤더 아이콘 버튼 — 28px 정사각 히트영역, 6px 라운드. */
 .hop-ai-newchat,
+.hop-ai-history-btn,
 .hop-ai-settings-btn,
 .hop-ai-close {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
   border: none;
   background: transparent;
-  font-size: 16px;
+  font-size: 15px;
   line-height: 1;
   cursor: pointer;
-  color: #555;
-  padding: 4px 6px;
-  border-radius: 4px;
+  color: var(--hop-ai-muted);
+  padding: 0;
+  border-radius: var(--hop-ai-r-sm);
+  transition: background var(--hop-ai-ease);
 }
 .hop-ai-newchat:hover,
+.hop-ai-history-btn:hover,
 .hop-ai-settings-btn:hover,
 .hop-ai-close:hover {
-  background: #e6e9ee;
+  background: var(--hop-ai-hover);
+  color: var(--hop-ai-ink);
 }
 .hop-ai-close {
-  font-size: 20px;
+  font-size: 19px;
 }
 
 /* 대화 탭 바 */
@@ -97,7 +170,7 @@ body.hop-ai-open #studio-root {
   gap: 4px;
   overflow-x: auto;
   padding: 6px 8px 0;
-  border-bottom: 1px solid #e0e3e8;
+  border-bottom: 1px solid var(--hop-ai-line);
 }
 .hop-ai-tab {
   flex: 0 0 auto;
@@ -106,12 +179,13 @@ body.hop-ai-open #studio-root {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 12px;
-  border: 1px solid #d0d4da;
+  border: 1px solid var(--hop-ai-line-strong);
   border-bottom: none;
-  border-radius: 6px 6px 0 0;
-  background: #eef0f3;
+  border-radius: var(--hop-ai-r-sm) var(--hop-ai-r-sm) 0 0;
+  background: var(--hop-ai-warm-1);
   padding: 4px 10px;
   cursor: pointer;
+  color: var(--hop-ai-ink-3);
 }
 .hop-ai-tab-active {
   background: #fff;
@@ -142,10 +216,10 @@ body.hop-ai-open #studio-root {
 .hop-ai-thread {
   flex: 1;
   overflow-y: auto;
-  padding: 12px;
+  padding: 18px 18px 8px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 18px;
   /* 대화 내용을 드래그 선택·복사할 수 있게 한다. */
   user-select: text;
   -webkit-user-select: text;
@@ -162,23 +236,28 @@ body.hop-ai-open #studio-root {
   align-items: flex-end;
 }
 .hop-ai-msg-user .hop-ai-msg-text {
-  background: #2563eb;
+  background: var(--hop-ai-accent);
   color: #fff;
-  border-radius: 12px 12px 2px 12px;
-  padding: 8px 12px;
+  border-radius: var(--hop-ai-r-lg) var(--hop-ai-r-lg) 4px var(--hop-ai-r-lg);
+  padding: 10px 14px;
   white-space: pre-wrap;
   word-break: break-word;
-  max-width: 300px;
+  max-width: 88%;
+  font-size: 13px;
+  line-height: 1.6;
 }
 .hop-ai-msg-assistant {
   align-self: flex-start;
   width: 100%;
 }
+/* 시안: 어시스턴트 답변은 말풍선 없이 본문 텍스트로 흐른다. */
 .hop-ai-msg-assistant .hop-ai-msg-text {
-  background: #f1f3f5;
-  color: #1f2328;
-  border-radius: 12px 12px 12px 2px;
-  padding: 8px 12px;
+  background: transparent;
+  color: var(--hop-ai-ink-2);
+  border-radius: 0;
+  padding: 0;
+  font-size: 13px;
+  line-height: 1.7;
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -191,13 +270,13 @@ body.hop-ai-open #studio-root {
   align-self: flex-end;
   background: none;
   border: none;
-  color: #8a8f98;
+  color: var(--hop-ai-muted-2);
   font-size: 11px;
   cursor: pointer;
   padding: 0 2px;
 }
 .hop-ai-msg-edit:hover {
-  color: #2563eb;
+  color: var(--hop-ai-accent);
   text-decoration: underline;
 }
 /* 말풍선 인라인 편집(Cursor식) — 말풍선이 입력창으로 바뀐다 */
@@ -210,13 +289,13 @@ body.hop-ai-open #studio-root {
 .hop-ai-msg-editbox {
   font: inherit;
   font-size: 13px;
-  border: 1px solid #2563eb;
+  border: 1px solid var(--hop-ai-accent);
   border-radius: 10px;
   padding: 8px 10px;
   resize: vertical;
   min-height: 48px;
   background: #fff;
-  color: #1f2328;
+  color: var(--hop-ai-ink);
 }
 .hop-ai-msg-edit-actions {
   display: flex;
@@ -229,12 +308,12 @@ body.hop-ai-open #studio-root {
   border-radius: 6px;
   padding: 4px 12px;
   cursor: pointer;
-  border: 1px solid #c9ccd2;
+  border: 1px solid var(--hop-ai-line-strong);
   background: #fff;
 }
 .hop-ai-msg-edit-send {
-  background: #2563eb;
-  border-color: #2563eb;
+  background: var(--hop-ai-accent);
+  border-color: var(--hop-ai-accent);
   color: #fff;
 }
 
@@ -245,7 +324,7 @@ body.hop-ai-open #studio-root {
 }
 /* 디버그 로그 패널 */
 .hop-ai-log {
-  border-bottom: 1px solid #e5e7eb;
+  border-bottom: 1px solid var(--hop-ai-line);
   background: #0b1021;
   color: #cdd3e0;
   max-height: 220px;
@@ -284,14 +363,14 @@ body.hop-ai-open #studio-root {
   max-height: 60vh;
   overflow-y: auto;
   background: #fff;
-  border: 1px solid #d0d4da;
+  border: 1px solid var(--hop-ai-line-strong);
   border-radius: 8px;
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.22);
   padding: 4px;
 }
 .hop-ai-menu-head {
   font-size: 11px;
-  color: #888;
+  color: var(--hop-ai-muted-2);
   padding: 6px 8px 2px;
 }
 .hop-ai-menu-item {
@@ -310,15 +389,15 @@ body.hop-ai-open #studio-root {
   white-space: nowrap;
 }
 .hop-ai-menu-item:hover {
-  background: #eef0f3;
+  background: var(--hop-ai-warm-1);
 }
 .hop-ai-menu-item-active {
   font-weight: 600;
-  color: #2563eb;
+  color: var(--hop-ai-accent);
 }
 .hop-ai-menu-divider {
   height: 1px;
-  background: #e0e3e8;
+  background: var(--hop-ai-line);
   margin: 4px 0;
 }
 
@@ -345,7 +424,7 @@ body.hop-ai-open #studio-root {
   align-items: center;
   justify-content: space-between;
   padding: 10px 12px;
-  border-bottom: 1px solid #e0e3e8;
+  border-bottom: 1px solid var(--hop-ai-line);
 }
 .hop-ai-modal-title {
   font-weight: 700;
@@ -357,7 +436,7 @@ body.hop-ai-open #studio-root {
   font-size: 18px;
   line-height: 1;
   cursor: pointer;
-  color: #555;
+  color: var(--hop-ai-ink-3);
 }
 
 /* 옵션 항목들(모달 내부) */
@@ -392,10 +471,10 @@ body.hop-ai-open #studio-root {
 }
 .hop-ai-key-status {
   font-size: 11px;
-  color: #946200;
+  color: var(--hop-ai-warn-ink);
 }
 .hop-ai-key-status[data-tone='ok'] {
-  color: #1a7f37;
+  color: var(--hop-ai-add-ink);
 }
 .hop-ai-key-status[data-tone='info'] {
   color: #666;
@@ -405,39 +484,68 @@ body.hop-ai-open #studio-root {
   align-items: center;
   gap: 6px;
   font-size: 12px;
-  color: #444;
+  color: var(--hop-ai-ink-3);
   cursor: pointer;
 }
 
 /* 컴포저(하단 입력) */
+/* 컴포저 — 시안: 빠른작업 칩 줄 → 흰 입력 카드 → 힌트 줄. 배경은 패널색. */
 .hop-ai-composer {
-  border-top: 1px solid #e0e3e8;
-  padding: 8px;
+  border-top: none;
+  padding: 0 14px 8px;
   display: flex;
   flex-direction: column;
+  gap: 0;
+  background: transparent;
+  flex: none;
+}
+/* 입력 카드 — 칩 줄 + 텍스트영역 + 하단 바를 한 덩어리로 감싼다. */
+.hop-ai-composer-card {
+  background: var(--hop-ai-surface);
+  border: 1px solid var(--hop-ai-line-strong);
+  border-radius: var(--hop-ai-r-lg);
+  box-shadow: var(--hop-ai-shadow-card);
+  overflow: hidden;
+}
+/* 힌트 줄 — 실제 키 동작만 적는다. */
+.hop-ai-hints {
+  display: flex;
+  gap: 12px;
+  padding: 7px 4px 4px;
+  font-size: 10.5px;
+  color: var(--hop-ai-muted-2);
+}
+/* 컨텍스트 줄 — '컨텍스트 추가' + 첨부 칩. 칩이 0건이면 chipsArea만 숨는다. */
+.hop-ai-context-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 6px;
-  background: #fff;
+  padding: 9px 10px 4px;
 }
 .hop-ai-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  align-items: center;
+  gap: 6px;
 }
 .hop-ai-chip {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 11px;
-  background: #eef0f3;
-  border: 1px solid #d9dde3;
-  border-radius: 10px;
-  padding: 2px 6px;
+  font-size: 11.5px;
+  background: var(--hop-ai-accent-tint);
+  color: var(--hop-ai-accent);
+  border: none;
+  border-radius: var(--hop-ai-r-sm);
+  height: 24px;
+  padding: 0 9px;
 }
 .hop-ai-chip-remove {
   border: none;
   background: transparent;
   cursor: pointer;
-  color: #888;
+  color: var(--hop-ai-muted-2);
   font-size: 13px;
   line-height: 1;
   padding: 0;
@@ -448,37 +556,55 @@ body.hop-ai-open #studio-root {
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
+  padding-bottom: 10px;
 }
+/* 모드 전환 — 시안: 알약 트랙 안에서 활성 탭만 흰 배경으로 떠오른다. */
 .hop-ai-mode-toggle {
   display: inline-flex;
-  border: 1px solid #d0d4da;
-  border-radius: 8px;
+  gap: 0;
+  padding: 2px;
+  border: none;
+  border-radius: var(--hop-ai-r-pill);
+  background: var(--hop-ai-warm-2);
   overflow: hidden;
 }
 .hop-ai-mode-btn {
   border: none;
-  background: #fff;
-  color: #555;
-  font-size: 12px;
-  padding: 3px 10px;
+  background: transparent;
+  color: var(--hop-ai-muted);
+  font-size: 11.5px;
+  height: 24px;
+  padding: 0 12px;
+  border-radius: var(--hop-ai-r-pill);
   cursor: pointer;
+  transition: background var(--hop-ai-ease);
 }
 .hop-ai-mode-btn + .hop-ai-mode-btn {
-  border-left: 1px solid #d0d4da;
+  border-left: none;
+}
+.hop-ai-mode-btn:hover:not(.hop-ai-mode-active) {
+  color: var(--hop-ai-ink-2);
+}
+/* 활성 탭 — 트랙 위로 떠오른다. 이 규칙이 없어 지금까지 활성 표시가 없었다. */
+.hop-ai-mode-active {
+  background: var(--hop-ai-surface);
+  color: var(--hop-ai-ink);
+  font-weight: 500;
+  box-shadow: 0 1px 2px rgba(26, 24, 21, 0.08);
 }
 .hop-ai-mode-active {
-  background: #2563eb;
+  background: var(--hop-ai-accent);
   color: #fff;
 }
 .hop-ai-skill-select,
 .hop-ai-theme-select {
   font: inherit;
   font-size: 11px;
-  border: 1px solid #d0d4da;
+  border: 1px solid var(--hop-ai-line-strong);
   border-radius: 8px;
   padding: 2px 6px;
   background: #fff;
-  color: #333;
+  color: var(--hop-ai-ink-2);
   max-width: 150px;
 }
 .hop-ai-quick {
@@ -487,16 +613,17 @@ body.hop-ai-open #studio-root {
   gap: 4px;
 }
 .hop-ai-quick-chip {
-  border: 1px solid #d9dde3;
-  background: #eef0f3;
-  color: #333;
-  font-size: 11px;
-  border-radius: 12px;
-  padding: 2px 9px;
+  border: 1px solid rgba(26, 24, 21, 0.1);
+  background: var(--hop-ai-warm-1);
+  color: var(--hop-ai-ink-3);
+  font-size: 11.5px;
+  border-radius: var(--hop-ai-r-sm);
+  padding: 5px 10px;
   cursor: pointer;
+  transition: background var(--hop-ai-ease);
 }
 .hop-ai-quick-chip:hover {
-  background: #e3e7ee;
+  background: var(--hop-ai-warm-3);
 }
 /* 변형(대안) 제안 버튼 */
 .hop-ai-variations {
@@ -507,11 +634,11 @@ body.hop-ai-open #studio-root {
 }
 .hop-ai-variations-label {
   font-size: 11px;
-  color: #888;
+  color: var(--hop-ai-muted-2);
 }
 .hop-ai-variation {
   text-align: left;
-  border: 1px solid #d9dde3;
+  border: 1px solid var(--hop-ai-line);
   background: #fff;
   border-radius: 6px;
   padding: 5px 8px;
@@ -523,26 +650,38 @@ body.hop-ai-open #studio-root {
   background: #f0f3f8;
 }
 .hop-ai-variation-active {
-  border-color: #2563eb;
+  border-color: var(--hop-ai-accent);
   background: #eaf1ff;
 }
 .hop-ai-prompt {
   width: 100%;
   box-sizing: border-box;
-  resize: vertical;
+  resize: none;
   font: inherit;
-  border: 1px solid #d0d4da;
-  border-radius: 8px;
-  padding: 8px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--hop-ai-ink);
+  border: none;
+  outline: none;
+  border-radius: 0;
+  padding: 6px 12px 10px;
+  background: transparent;
+}
+.hop-ai-prompt::placeholder {
+  color: var(--hop-ai-muted-2);
 }
 .hop-ai-composer-bar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 6px;
-}
-.hop-ai-composer-bar {
   flex-wrap: wrap;
+  padding: 8px 10px;
+  border-top: 1px solid rgba(26, 24, 21, 0.06);
+  background: var(--hop-ai-surface-sunken);
+}
+.hop-ai-composer-right {
+  margin-left: auto;
 }
 .hop-ai-composer-left,
 .hop-ai-composer-right {
@@ -570,26 +709,42 @@ body.hop-ai-open #studio-root {
   min-width: 0;
   box-sizing: border-box;
 }
+/* 첨부 — 시안의 '컨텍스트 추가' 점선 알약. */
 .hop-ai-attach {
-  border: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 9px;
+  border: 1px dashed rgba(26, 24, 21, 0.2);
   background: transparent;
-  font-size: 16px;
+  color: var(--hop-ai-muted);
+  font-size: 11.5px;
+  line-height: 1;
   cursor: pointer;
-  padding: 4px;
-  border-radius: 4px;
+  border-radius: var(--hop-ai-r-sm);
+  transition: background var(--hop-ai-ease);
 }
 .hop-ai-attach:hover {
-  background: #eef0f3;
+  background: var(--hop-ai-warm-1);
 }
 .hop-ai-send {
+  display: grid;
+  place-items: center;
   border: none;
-  background: #2563eb;
+  background: var(--hop-ai-accent);
   color: #fff;
   font-weight: 700;
-  border-radius: 8px;
-  width: 32px;
+  font-size: 15px;
+  line-height: 1;
+  border-radius: var(--hop-ai-r-md);
+  width: 28px;
   height: 28px;
   cursor: pointer;
+  transition: background var(--hop-ai-ease);
+}
+.hop-ai-send:hover:not(:disabled) {
+  background: var(--hop-ai-accent-hover);
 }
 .hop-ai-send:disabled {
   opacity: 0.5;
@@ -623,18 +778,19 @@ body.hop-ai-open #studio-root {
 }
 
 .hop-ai-status {
-  font-size: 12px;
+  font-size: 11.5px;
   min-height: 14px;
-  color: #444;
+  padding-left: 2px;
+  color: var(--hop-ai-ink-3);
 }
 .hop-ai-status[data-tone='error'] {
-  color: #b00020;
+  color: var(--hop-ai-del-ink);
 }
 .hop-ai-status[data-tone='warn'] {
-  color: #946200;
+  color: var(--hop-ai-warn-ink);
 }
 .hop-ai-status[data-tone='ok'] {
-  color: #1a7f37;
+  color: var(--hop-ai-add-ink);
 }
 
 .hop-ai-stream {
@@ -647,8 +803,8 @@ body.hop-ai-open #studio-root {
   font-family: inherit;
   font-size: 12.5px;
   line-height: 1.6;
-  color: #1f2328;
-  background: #eef0f3;
+  color: var(--hop-ai-ink);
+  background: var(--hop-ai-warm-1);
   border-radius: 6px;
   padding: 6px;
 }
@@ -667,7 +823,7 @@ body.hop-ai-open #studio-root {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #8a8f98;
+  background: var(--hop-ai-muted-2);
   opacity: 0.35;
   animation: hop-ai-thinking-blink 1.2s infinite ease-in-out both;
 }
@@ -704,82 +860,137 @@ body.hop-ai-open #studio-root {
 .hop-ai-diff:empty {
   display: none;
 }
+/* 변경 카드 — 시안: 흰 카드 + 따뜻한 헤드 줄 + 라운드 10px + 얕은 그림자. */
 .hop-ai-diff-item {
-  border: 1px solid #e0e3e8;
-  border-radius: 6px;
-  padding: 8px;
-  background: #fff;
+  border: 1px solid var(--hop-ai-line-strong);
+  border-radius: var(--hop-ai-r-lg);
+  padding: 0;
+  background: var(--hop-ai-surface);
+  overflow: hidden;
+  box-shadow: var(--hop-ai-shadow-card);
 }
 .hop-ai-diff-head {
-  font-size: 11px;
-  color: #888;
-  margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--hop-ai-warm-1);
+  border-bottom: 1px solid var(--hop-ai-line);
+  font-size: 11.5px;
+  color: var(--hop-ai-ink-3);
+  margin: 0;
 }
-.hop-ai-diff-before {
-  background: rgb(255, 221, 221);
-  text-decoration: line-through;
-  padding: 2px 4px;
-  border-radius: 3px;
+/* 삭제/추가 줄 — 변경 카드 안에서는 배경 띠가 카드 폭을 꽉 채우고 왼쪽에 −/+
+   거터가 선다. 같은 클래스를 교정 이슈 행(.hop-ai-issue)도 재사용하므로 전체폭
+   처리는 카드 자식으로 한정하고, 이슈 쪽은 아래에서 담긴 형태로 되돌린다. */
+.hop-ai-diff-item > .hop-ai-diff-before,
+.hop-ai-diff-item > .hop-ai-diff-after {
+  display: block;
+  position: relative;
+  padding: 3px 12px 3px 26px;
+  border-radius: 0;
   white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 11.5px;
+  line-height: 1.9;
+}
+.hop-ai-diff-item > .hop-ai-diff-before::before,
+.hop-ai-diff-item > .hop-ai-diff-after::before {
+  position: absolute;
+  left: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.hop-ai-diff-item > .hop-ai-diff-before::before {
+  content: '−';
+}
+.hop-ai-diff-item > .hop-ai-diff-after::before {
+  content: '+';
+}
+/* 색·취소선은 카드/이슈 공통. */
+.hop-ai-diff-before {
+  background: var(--hop-ai-del-bg);
+  color: var(--hop-ai-del-ink);
+  text-decoration: line-through;
+  text-decoration-color: rgba(140, 58, 58, 0.4);
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 .hop-ai-diff-after {
-  background: rgb(221, 255, 221);
-  text-decoration: underline;
-  padding: 2px 4px;
-  border-radius: 3px;
+  background: var(--hop-ai-add-bg);
+  color: var(--hop-ai-add-ink);
+  text-decoration: none;
   white-space: pre-wrap;
+  word-break: break-word;
+}
+/* 교정 이슈 행에서는 담긴 칩 형태(카드 전체폭 아님). */
+.hop-ai-issue .hop-ai-diff-before,
+.hop-ai-issue .hop-ai-diff-after {
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 11.5px;
+  line-height: 1.7;
+}
+.hop-ai-issue .hop-ai-diff-after {
   margin-top: 4px;
 }
 
 /* 변경 블록별 개별 포함(✓)/제외(✗) 토글 — 2건 이상일 때 행마다 표시 */
 .hop-ai-diff-controls {
   display: flex;
-  gap: 4px;
+  align-items: center;
+  gap: 6px;
   justify-content: flex-end;
-  margin-top: 6px;
+  margin-top: 0;
+  padding: 9px 12px;
+  border-top: 1px solid var(--hop-ai-line);
+  background: var(--hop-ai-surface-sunken);
 }
 .hop-ai-diff-keep,
 .hop-ai-diff-drop {
-  font-size: 11px;
+  font-size: 11.5px;
   line-height: 1;
-  padding: 3px 8px;
-  border-radius: 4px;
-  border: 1px solid #c9ccd2;
-  background: #fff;
+  padding: 0 12px;
+  height: 27px;
+  border-radius: var(--hop-ai-r-sm);
+  border: 1px solid var(--hop-ai-line-strong);
+  background: var(--hop-ai-surface);
+  color: var(--hop-ai-ink-3);
   cursor: pointer;
+  transition: background var(--hop-ai-ease);
 }
 .hop-ai-diff-keep:hover {
-  background: #e8f6e8;
-  border-color: #5ca35c;
+  background: var(--hop-ai-add-bg);
+  border-color: var(--hop-ai-add-ink);
 }
 .hop-ai-diff-drop:hover {
-  background: #fae8e8;
-  border-color: #c66;
+  background: var(--hop-ai-del-bg);
+  border-color: var(--hop-ai-del-ink);
 }
 .hop-ai-diff-item-rejected {
   opacity: 0.45;
   border-style: dashed;
 }
 .hop-ai-diff-item-rejected .hop-ai-diff-drop {
-  background: #fae8e8;
-  border-color: #c66;
+  background: var(--hop-ai-del-bg);
+  border-color: var(--hop-ai-del-ink);
 }
 
 /* 전체 교정 패스 — 이슈 목록(클릭=점프, 적용/무시) */
 .hop-ai-issue {
-  border: 1px solid #e0e3e8;
-  border-radius: 6px;
-  padding: 8px;
-  background: #fff;
+  border: 1px solid var(--hop-ai-line-strong);
+  border-radius: var(--hop-ai-r-lg);
+  padding: 10px;
+  background: var(--hop-ai-surface);
   cursor: pointer;
+  box-shadow: var(--hop-ai-shadow-card);
 }
 .hop-ai-issue:hover {
-  border-color: #8ab;
+  border-color: var(--hop-ai-accent-ink);
 }
 .hop-ai-issue-reason {
-  font-size: 11px;
+  font-size: 11.5px;
   font-weight: 600;
-  color: #1f3864;
+  color: var(--hop-ai-accent);
   margin-bottom: 4px;
 }
 .hop-ai-issue-actions {
@@ -794,13 +1005,13 @@ body.hop-ai-open #studio-root {
   line-height: 1;
   padding: 4px 10px;
   border-radius: 4px;
-  border: 1px solid #c9ccd2;
+  border: 1px solid var(--hop-ai-line-strong);
   background: #fff;
   cursor: pointer;
 }
 .hop-ai-issue-apply:hover:not(:disabled) {
-  background: #e8f6e8;
-  border-color: #5ca35c;
+  background: var(--hop-ai-add-bg);
+  border-color: var(--hop-ai-add-ink);
 }
 .hop-ai-issue-ignore:hover:not(:disabled) {
   background: #f2f3f5;
@@ -831,7 +1042,7 @@ body.hop-ai-open #studio-root {
   z-index: 900;
   width: max-content;
   background: #fff;
-  border: 1px solid #c9ccd2;
+  border: 1px solid var(--hop-ai-line-strong);
   border-radius: 6px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.16);
   padding: 3px 4px;
@@ -861,9 +1072,9 @@ body.hop-ai-open #studio-root {
 .hop-ai-inline-changebar {
   z-index: 899;
   width: 4px;
-  background: #1a7f37;
+  background: var(--hop-ai-add-ink);
   border-radius: 2px;
-  box-shadow: 0 0 0 1px rgba(26, 127, 55, 0.25);
+  box-shadow: 0 0 0 1px rgba(74, 107, 74, 0.25);
 }
 .hop-ai-inline-bar {
   /* 문서 뷰 상단 고정(fixed, body 직속) — 패널·툴바 위에 떠야 하므로 충분히 높게. */
@@ -874,36 +1085,36 @@ body.hop-ai-open #studio-root {
   justify-content: center;
   pointer-events: auto;
   background: #fff;
-  border: 1px solid #c9ccd2;
+  border: 1px solid var(--hop-ai-line-strong);
   border-radius: 20px;
   padding: 5px 10px;
   box-shadow: 0 3px 12px rgba(0, 0, 0, 0.18);
 }
 .hop-ai-inline-label {
   font-size: 11px;
-  color: #555;
+  color: var(--hop-ai-ink-3);
   background: #fff;
-  border: 1px solid #d0d4da;
+  border: 1px solid var(--hop-ai-line-strong);
   border-radius: 10px;
   padding: 1px 8px;
 }
 .hop-ai-inline-bar button {
   font-size: 11px;
   font-weight: 700;
-  border: 1px solid #c9ccd2;
+  border: 1px solid var(--hop-ai-line-strong);
   border-radius: 6px;
   padding: 2px 8px;
   cursor: pointer;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
 }
 .hop-ai-inline-accept {
-  background: #1a7f37;
+  background: var(--hop-ai-add-ink);
   color: #fff;
-  border-color: #1a7f37;
+  border-color: var(--hop-ai-add-ink);
 }
 .hop-ai-inline-reject {
   background: #fff;
-  color: #b00020;
+  color: var(--hop-ai-del-ink);
 }
 
 /* 헤더 과거 기록 버튼 */
@@ -927,7 +1138,7 @@ body.hop-ai-open #studio-root {
   width: 280px;
   z-index: 1160;
   background: #fff;
-  border-right: 1px solid #d0d4da;
+  border-right: 1px solid var(--hop-ai-line-strong);
   box-shadow: 4px 0 16px rgba(0, 0, 0, 0.12);
   overflow-y: auto;
   padding: 4px;
@@ -938,7 +1149,7 @@ body.hop-ai-open #studio-root {
   justify-content: space-between;
   font-size: 12px;
   font-weight: 700;
-  color: #555;
+  color: var(--hop-ai-ink-3);
   padding: 8px 6px 6px;
 }
 .hop-ai-history-close {
@@ -947,11 +1158,11 @@ body.hop-ai-open #studio-root {
   font-size: 16px;
   line-height: 1;
   cursor: pointer;
-  color: #888;
+  color: var(--hop-ai-muted-2);
 }
 .hop-ai-history-empty {
   font-size: 12px;
-  color: #999;
+  color: var(--hop-ai-muted-2);
   padding: 12px 8px;
 }
 .hop-ai-history-item {
@@ -983,7 +1194,7 @@ body.hop-ai-open #studio-root {
 }
 .hop-ai-history-meta {
   font-size: 11px;
-  color: #999;
+  color: var(--hop-ai-muted-2);
   margin-top: 2px;
 }
 .hop-ai-history-del {

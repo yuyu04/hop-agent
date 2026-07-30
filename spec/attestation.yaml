@@ -25,13 +25,13 @@ attested_modules:
   apps/desktop/src-tauri/src/docx_export.rs: cbfa5c5889e8bfd3
   apps/desktop/src-tauri/src/hwp_table_fix.rs: e70c3701e9f64545
   apps/desktop/src-tauri/src/lib.rs: a229978be859fe60
-  apps/studio-host/src/core/ai-apply.ts: e183f6ba404ab7c8
+  apps/studio-host/src/core/ai-apply.ts: c1a2356ce6714aee
   apps/studio-host/src/core/ai-bridge.ts: 1b3a8ce790be75d3
   apps/studio-host/src/core/ai-diff.ts: a5692921ffdb80cb
   apps/studio-host/src/core/ai-session.ts: 5534edd7c7e36ec3
   apps/studio-host/src/core/chart-render.ts: 48b8c91bdf1a2430
   apps/studio-host/src/core/tauri-bridge.ts: 1c95f5d3b9cc8598
-  apps/studio-host/src/ui/agent-sidebar.ts: 0874188bac2ab119
+  apps/studio-host/src/ui/agent-sidebar.ts: 4e1021f182e3e5d8
   apps/studio-host/src/ui/ai-inline-diff.ts: bb8e2d0f24bec827
 attested_features:
   F-04a91c: ok
@@ -46,6 +46,7 @@ attested_features:
   F-293e8c99: ok
   F-32a1a7d2: ok
   F-3e2d0f9a: ok
+  F-403700d8: ok
   F-46554fae: ok
   F-466f8e: ok
   F-4bdf23a4: ok
@@ -54,6 +55,7 @@ attested_features:
   F-4f6d826e: ok
   F-55a6a4: ok
   F-5dc6297e: ok
+  F-5e9c6033: ok
   F-6daa56b3: ok
   F-7a3dbe: ok
   F-85327e55: ok

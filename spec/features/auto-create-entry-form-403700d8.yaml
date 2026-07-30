@@ -1,0 +1,30 @@
+id: F-403700d8
+slug: auto-create-entry-form
+title: "양식 없는 문서에서도 연구노트 생성 — 앱이 엔트리 양식 표를 결정적으로 만들어 깔고 채운다"
+status: done
+modules:
+  - apps/studio-host/src/core/ai-apply.ts
+  - apps/studio-host/src/ui/agent-sidebar.ts
+acceptance_criteria:
+  - id: AC-7d9ecfb2
+    ears: event
+    condition: "When 연구노트 변환 요직이 엔트리 양식 표가 없는 문서에서 돌 때"
+    text: "The system shall 연구노트 엔트리 양식 표(6행×2열 — 제목/본문 전포 셀/기록자/기록 일자/확인자/확인 일자)를 앱이 결정적으로 만들어 소스로 삼고 기존 채울 파이프라인을 그대로 진행한다 — LLM은 표 구조를 정하지 않는다."
+    test_refs: ["apps/studio-host/src/core/auto-create-entry-form.test.ts"]
+    notes: "## Why\n2026-07-31 사용자 요구: PDF 첨부 + '이거 읽고 연구노트 만들어줘'가 바로 동작하길 원함. 지금은 pickEntryFormTable이 null이면 '엔트리 양식 표를 발견하지 못했습니다'로 거부하고 변환이 불가하다(번 문서에서 뭐도 못 한다).\n## Decision\n'표를 새로 그리지 않는다'는 원칙은 **LLM이** 그리지 않는다는 뜻이다(compose로 6×3이 6×2로 깨진 실측 때문). 앱이 고정 기하로 만드는 것은 결정적이므로 원칙에 어긋나지 않는다.\n기하는 pickEntryFormTable(기록자+제목) · resolveValueCell(라범 오른쉘 벼칸) · resolveBodyCell(행에 셀 1개·col 0·라범 아님) 세 조건을 동시에 만족하는 최소 형태다. 본문 행은 mergeTableCells로 전포 1칸으로 만들어야 resolveBodyCell이 집는다."
+  - id: AC-c8e06c69
+    ears: ubiquitous
+    text: "The system shall 생성한 양식 표를 기존 소스 표와 동일하게 취급한다 — 항목별 clone_table 복제 후 소스 표는 제거되어 결과밌에 번 양식이 남지 않는다."
+    test_refs: ["apps/studio-host/src/core/auto-create-entry-form.test.ts"]
+    notes: "removeSourceFormTable 후처리가 이미 있다(F-원본삭제). 생성 양식도 같은 경로를 타므로 추가 분기가 필요 없어야 한다."
+  - id: AC-0909bf86
+    ears: unwanted
+    condition: "If 표 생성·병합·라범 기입 중 어느 하나라도 엔진이 거부하면"
+    text: "The system shall 문서를 부분적으로 바꿔놓지 않고 사유를 보고한다 — 반쿱에 실패하면 기존처럼 거부 메시지로 돌아간다."
+    test_refs: ["apps/studio-host/src/core/auto-create-entry-form.test.ts"]
+  - id: AC-7c1a9e42
+    ears: state
+    condition: "While LLM 양식 이어쓰기(runFormFill) 경로로 들어온 동안"
+    text: "The system shall 같은 방식으로 양식이 없으면 만들어 쓰고, LLM에는 여전히 내용(FormFillResponse)만 요청한다 — 두 진입점(결정적 docx/PDF 변환, LLM 이어쓰기)이 같은 생성 경로를 공유한다."
+    test_refs: ["apps/studio-host/src/core/auto-create-entry-form.test.ts"]
+    notes: "runDocxFormFill·runFormFill 둘 다 pickEntry/pickSource가 null이면 거부했다. 한쪽만 고치면 '양식 항목 추가' 칩은 여전히 빈 문서에서 실패한다."

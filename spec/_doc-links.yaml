@@ -5,7 +5,7 @@ docs:
   "docs/DEVELOPMENT.md":
     doc_links: ["docs/architecture/UPSTREAM.md", "docs/operations/DESKTOP_RELEASE.md"]
   "docs/ai-edit-capability-gap.md":
-    features: [F-0858f2, F-191fd6, F-21a81b, F-220afd, F-ae778890]
+    features: [F-0858f2, F-191fd6, F-21a81b, F-220afd, F-293e8c99, F-3e2d0f9a, F-4f6d826e, F-6daa56b3, F-8eb1f86f, F-ae778890]
     doc_links: ["docs/competitive-gap-inline-ai.md"]
   "docs/competitive-gap-inline-ai.md":
     features: [F-220afd, F-ae778890, F-d0dce3, F-dc4b99, F-ffa7449b]

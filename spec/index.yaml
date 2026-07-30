@@ -14,6 +14,7 @@ features:
   F-293e8c99: {slug: ai-find-replace, status: done, modules: 3}
   F-32a1a7d2: {slug: form-fill-page-layout, status: done, modules: 2}
   F-3e2d0f9a: {slug: ai-footnote-insert-delete, status: done, modules: 3}
+  F-403700d8: {slug: auto-create-entry-form, status: done, modules: 2}
   F-46554fae: {slug: docx-image-into-cell, status: done, modules: 2}
   F-466f8e: {slug: multiline-cell-body-fill, status: done, modules: 1}
   F-4bdf23a4: {slug: docx-formfill-autoroute, status: done, modules: 1}
@@ -22,6 +23,7 @@ features:
   F-4f6d826e: {slug: ai-paste-html, status: done, modules: 3}
   F-55a6a4: {slug: document-proofread-pass, status: done, modules: 4}
   F-5dc6297e: {slug: docx-image-extract, status: done, modules: 1}
+  F-5e9c6033: {slug: note-from-any-attachment, status: done, modules: 1}
   F-6daa56b3: {slug: ai-table-split-cell, status: done, modules: 3}
   F-7a3dbe: {slug: table-structure-editing, status: done, modules: 4}
   F-85327e55: {slug: toc-page-chunking, status: done, modules: 3}

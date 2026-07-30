@@ -30,10 +30,13 @@ import {
   buildTocRegenEdits,
   entryRecordToFormFillEntry,
   parseEntrySelection,
+  wantsResearchNote,
   parseCellTarget,
   parseParagraphTarget,
   pickCoverHeaderTable,
   pickCoverTable,
+  attachmentDocText,
+  createEntryFormTable,
   pickEntryFormTable,
   pickTocTable,
   type ApplyResult,
@@ -562,7 +565,7 @@ export class AgentSidebar {
   toggle(open?: boolean): void {
     const show = open ?? !this.panel.classList.contains('open');
     this.panel.classList.toggle('open', show);
-    // 패널은 fixed 오버레이(right:0, 380px)라 열리면 문서 스크롤바를 가린다. 본문 영역
+    // 패널은 fixed 오버레이(right:0, --hop-ai-width)라 열리면 문서 스크롤바를 가린다. 본문 영역
     // (#studio-root)을 패널 폭만큼 줄여 스크롤바가 패널 왼쪽에 보이게 한다.
     document.body.classList.toggle('hop-ai-open', show);
   }
@@ -859,6 +862,15 @@ export class AgentSidebar {
       if (docxAtt?.path && docId0) {
         const handled = await this.runDocxFormFill(docId0, docxAtt.path);
         if (handled) return;
+        // 구조 파싱이 실패했다(연구노트 포맷이 아니다). 사용자가 '연구노트'를 만들어
+        // 달라고 한 경우라면 일반 편집이 아니라 LLM 양식 채움으로 보낸다 — 그래야 임의
+        // PDF·docx도 항목으로 정리된다(F-5e9c6033). 의도 키워드가 없으면 아래 일반
+        // 경로로 폴백해 요약·질문·일반 편집 요구를 가로채지 않는다.
+        if (wantsResearchNote(prompt)) {
+          this.log('연구노트 의도 감지 — 구조 파싱 실패분을 LLM 양식 채움으로 라우팅');
+          await this.runFormFill(true);
+          return;
+        }
       }
     }
     const guard = this.checkSendGuards();
@@ -1413,11 +1425,19 @@ export class AgentSidebar {
    *  2) AI에 '항목 내용 리스트'만 요청(form-fill 모드 — 응답 스키마에 표/compose 없음).
    *  3) 항목마다 소스 표를 결정적 복제하고 라벨→값칸 매핑으로 값칸을 채운다.
    */
-  private async runFormFill(): Promise<void> {
+  /**
+   * 양식 이어쓰기(LLM이 내용만 만들고 표 구조는 앱이 복제).
+   *
+   * `skipStructured`: 호출 측이 이미 결정적 구조 변환을 시도해 실패한 경우 true —
+   * 같은 파싱을 두 번 돌리지 않는다(F-5e9c6033 라우팅 경로).
+   */
+  private async runFormFill(skipStructured = false): Promise<void> {
     if (this.session.state === 'REQUESTING') return;
     // 연구노트형 docx 첨부가 있으면 LLM 없는 결정적 일괄 변환 경로(F-beb35fbb). 구조가
     // 연구노트가 아니면 runDocxFormFill이 false를 반환하고 아래 기존 AI 경로로 폴백한다.
-    const docxAtt = this.attachments.find((a) => a.path && /\.(docx|pdf)$/i.test(a.path));
+    const docxAtt = skipStructured
+      ? undefined
+      : this.attachments.find((a) => a.path && /\.(docx|pdf)$/i.test(a.path));
     if (docxAtt?.path) {
       const docId0 = this.deps.bridge.currentDocId();
       if (!docId0) {
@@ -1441,21 +1461,62 @@ export class AgentSidebar {
     this.setRequesting(true);
     const model = this.currentModel();
     try {
-      const context = await this.deps.bridge.aiGetDocumentContext(docId, false, null, true);
+      let context = await this.deps.bridge.aiGetDocumentContext(docId, false, null, true);
       this.context = context;
-      const source = this.pickSourceFormTable(context);
+      let source = this.pickSourceFormTable(context);
+      let createdForm = false;
       if (!source) {
-        // AC-0d49695d: 복제할 양식 표가 없으면 거부 — compose 폴백을 하지 않는다(no-op).
-        const reason = '복제할 양식 표를 찾지 못했습니다 — 반복되는 표 양식이 있는 문서에서만 항목을 추가할 수 있습니다(표를 새로 그리지 않습니다).';
-        if (this.active) this.active.msgEl.textContent = reason;
-        this.recordMessage('assistant', reason);
-        this.setActiveStatus('양식 표 없음 — 추가하지 않았습니다.', 'warn');
-        return;
+        // 복제할 양식 표가 없으면 앱이 기본 연구노트 양식을 만들어 소스로 쓴다(F-403700d8).
+        // AC-0d49695d의 'compose 폴백 금지'는 LLM에게 표 구조를 맡기지 말라는 뜻이고,
+        // 여기서 만드는 기하는 코드에 고정돼 결정적이다 — LLM은 여전히 내용만 만든다.
+        const seedAt = ((): { sec: number; para: number } | null => {
+          const seed = lastBodyParagraphId(context);
+          return seed ? parseParagraphTarget(seed) : null;
+        })();
+        if (!seedAt) {
+          const reason = '양식을 만들 본문 문단을 찾지 못했습니다 — 문서를 변경하지 않았습니다.';
+          if (this.active) this.active.msgEl.textContent = reason;
+          this.recordMessage('assistant', reason);
+          this.setActiveStatus('양식 없음 — 추가하지 않았습니다.', 'warn');
+          return;
+        }
+        try {
+          const created = createEntryFormTable(
+            this.deps.bridge as unknown as WasmEditing,
+            seedAt.sec,
+            seedAt.para,
+          );
+          createdForm = true;
+          this.log(
+            `양식 표가 없어 기본 연구노트 양식을 생성했습니다 ` +
+              `(sec${created.section}.p${created.paragraph}.tbl${created.controlIndex})`,
+          );
+          context = await this.deps.bridge.aiGetDocumentContext(docId, false, null, true);
+          this.context = context;
+          source = this.pickSourceFormTable(context) ?? created.table;
+        } catch (error) {
+          const reason = `기본 연구노트 양식을 만들지 못했습니다: ${String(error)}`;
+          if (this.active) this.active.msgEl.textContent = reason;
+          this.recordMessage('assistant', reason);
+          this.setActiveStatus('양식 생성 실패 — 추가하지 않았습니다.', 'warn');
+          return;
+        }
       }
       const labels = formTableLabels(source);
       this.log(`양식 이어쓰기: 소스 표 sec[${source.section}].p[${source.paragraph}].tbl[${source.control_index}] (${source.rows}×${source.cols}), 라벨 ${labels.length}개`);
       this.setActiveStatus('항목 내용 생성 중…');
-      const rawJson = await this.requestFormFillContent(docId, provider, model, baseUrl, userText, labels);
+      // 첨부 문서의 추출 본문을 함께 넘긴다 — 지시문만 보내면 LLM이 PDF 내용을 못 봐서
+      // 항목을 만들 수 없다(F-5e9c6033). 일반 전송 경로와 같은 형식으로 앞에 붙인다.
+      const docText = attachmentDocText(this.attachments);
+      const promptWithDoc = docText ? `${docText}\n\n${userText}` : userText;
+      const rawJson = await this.requestFormFillContent(
+        docId,
+        provider,
+        model,
+        baseUrl,
+        promptWithDoc,
+        labels,
+      );
       if (rawJson == null) return; // 실패/취소 — 상태 표시는 onFailed/cancel이 했다.
 
       const parsed = parseFormFillResponse(rawJson);
@@ -1497,8 +1558,9 @@ export class AgentSidebar {
       this.renderDecisionBar(script, result.changed);
       this.setPreviewEnabled(true);
       const summary =
-        parsed?.message?.trim() ||
-        `양식 항목 ${entries.length}개를 기존 표와 동일한 구조로 추가했습니다.`;
+        (createdForm ? '문서에 양식이 없어 기본 연구노트 양식을 만들고 채웠습니다. ' : '') +
+        (parsed?.message?.trim() ||
+          `양식 항목 ${entries.length}개를 기존 표와 동일한 구조로 추가했습니다.`);
       if (this.active) this.active.msgEl.textContent = summary;
       this.recordMessage('assistant', summary);
       const note = this.skipNote(result) + (labelSkips.length ? ` · 라벨 ${labelSkips.length}건 미해석` : '');
@@ -1569,19 +1631,52 @@ export class AgentSidebar {
         this.session.onFailed();
         return true;
       }
-      const context = await this.deps.bridge.aiGetDocumentContext(docId, false, null, true);
+      let context = await this.deps.bridge.aiGetDocumentContext(docId, false, null, true);
       this.context = context;
-      const tables = (context.document_metadata.form_tables ?? []) as FormSourceTable[];
-      const source = pickEntryFormTable(tables);
+      let tables = (context.document_metadata.form_tables ?? []) as FormSourceTable[];
+      let source = pickEntryFormTable(tables);
+      let createdForm = false;
       if (!source) {
-        // AC-unwanted: 엔트리 양식 표가 없으면 거부 — 표를 새로 그리지 않는다(no compose).
-        const reason =
-          '엔트리 양식 표(제목·기록자·일자 라벨을 가진 반복 양식)를 찾지 못했습니다 — 문서를 변경하지 않았습니다.';
-        if (this.active) this.active.msgEl.textContent = reason;
-        this.recordMessage('assistant', reason);
-        this.setActiveStatus(reason, 'warn');
-        this.session.onFailed();
-        return true;
+        // 엔트리 양식 표가 없으면 앱이 기본 연구노트 양식을 만들어 소스로 쓴다(F-403700d8).
+        // 'compose 금지'는 LLM이 표 구조를 정하지 말라는 뜻이고, 여기서 만드는 기하는
+        // 코드에 고정돼 결정적이므로 그 원칙과 충돌하지 않는다. 만든 표는 아래에서 기존
+        // 소스와 똑같이 복제·제거된다.
+        const seed = lastBodyParagraphId(context);
+        const seedAt = seed ? parseParagraphTarget(seed) : null;
+        if (!seedAt) {
+          const reason = '양식을 만들 본문 문단을 찾지 못했습니다 — 문서를 변경하지 않았습니다.';
+          if (this.active) this.active.msgEl.textContent = reason;
+          this.recordMessage('assistant', reason);
+          this.setActiveStatus(reason, 'warn');
+          this.session.onFailed();
+          return true;
+        }
+        try {
+          const created = createEntryFormTable(
+            this.deps.bridge as unknown as WasmEditing,
+            seedAt.sec,
+            seedAt.para,
+          );
+          source = created.table;
+          createdForm = true;
+          this.log(
+            `양식 표가 없어 기본 연구노트 양식을 생성했습니다 ` +
+              `(sec${created.section}.p${created.paragraph}.tbl${created.controlIndex}, ${created.table.rows}×${created.table.cols})`,
+          );
+          // 표가 문서에 들어갔으므로 앵커·양식 목록을 다시 읽는다. 새로 만든 표보다
+          // 뒤에 앵커가 잡혀야 복제본이 소스 뒤로 들어가 좌표가 유효하다.
+          context = await this.deps.bridge.aiGetDocumentContext(docId, false, null, true);
+          this.context = context;
+          tables = (context.document_metadata.form_tables ?? []) as FormSourceTable[];
+          source = pickEntryFormTable(tables) ?? created.table;
+        } catch (error) {
+          const reason = `기본 연구노트 양식을 만들지 못했습니다: ${String(error)}`;
+          if (this.active) this.active.msgEl.textContent = reason;
+          this.recordMessage('assistant', reason);
+          this.setActiveStatus(reason, 'warn');
+          this.session.onFailed();
+          return true;
+        }
       }
       const anchor = lastBodyParagraphId(context);
       if (!anchor) {
@@ -1702,6 +1797,7 @@ export class AgentSidebar {
       this.renderDecisionBar(script, result.changed);
       this.setPreviewEnabled(true);
       const summary =
+        (createdForm ? '문서에 연구노트 양식이 없어 기본 양식을 만들고 채웠습니다. ' : '') +
         `연구노트 ${entries.length}개 항목을 양식으로 변환해 추가했습니다(미리보기).` +
         (tocEdits.length ? ` 목차도 ${tocItems.length}개로 재구성했습니다.` : '');
       if (this.active) this.active.msgEl.textContent = summary;
@@ -3075,7 +3171,9 @@ function buildPanel(): PanelParts {
   themeSelect.className = 'hop-ai-theme-select';
   themeSelect.title = '디자인 테마 — 생성 문서의 간격·글자 크기·색 (themes/*.json)';
 
-  quickbar.append(modeToggle, skillSelect, themeSelect, quickActions);
+  // 모드 전환은 시안에서 입력 카드 '하단 바'에 있다(빠른작업 줄이 아니라).
+  // 여기서는 스킬·테마 선택과 빠른작업 칩만 카드 위쪽 줄에 둔다.
+  quickbar.append(skillSelect, themeSelect, quickActions);
 
   const promptInput = document.createElement('textarea');
   promptInput.className = 'hop-ai-prompt';
@@ -3088,10 +3186,11 @@ function buildPanel(): PanelParts {
   fileInput.accept = 'image/*,.pdf,.hwp,.hwpx,.docx,.txt,.md,.markdown,.csv,.json,.html,.htm,.xml';
   fileInput.multiple = true;
 
-  const attachBtn = btn('hop-ai-attach', '📎');
+  // 시안의 '컨텍스트 추가' 점선 알약. 첨부 칩과 같은 줄에 놓인다.
+  const attachBtn = btn('hop-ai-attach', '＋ 컨텍스트 추가');
   attachBtn.title = '이미지·문서 첨부';
   const composerLeft = el('div', 'hop-ai-composer-left');
-  composerLeft.append(attachBtn);
+  composerLeft.append(modeToggle);
 
   const providerSelect = document.createElement('select');
   providerSelect.className = 'hop-ai-provider';
@@ -3109,8 +3208,29 @@ function buildPanel(): PanelParts {
   composerBar.append(composerLeft, composerRight);
 
   const statusArea = el('div', 'hop-ai-status');
+
+  // 시안 구조: [빠른작업 칩 줄] → [입력 카드: 컨텍스트 줄 · 텍스트영역 · 하단 바] →
+  // [상태] → [키 힌트].
+  //
+  // 첨부 버튼은 chipsArea 안에 넣으면 안 된다 — renderChips가 replaceChildren()으로
+  // 비우고 첨부가 0건이면 hop-ai-hidden을 걸기 때문에 버튼이 사라진다. 별도 줄에
+  // 나란히 둬서 칩이 없어도 '컨텍스트 추가'는 항상 보이게 한다.
+  const contextRow = el('div', 'hop-ai-context-row');
+  contextRow.append(attachBtn, chipsArea);
+
+  const composerCard = el('div', 'hop-ai-composer-card');
+  composerCard.append(contextRow, promptInput, composerBar);
+
+  // 실제 키 동작만 적는다 — Enter 전송 / Shift+Enter 줄바꿈(onPromptKeydown).
+  const hints = el('div', 'hop-ai-hints');
+  for (const text of ['⏎ 보내기', '⇧⏎ 줄바꿈']) {
+    const span = el('span', 'hop-ai-hint');
+    span.textContent = text;
+    hints.appendChild(span);
+  }
+
   const composer = el('div', 'hop-ai-composer');
-  composer.append(chipsArea, quickbar, promptInput, composerBar, statusArea, fileInput);
+  composer.append(quickbar, composerCard, statusArea, hints, fileInput);
 
   // 컴포저는 본문 영역에 두고, 빈 대화면 상단/대화 시작 시 하단으로 CSS order로 이동.
   const body = el('div', 'hop-ai-body');

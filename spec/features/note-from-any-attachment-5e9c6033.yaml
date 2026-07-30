@@ -1,0 +1,24 @@
+id: F-5e9c6033
+slug: note-from-any-attachment
+title: "연구노트형이 아닌 첨부도 연구노트로 — 구조 파싱 실패 시 LLM 양식 채움으로 라우팅(첨부 본문 전달)"
+status: done
+modules:
+  - apps/studio-host/src/ui/agent-sidebar.ts
+acceptance_criteria:
+  - id: AC-d4ab799d
+    ears: event
+    condition: "When 문서를 첨부하고 지시문에 '연구노트'가 들어간 상태에서 구조 파싱이 실패했을 때"
+    text: "The system shall 일반 편집이 아니라 LLM 양식 채움(form_fill) 경로로 보낸다 — 연구노트 포맷이 아닌 임의 PDF·docx도 항목으로 정리된다."
+    test_refs: ["apps/studio-host/src/core/note-from-any-attachment.test.ts"]
+    notes: "## Why\n2026-07-31 사용자 요구: 'pdf 첨부하고 이거 읽고 연구노트 만들어줘'가 알아서 되길 원함. F-403700d8이 '양식 없음' 벽을 없았고, 남은 벽은 'PDF가 연구노트 형식이 아니면 pdf_structure 파싱이 Err → 일반 AI 편집으로 폴백'이다(연구노트가 아니라 그샤 문서 편집이 된다).\n## Decision\n의도 키워드('연구노트'/'연구 노트')로만 라우팅한다. 모든 '첨부+지시'를 form_fill로 보내면 '이 PDF 요약해줘' 같은 정상 요구를 가로채서 회귀가 난다."
+  - id: AC-37d1ecbd
+    ears: event
+    condition: "When form_fill 경로가 LLM에 항목 내용을 요잭할 때"
+    text: "The system shall 첨부 문서의 추출 본문을 함께 전달한다 — 지시문만 보내면 LLM이 PDF 내용을 보지 못해 항목을 만들 수 없다."
+    test_refs: ["apps/studio-host/src/core/note-from-any-attachment.test.ts"]
+    notes: "기존 requestFormFillContent는 userText만 넘겼다(일반 전송 경로는 docText를 합성해 넘긴다 — 그 패턴을 따른다)."
+  - id: AC-b2ff4baa
+    ears: unwanted
+    condition: "If 지시문에 연구노트 의도가 없으면"
+    text: "The system shall 지금처럼 일반 AI 편집 경로로 폴백한다 — 요약·질문·일반 편집 요구를 가로채지 않는다."
+    test_refs: ["apps/studio-host/src/core/note-from-any-attachment.test.ts"]

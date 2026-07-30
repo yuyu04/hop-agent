@@ -1846,6 +1846,121 @@ export function resolveBodyCell(
   return null;
 }
 
+/**
+ * 지시문이 '연구노트를 만들어 달라'는 의도인지(F-5e9c6033).
+ *
+ * 첨부가 있는 모든 요청을 양식 채움으로 보내면 "이 PDF 요약해줘" 같은 정상 요청을
+ * 가로채 회귀가 난다. 그래서 의도 키워드가 있을 때만 라우팅한다. 판정은 좁고
+ * 설명 가능해야 한다 — '연구노트'(공백 변형 포함)를 언급했는가만 본다.
+ */
+export function wantsResearchNote(prompt: string): boolean {
+  const t = prompt.replace(/\s+/g, '');
+  return t.includes('연구노트');
+}
+
+/**
+ * 첨부 문서들의 추출 본문을 LLM에 넘길 한 덩어리로 합친다(F-5e9c6033).
+ *
+ * 일반 전송 경로가 쓰는 형식(`[첨부 문서: 이름]\n본문`)을 그대로 따른다 — 양식 채움
+ * 요청도 같은 모양으로 받아야 모델이 첨부를 같은 방식으로 읽는다. 본문이 없는 첨부
+ * (이미지·추출 실패)는 건너뛴다.
+ */
+export function attachmentDocText(
+  attachments: readonly { kind: string; name: string; text?: string }[],
+): string {
+  return attachments
+    .filter((a) => a.kind === 'doc' && (a.text ?? '').trim().length > 0)
+    .map((a) => `[첨부 문서: ${a.name}]\n${a.text ?? ''}`)
+    .join('\n\n');
+}
+
+/**
+ * 앱이 만드는 기본 연구노트 엔트리 양식의 기하(F-403700d8).
+ *
+ * 행마다 [라벨, 값] 2열. 단 본문 행은 전폭 1칸으로 병합해야 `resolveBodyCell`이
+ * 집는다(그 함수의 조건: 그 행에 셀이 정확히 1개 + col 0 + 메타 라벨이 아님).
+ * 순서는 실제 연구노트 폼과 같게 제목 → 본문 → 메타(기록자/일자/확인자/확인일자)다.
+ *
+ * 라벨 이름은 `META_LABELS` 및 `entryRecordToFormFillEntry`가 만드는 필드 라벨과
+ * 정확히 일치해야 한다 — 다르면 `buildFormFillMapping`이 라벨 칸을 못 찾는다.
+ */
+const ENTRY_FORM_ROWS: readonly (readonly [label: string, kind: 'pair' | 'body'])[] = [
+  ['제목', 'pair'],
+  ['', 'body'],
+  ['기록자', 'pair'],
+  ['기록 일자', 'pair'],
+  ['확인자', 'pair'],
+  ['확인 일자', 'pair'],
+];
+
+/** 생성한 양식 표의 좌표 + 그 표를 그대로 기술하는 FormSourceTable. */
+export interface CreatedEntryForm {
+  section: number;
+  paragraph: number;
+  controlIndex: number;
+  table: FormSourceTable;
+}
+
+/**
+ * 엔트리 양식 표가 없는 문서에 기본 연구노트 양식을 결정적으로 만든다(F-403700d8).
+ *
+ * "표를 새로 그리지 않는다"는 원칙은 **LLM이** 그리지 않는다는 뜻이다(compose가 6×3 표를
+ * 6×2로 깨뜨린 실측 때문). 여기서 만드는 구조는 코드에 고정된 기하라 결정적이므로 그
+ * 원칙과 충돌하지 않는다. 만들어진 표는 기존 소스 양식과 똑같이 취급된다 — 항목마다
+ * clone_table로 복제되고, 후처리에서 원본(=이 표)은 제거된다.
+ *
+ * 실패(생성·병합·라벨 기입 거부)하면 오류를 던진다. 호출 측이 잡아 사유를 보고하고
+ * 문서를 건드리지 않은 상태로 되돌린다.
+ */
+export function createEntryFormTable(
+  wasm: WasmEditing,
+  sec: number,
+  para: number,
+): CreatedEntryForm {
+  const rows = ENTRY_FORM_ROWS.length;
+  const cols = 2;
+  const made = wasm.createTable(sec, para, 0, rows, cols);
+  if (!made?.ok) throw new Error('기본 연구노트 양식 표를 만들지 못했습니다.');
+  const { paraIdx, controlIdx } = made;
+
+  // 본문 행을 전폭 1칸으로 병합한다 — 이게 없으면 resolveBodyCell이 본문 셀을 못 찾아
+  // 본문이 통째로 누락된다.
+  const bodyRow = ENTRY_FORM_ROWS.findIndex(([, kind]) => kind === 'body');
+  const merged = wasm.mergeTableCells(sec, paraIdx, controlIdx, bodyRow, 0, bodyRow, cols - 1);
+  if (!merged?.ok) throw new Error('양식 표의 본문 행을 병합하지 못했습니다.');
+
+  // 라벨 기입은 (row,col)→cellIdx 매핑이 필요하다. 병합 뒤 좌표가 확정되므로 지금 조회한다.
+  if (!wasm.getTableCellBboxes) {
+    throw new Error('이 환경에서는 양식 표 생성을 지원하지 않습니다(셀 좌표 조회 API 없음).');
+  }
+  const boxes = wasm.getTableCellBboxes(sec, paraIdx, controlIdx);
+  const cellIdxAt = new Map<string, number>();
+  for (const b of boxes) cellIdxAt.set(`${b.row},${b.col}`, b.cellIdx);
+
+  const cells: FormSourceCell[] = [];
+  ENTRY_FORM_ROWS.forEach(([label, kind], row) => {
+    if (kind === 'body') {
+      // 본문 전폭 셀 — 라벨 없음. resolveBodyCell이 이 칸을 집는다.
+      cells.push({ row, col: 0, role: 'input', text: '' });
+      return;
+    }
+    const labelIdx = cellIdxAt.get(`${row},0`);
+    if (labelIdx === undefined) {
+      throw new Error(`양식 표 라벨 칸(${row},0)의 좌표를 찾지 못했습니다.`);
+    }
+    wasm.insertTextInCell(sec, paraIdx, controlIdx, labelIdx, 0, 0, label);
+    cells.push({ row, col: 0, role: 'label', text: label });
+    cells.push({ row, col: 1, role: 'input', text: '' });
+  });
+
+  return {
+    section: sec,
+    paragraph: paraIdx,
+    controlIndex: controlIdx,
+    table: { section: sec, paragraph: paraIdx, control_index: controlIdx, rows, cols, cells },
+  };
+}
+
 /** 라벨→값 매핑 결과: 채울 cell_fills와 해석 못 한 라벨(사유) + 본문 셀 이미지. */
 export interface FormFillMapping {
   cellFills: { row: number; col: number; text: string }[];
