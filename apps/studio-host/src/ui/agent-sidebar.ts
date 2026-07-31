@@ -46,6 +46,13 @@ import {
   type WasmEditing,
 } from '@/core/ai-apply';
 import { buildDiffModel, type DiffItem } from '@/core/ai-diff';
+import {
+  CUSTOM_MODEL,
+  builtinModels,
+  defaultModel,
+  mergeModelList,
+  supportsModelListing,
+} from '@/core/model-catalog';
 import { AiSessionMachine } from '@/core/ai-session';
 import {
   deleteConversation,
@@ -137,19 +144,10 @@ const CUSTOM_PRESETS: Record<string, { baseUrl: string; model: string }> = {
   together: { baseUrl: 'https://api.together.xyz', model: 'meta-llama/Llama-3.1-8B-Instruct-Turbo' },
 };
 
-/** 모델 드롭다운에서 "직접 입력"을 고를 때의 sentinel 값. */
-const CUSTOM_MODEL = '__custom__';
-
-/** provider별 선택 가능한 모델 목록(첫 항목이 기본 선택). 직접 입력 옵션이 항상 뒤따른다. */
-const MODELS: Record<string, string[]> = {
-  openai: ['gpt-4o-mini', 'gpt-4o', 'gpt-4.1-mini'],
-  anthropic: ['claude-3-5-haiku-latest', 'claude-3-5-sonnet-latest'],
-  gemini: ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash-lite', 'gemini-flash-latest'],
-  ollama: ['llama3.1', 'llama3.2', 'qwen2.5', 'mistral'],
-  [CLAUDE_CLI_PROVIDER]: ['default', 'sonnet', 'opus', 'haiku'],
-  [AGY_CLI_PROVIDER]: ['default'],
-  [CUSTOM_PROVIDER]: ['llama-3.1-8b-instant', 'llama-3.3-70b-versatile'],
-};
+/**
+ * 모델 목록·기본값은 `core/model-catalog`가 소유한다(F-ec1f3481) — 내장 목록은 폴백이고,
+ * "새로 고침"이 provider API에서 받은 실제 목록으로 교체한다.
+ */
 
 /**
  * 첨부 파일.
@@ -229,6 +227,9 @@ export class AgentSidebar {
   private readonly providerSelect: HTMLSelectElement;
   private readonly modelSelect: HTMLSelectElement;
   private readonly modelInput: HTMLInputElement;
+  private readonly modelRefreshBtn: HTMLButtonElement;
+  /** provider API에서 조회한 모델 목록(provider별 캐시). 없으면 내장 목록을 쓴다. */
+  private readonly fetchedModels = new Map<string, string[]>();
   private readonly sendBtn: HTMLButtonElement;
   private readonly cancelBtn: HTMLButtonElement;
   private readonly statusArea: HTMLElement;
@@ -311,6 +312,7 @@ export class AgentSidebar {
     this.providerSelect = built.providerSelect;
     this.modelSelect = built.modelSelect;
     this.modelInput = built.modelInput;
+    this.modelRefreshBtn = built.modelRefreshBtn;
     this.sendBtn = built.sendBtn;
     this.cancelBtn = built.cancelBtn;
     this.statusArea = built.statusArea;
@@ -347,6 +349,7 @@ export class AgentSidebar {
     this.fileInput.addEventListener('change', () => void this.onFilesPicked());
     this.providerSelect.addEventListener('change', () => void this.onProviderChange());
     this.modelSelect.addEventListener('change', () => this.updateModelVisibility());
+    this.modelRefreshBtn.addEventListener('click', () => void this.refreshModels());
     built.keySaveBtn.addEventListener('click', () => void this.saveKey());
     this.keyClearBtn.addEventListener('click', () => void this.clearKey());
     this.sensitiveCheckbox.addEventListener('change', () => void this.onSensitivityToggle());
@@ -2343,12 +2346,49 @@ export class AgentSidebar {
   }
 
   private populateModels(provider: string): void {
-    const models = MODELS[provider] ?? [];
+    // 이미 조회해둔 목록이 있으면 그것을, 없으면 내장 목록을 쓴다.
+    const models = this.fetchedModels.get(provider) ?? builtinModels(provider);
+    const keep = this.modelSelect.value;
     this.modelSelect.replaceChildren();
     for (const model of models) this.modelSelect.appendChild(option(model, model));
     this.modelSelect.appendChild(option(CUSTOM_MODEL, '직접 입력…'));
-    this.modelSelect.value = models[0] ?? CUSTOM_MODEL;
+    // 선택이 살아 있으면 유지한다(새로 고침이 사용자의 선택을 되돌리지 않게).
+    this.modelSelect.value = models.includes(keep) ? keep : (models[0] ?? CUSTOM_MODEL);
+    this.modelRefreshBtn.disabled = !supportsModelListing(provider);
     this.updateModelVisibility();
+  }
+
+  /**
+   * provider가 지금 서비스하는 모델 목록을 조회해 드롭다운을 채운다(F-ec1f3481 AC-001).
+   * 실패해도 내장 목록을 그대로 두고 사유만 알린다 — 조회는 편의 기능이다.
+   */
+  private async refreshModels(): Promise<void> {
+    const provider = this.providerSelect.value;
+    if (!supportsModelListing(provider)) {
+      this.setStatus(`${provider}는 모델 목록 API가 없습니다 — CLI 별칭을 그대로 쓰세요.`, 'info');
+      return;
+    }
+    this.modelRefreshBtn.disabled = true;
+    this.setStatus('모델 목록을 불러옵니다…', 'info');
+    try {
+      const listed = await this.deps.bridge.aiListModels(
+        provider,
+        provider === CUSTOM_PROVIDER ? this.baseUrlInput.value.trim() || undefined : undefined,
+      );
+      const models = mergeModelList(provider, listed);
+      if (!models.length) {
+        this.setStatus('쓸 수 있는 모델을 찾지 못해 기본 목록을 유지합니다.', 'warn');
+        return;
+      }
+      this.fetchedModels.set(provider, models);
+      // 조회 중 사용자가 provider를 바꿨으면 화면을 건드리지 않는다.
+      if (this.providerSelect.value === provider) this.populateModels(provider);
+      this.setStatus(`모델 ${models.length}개를 불러왔습니다.`, 'ok');
+    } catch (error) {
+      this.setStatus(`모델 목록을 불러오지 못했습니다: ${String(error)}`, 'warn');
+    } finally {
+      this.modelRefreshBtn.disabled = !supportsModelListing(this.providerSelect.value);
+    }
   }
 
   private updateModelVisibility(): void {
@@ -2881,26 +2921,6 @@ export class AgentSidebar {
   }
 }
 
-function defaultModel(provider: string): string {
-  switch (provider) {
-    case 'openai':
-      return 'gpt-4o-mini';
-    case 'anthropic':
-      return 'claude-3-5-haiku-latest';
-    case 'gemini':
-      return 'gemini-2.5-flash';
-    case 'ollama':
-      return 'llama3.1';
-    case CLAUDE_CLI_PROVIDER:
-    case AGY_CLI_PROVIDER:
-      return 'default';
-    case CUSTOM_PROVIDER:
-      return 'llama-3.1-8b-instant';
-    default:
-      return 'gemini-2.5-flash';
-  }
-}
-
 /** 교정 패스 한 구간의 최대 글자 수 — 프로바이더 컨텍스트 한도를 넘지 않게 나눈다(AC4). */
 const PROOFREAD_CHUNK_CHARS = 9000;
 
@@ -3025,6 +3045,7 @@ interface PanelParts {
   providerSelect: HTMLSelectElement;
   modelSelect: HTMLSelectElement;
   modelInput: HTMLInputElement;
+  modelRefreshBtn: HTMLButtonElement;
   sendBtn: HTMLButtonElement;
   cancelBtn: HTMLButtonElement;
   statusArea: HTMLElement;
@@ -3198,11 +3219,13 @@ function buildPanel(): PanelParts {
   const modelSelect = document.createElement('select');
   modelSelect.className = 'hop-ai-model-select';
   const modelInput = inputEl('hop-ai-model', 'text', '모델 ID 직접 입력');
+  const modelRefreshBtn = btn('hop-ai-model-refresh', '⟳');
+  modelRefreshBtn.title = '지원 모델 목록 새로 고침 (provider에서 조회)';
   const sendBtn = btn('hop-ai-send', '↑');
   sendBtn.title = '전송 (Enter)';
   const cancelBtn = btn('hop-ai-cancel', '취소');
   const composerRight = el('div', 'hop-ai-composer-right');
-  composerRight.append(providerSelect, modelSelect, modelInput, cancelBtn, sendBtn);
+  composerRight.append(providerSelect, modelSelect, modelInput, modelRefreshBtn, cancelBtn, sendBtn);
 
   const composerBar = el('div', 'hop-ai-composer-bar');
   composerBar.append(composerLeft, composerRight);
@@ -3260,6 +3283,7 @@ function buildPanel(): PanelParts {
     providerSelect,
     modelSelect,
     modelInput,
+    modelRefreshBtn,
     sendBtn,
     cancelBtn,
     statusArea,

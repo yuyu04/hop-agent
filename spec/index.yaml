@@ -35,5 +35,6 @@ features:
   F-c63c3a91: {slug: docx-form-fill-decision-state, status: done, modules: 1}
   F-d0dce3: {slug: data-to-chart-insertion, status: done, modules: 4}
   F-dc4b99: {slug: per-edit-accept-reject, status: done, modules: 5}
+  F-ec1f3481: {slug: provider-model-catalog, status: done, modules: 5}
   F-f6c643d1: {slug: overwrite-prefilled-value-cells, status: done, modules: 1}
   F-ffa7449b: {slug: hwp-to-docx-export, status: done, modules: 3}

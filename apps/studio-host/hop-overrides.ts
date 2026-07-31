@@ -13,6 +13,7 @@ const overrideIds = [
   'core/chart-render',
   'core/conversation-store',
   'core/doc-theme',
+  'core/model-catalog',
   'core/document-files',
   'core/desktop-chrome',
   'core/desktop-events',

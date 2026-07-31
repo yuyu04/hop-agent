@@ -14,8 +14,9 @@
 # `clad check --tier=pre-push --strict`; the GREEN gate rewrites the truth.
 # Content-anchored: survives fresh clones and squash/rebase.
 attested_modules:
+  apps/desktop/src-tauri/src/ai/adapters/models.rs: 222f32ae62ac2724
   apps/desktop/src-tauri/src/ai/docx.rs: 568924b721f1a736
-  apps/desktop/src-tauri/src/ai/mod.rs: 03634f1ae06a71ef
+  apps/desktop/src-tauri/src/ai/mod.rs: 61520441b1018c17
   apps/desktop/src-tauri/src/ai/pdf_pages.rs: 87f26b965922b062
   apps/desktop/src-tauri/src/ai/pdf_pdfium.rs: 7fd2cbc41e92c72b
   apps/desktop/src-tauri/src/ai/pdf_render.rs: 5391f3d93c2c2ac9
@@ -24,14 +25,15 @@ attested_modules:
   apps/desktop/src-tauri/src/commands.rs: 1377b34010fc7f56
   apps/desktop/src-tauri/src/docx_export.rs: cbfa5c5889e8bfd3
   apps/desktop/src-tauri/src/hwp_table_fix.rs: e70c3701e9f64545
-  apps/desktop/src-tauri/src/lib.rs: a229978be859fe60
+  apps/desktop/src-tauri/src/lib.rs: 074a4c6fc592cd47
   apps/studio-host/src/core/ai-apply.ts: c1a2356ce6714aee
   apps/studio-host/src/core/ai-bridge.ts: 1b3a8ce790be75d3
   apps/studio-host/src/core/ai-diff.ts: a5692921ffdb80cb
   apps/studio-host/src/core/ai-session.ts: 5534edd7c7e36ec3
   apps/studio-host/src/core/chart-render.ts: 48b8c91bdf1a2430
-  apps/studio-host/src/core/tauri-bridge.ts: 1c95f5d3b9cc8598
-  apps/studio-host/src/ui/agent-sidebar.ts: 4e1021f182e3e5d8
+  apps/studio-host/src/core/model-catalog.ts: 04e6f8be28172e28
+  apps/studio-host/src/core/tauri-bridge.ts: 8bb53d4c0f3dd425
+  apps/studio-host/src/ui/agent-sidebar.ts: a773a529e64f1d2c
   apps/studio-host/src/ui/ai-inline-diff.ts: bb8e2d0f24bec827
 attested_features:
   F-04a91c: ok
@@ -67,5 +69,6 @@ attested_features:
   F-c63c3a91: ok
   F-d0dce3: ok
   F-dc4b99: ok
+  F-ec1f3481: ok
   F-f6c643d1: ok
   F-ffa7449b: ok

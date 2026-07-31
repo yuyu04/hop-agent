@@ -709,6 +709,29 @@ body.hop-ai-open #studio-root {
   min-width: 0;
   box-sizing: border-box;
 }
+/* 모델 목록 새로 고침 — provider에서 실제 지원 모델을 조회(F-ec1f3481). */
+.hop-ai-model-refresh {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid rgba(26, 24, 21, 0.14);
+  background: transparent;
+  color: var(--hop-ai-muted);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: var(--hop-ai-r-sm);
+  transition: background var(--hop-ai-ease);
+}
+.hop-ai-model-refresh:hover:not(:disabled) {
+  background: var(--hop-ai-warm-1);
+  color: var(--hop-ai-fg);
+}
+.hop-ai-model-refresh:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 /* 첨부 — 시안의 '컨텍스트 추가' 점선 알약. */
 .hop-ai-attach {
   display: inline-flex;

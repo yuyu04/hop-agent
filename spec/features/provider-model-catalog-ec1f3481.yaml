@@ -1,0 +1,34 @@
+id: F-ec1f3481
+slug: provider-model-catalog
+title: "지원 모델을 provider API에서 직접 조회 — 모델 ID를 손으로 적지 않게(내장 기본 목록도 현행 세대로)"
+status: done
+modules:
+  - apps/desktop/src-tauri/src/ai/adapters/models.rs
+  - apps/desktop/src-tauri/src/ai/mod.rs
+  - apps/studio-host/src/core/model-catalog.ts
+  - apps/studio-host/src/core/tauri-bridge.ts
+  - apps/studio-host/src/ui/agent-sidebar.ts
+acceptance_criteria:
+  - id: AC-acd66837
+    ears: event
+    condition: "When 사용자가 provider를 고르고 '모델 목록 새로 고침'을 누를 때"
+    text: "The system shall 그 provider의 공식 모델 목록 엔드포인트를 저장된 키로 호출해 실제 사용 가능한 모델 ID만 드롭다운에 채운다 — 사용자가 모델 ID를 외우거나 손으로 적을 필요가 없다."
+    test_refs: ["apps/studio-host/src/ui/agent-sidebar.test.ts", "apps/studio-host/src/core/model-catalog.test.ts", "apps/desktop/src-tauri/src/ai/adapters/models.rs"]
+    notes: "## Why\n2026-07-31 사용자 요구: \"현재 지원 모델을 내가 일일히 추가 안 하고 딱 알 수 있는 방법 없나? 직접 입력하고 싶어도 '5.0 opus'라고 적으면 안 될 거 아냐\". 내장 하드코딩 목록은 릴리스마다 낡고, 직접 입력은 정확한 ID(claude-opus-5)를 알아야만 동작한다.\n## Decision\n하드코딩을 늘리는 대신 provider의 list-models API를 조회한다: anthropic GET /v1/models, openai GET /v1/models, gemini GET /v1beta/models(generateContent 지원만), ollama GET /api/tags, openai-compat GET {base}/v1/models. 응답은 ID 문자열 목록으로 정규화해 프론트에 넘긴다(키는 절대 프론트로 나가지 않는다 — 네이티브가 보관·사용)."
+  - id: AC-83d6391d
+    ears: ubiquitous
+    text: "The system shall 내장 기본 모델 목록에 현행 세대 모델을 담고 provider별 기본 선택값도 그 세대로 둔다 — 조회 전(첫 실행·오프라인)에도 낡은 모델이 기본으로 선택되지 않는다."
+    test_refs: ["apps/studio-host/src/core/model-catalog.test.ts", "apps/studio-host/src/ui/agent-sidebar.test.ts"]
+    notes: "anthropic 기본값은 claude-opus-5(구: claude-3-5-haiku-latest). 값싼 실행이 필요하면 목록에서 claude-haiku-4-5를 고를 수 있다."
+  - id: AC-84ccb5d7
+    ears: unwanted
+    condition: "If 키가 없거나 조회가 실패하면(오프라인·401·엔드포인트 없음)"
+    text: "The system shall 드롭다운을 비우지 않고 내장 목록을 유지하며 사유를 상태줄에 보여준다 — 조회 실패가 모델 선택 자체를 막지 않는다."
+    test_refs: ["apps/studio-host/src/core/model-catalog.test.ts", "apps/studio-host/src/ui/agent-sidebar.test.ts", "apps/desktop/src-tauri/src/ai/adapters/models.rs"]
+    notes: "조회는 편의 기능이다. 실패 시 기존 하드코딩 목록이 그대로 폴백으로 남아야 회귀가 없다."
+  - id: AC-6ef889ef
+    ears: unwanted
+    condition: "If provider가 로컬 CLI 위임(claude-cli·agy-cli)이면"
+    text: "The system shall 모델 목록 조회를 시도하지 않고 CLI가 받는 별칭 목록(default·opus·sonnet·haiku)을 유지한다 — CLI는 모델 목록 API가 없고 별칭만 받는다."
+    test_refs: ["apps/studio-host/src/core/model-catalog.test.ts", "apps/studio-host/src/ui/agent-sidebar.test.ts", "apps/desktop/src-tauri/src/ai/adapters/models.rs"]
+    notes: "CLI 위임은 키가 없고 구독/OAuth로 동작한다. 조회를 시도하면 무조건 실패 메시지가 떠서 UX가 나빠진다."

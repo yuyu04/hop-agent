@@ -237,6 +237,20 @@ pub fn ai_cancel_request(request_id: String, state: State<'_, AppState>) -> Resu
     Ok(())
 }
 
+/// provider가 지금 서비스하는 모델 ID 목록을 조회한다(F-ec1f3481).
+///
+/// 하드코딩 목록은 릴리스마다 낡으므로, 사용자가 정확한 모델 ID를 외워 타이핑하지
+/// 않도록 provider의 list-models 엔드포인트를 그대로 물어본다. 키는 보안 저장소에서
+/// 읽어 네이티브 안에서만 쓰고, 프론트에는 ID 문자열만 돌려준다.
+#[tauri::command]
+pub async fn ai_list_models(
+    provider_id: String,
+    base_url: Option<String>,
+) -> Result<Vec<String>, String> {
+    let api_key = secrets::get_api_key(&provider_id)?;
+    adapters::models::list_models(&provider_id, api_key, base_url).await
+}
+
 /// 문서를 민감(기밀)으로 표시/해제한다(스펙 6장). 표시된 문서는 `ai_request_edit`에서
 /// 외부 provider(Anthropic/OpenAI/Gemini 등) 전송이 차단되고 로컬 모델만 허용된다.
 #[tauri::command]

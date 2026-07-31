@@ -7,6 +7,7 @@
 pub mod anthropic;
 pub mod cli;
 pub mod gemini;
+pub mod models;
 pub mod openai;
 pub mod sse;
 

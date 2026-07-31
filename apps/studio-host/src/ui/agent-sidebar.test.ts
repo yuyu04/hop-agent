@@ -241,6 +241,7 @@ function createBridge() {
     aiSetApiKey: vi.fn(async () => undefined),
     aiHasApiKey: vi.fn(async () => false),
     aiDeleteApiKey: vi.fn(async () => undefined),
+    aiListModels: vi.fn(async (_provider: string, _baseUrl?: string) => [] as string[]),
     aiSetDocumentSensitivity: vi.fn(async () => undefined),
     aiExtractText: vi.fn(async () => '추출된 본문'),
     currentDocId: vi.fn(() => 'doc-1' as string | null),
@@ -370,7 +371,7 @@ describe('AgentSidebar', () => {
       'doc-1',
       '첫 문단 바꿔줘',
       'ollama',
-      'llama3.1',
+      'llama3.2',
       null,
       null,
       null,
@@ -949,6 +950,124 @@ describe('AgentSidebar', () => {
     await flush();
   }
 
+  /**
+   * F-ec1f3481 — 모델 목록을 provider에서 조회한다. 사용자가 "claude-opus-5" 같은 정확한
+   * ID를 외워 타이핑하지 않아도 되는 것이 이 기능의 전부다.
+   */
+  function modelOptions(): string[] {
+    return find('hop-ai-model-select').children.map((node) => node.value);
+  }
+
+  it('F-ec1f3481 AC-001: 새로 고침이 provider 조회 결과로 모델 드롭다운을 채운다', async () => {
+    bridge.aiListModels.mockResolvedValue([
+      'claude-haiku-4-5',
+      'claude-opus-6',
+      'claude-sonnet-5',
+    ]);
+    build();
+    await flush();
+    await selectProvider('anthropic');
+
+    find('hop-ai-model-refresh').click();
+    await flush();
+
+    expect(bridge.aiListModels).toHaveBeenCalledWith('anthropic', undefined);
+    // 조회에만 있던 신모델도 목록에 뜬다 — 카탈로그를 손대지 않아도 최신을 고를 수 있다.
+    expect(modelOptions()).toEqual([
+      'claude-sonnet-5',
+      'claude-haiku-4-5',
+      'claude-opus-6',
+      '__custom__',
+    ]);
+    expect(find('hop-ai-model-select').value).toBe('claude-sonnet-5');
+    expect(find('hop-ai-status').textContent).toContain('모델 3개');
+  });
+
+  it('F-ec1f3481 AC-001: openai-compat은 Base URL과 함께 조회한다', async () => {
+    bridge.aiListModels.mockResolvedValue(['llama-3.3-70b-versatile']);
+    build();
+    await flush();
+    await selectProvider('openai-compat');
+    find('hop-ai-base-url').value = 'https://api.groq.com/openai';
+
+    find('hop-ai-model-refresh').click();
+    await flush();
+
+    expect(bridge.aiListModels).toHaveBeenCalledWith(
+      'openai-compat',
+      'https://api.groq.com/openai',
+    );
+  });
+
+  it('F-ec1f3481 AC-002: 조회 전 기본 선택이 현행 세대다', async () => {
+    build();
+    await flush();
+    await selectProvider('anthropic');
+
+    expect(find('hop-ai-model-select').value).toBe('claude-opus-5');
+    expect(modelOptions()).not.toContain('claude-3-5-haiku-latest');
+  });
+
+  it('F-ec1f3481 AC-003: 조회가 실패하면 내장 목록을 유지하고 사유만 알린다', async () => {
+    bridge.aiListModels.mockRejectedValue(new Error('API 키가 없습니다'));
+    build();
+    await flush();
+    await selectProvider('anthropic');
+    const before = modelOptions();
+
+    find('hop-ai-model-refresh').click();
+    await flush();
+
+    expect(modelOptions()).toEqual(before);
+    expect(find('hop-ai-model-select').value).toBe('claude-opus-5');
+    expect(find('hop-ai-status').textContent).toContain('불러오지 못했습니다');
+    // 실패가 버튼을 영구히 잠그지 않는다(키를 저장한 뒤 다시 누를 수 있어야 한다).
+    expect(find('hop-ai-model-refresh').disabled).toBe(false);
+  });
+
+  it('F-ec1f3481 AC-003: 쓸 수 있는 모델이 없으면 기본 목록을 유지한다', async () => {
+    bridge.aiListModels.mockResolvedValue(['whisper-1', 'dall-e-3']);
+    build();
+    await flush();
+    await selectProvider('openai');
+
+    find('hop-ai-model-refresh').click();
+    await flush();
+
+    expect(modelOptions()).toContain('gpt-5-mini');
+    expect(find('hop-ai-status').textContent).toContain('기본 목록을 유지');
+  });
+
+  it('F-ec1f3481 AC-004: CLI 위임은 조회를 시도하지 않고 별칭을 유지한다', async () => {
+    build();
+    await flush();
+    await selectProvider('claude-cli');
+
+    expect(find('hop-ai-model-refresh').disabled).toBe(true);
+    expect(modelOptions()).toEqual(['default', 'sonnet', 'opus', 'haiku', '__custom__']);
+
+    find('hop-ai-model-refresh').click();
+    await flush();
+
+    expect(bridge.aiListModels).not.toHaveBeenCalled();
+  });
+
+  it('F-ec1f3481: 조회 결과는 provider별로 캐시되어 재조회 없이 복원된다', async () => {
+    bridge.aiListModels.mockResolvedValue(['claude-opus-5', 'claude-opus-9']);
+    build();
+    await flush();
+    await selectProvider('anthropic');
+    find('hop-ai-model-refresh').click();
+    await flush();
+
+    await selectProvider('ollama');
+    expect(modelOptions()).not.toContain('claude-opus-9');
+    await selectProvider('anthropic');
+
+    expect(modelOptions()).toContain('claude-opus-9');
+    expect(bridge.aiListModels).toHaveBeenCalledTimes(1);
+  });
+
   it('hides the key row for keyless providers and shows it for key providers', async () => {
     bridge.aiHasApiKey.mockResolvedValue(true);
     build();
@@ -1015,7 +1134,7 @@ describe('AgentSidebar', () => {
     await flush();
     await selectProvider('gemini');
 
-    expect(find('hop-ai-model-select').value).toBe('gemini-2.5-flash');
+    expect(find('hop-ai-model-select').value).toBe('gemini-flash-latest');
     find('hop-ai-prompt').value = '요약';
     find('hop-ai-send').click();
     await flush();
@@ -1024,7 +1143,7 @@ describe('AgentSidebar', () => {
       'doc-1',
       '요약',
       'gemini',
-      'gemini-2.5-flash',
+      'gemini-flash-latest',
       null,
       null,
       null,
@@ -1104,7 +1223,7 @@ describe('AgentSidebar', () => {
       'doc-1',
       '요약해줘',
       'ollama',
-      'llama3.1',
+      'llama3.2',
       null,
       null,
       null,
@@ -1131,7 +1250,7 @@ describe('AgentSidebar', () => {
       'doc-1',
       '바꿔줘',
       'ollama',
-      'llama3.1',
+      'llama3.2',
       'sec[0].p[7]',
       null,
       null,
