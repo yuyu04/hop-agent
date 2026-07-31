@@ -1,0 +1,48 @@
+id: F-d448f667
+slug: auto-create-document-on-send
+title: "문서가 없으면 알아서 새 문서를 만들고 진행 — '먼저 문서를 여세요'로 막지 않는다"
+status: done
+modules:
+  - apps/studio-host/src/core/ai-apply.ts
+  - apps/studio-host/src/ui/agent-sidebar.ts
+acceptance_criteria:
+  - id: AC-3ecda9cf
+    ears: event
+    condition: "When 열린 문서가 없는 상태에서 사용자가 전송하고, 그 지시가 빈 문서에서도 수행 가능할 때(첨부가 있거나 편집 모드)"
+    text: "The system shall 빈 문서를 자동으로 만들어 그 문서로 요구를 진행한다 — 사용자가 새 문서를 직접 만들고 다시 지시하지 않아도 된다."
+    test_refs:
+      - apps/studio-host/src/ui/agent-sidebar.test.ts
+      - apps/studio-host/src/core/auto-create-document.test.ts
+    notes: |
+      ## Why
+      2026-07-31 사용자 지적: "문서 안 열면 알아서 문서 열고 해줄수 없나?... 먼저 문서를
+      여세요라고 뜨네". PDF를 첨부하고 '연구노트 만들어줘'를 눌렀는데 가드가 막았다.
+      ## Decision
+      새 문서 생성은 bridge.createNewDocumentAsync()로 하고 payload를
+      eventBus('desktop-document-loaded')로 넘긴다 — main.ts의 initializeDocument가
+      폰트·캔버스·툴바 초기화를 그대로 처리하므로 사이드바가 로드 시퀀스를 재구현하지 않는다.
+  - id: AC-a74baa36
+    ears: unwanted
+    condition: "If 문서가 없고 첨부도 없는 ask(질문) 모드 요구면"
+    text: "The system shall 빈 문서를 만들지 않고 문서를 열라고 안내한다 — 답할 대상이 없는 질문에 문서를 생성해 쓰레기를 만들지 않는다."
+    test_refs:
+      - apps/studio-host/src/core/auto-create-document.test.ts
+      - apps/studio-host/src/ui/agent-sidebar.test.ts
+    notes: |
+      빈 문서에 '이 문서 요약해줘'를 물으면 답할 것이 없다 — 자동 생성은 쓸 내용이 있을
+      때(첨부)나 생산적 지시(편집 모드)에만 적용한다.
+  - id: AC-b9b75dd8
+    ears: unwanted
+    condition: "If 문서 전수 교정 패스를 문서 없이 시작하면"
+    text: "The system shall 빈 문서를 만들지 않고 안내로 멈춘다 — 교정할 본문이 없는 문서를 생성하는 것은 무의미하다."
+    test_refs:
+      - apps/studio-host/src/ui/agent-sidebar.test.ts
+    notes: |
+      교정은 기존 본문을 대상으로 하는 스캔 루프다. 자동 생성 대상에서 명시적으로 제외한다
+      (checkSendGuards({ autoCreateDoc: false })).
+  - id: AC-19181193
+    ears: unwanted
+    condition: "If 새 문서 생성이 실패하거나 사용자가 직전 문서 저장 확인을 취소하면"
+    text: "The system shall AI 요구를 진행하지 않고 사유를 상태줄에 보여준다 — 문서 없는 상태로 편집 요구를 날리지 않는다."
+    test_refs:
+      - apps/studio-host/src/ui/agent-sidebar.test.ts

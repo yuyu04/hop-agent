@@ -39,6 +39,7 @@ import {
   createEntryFormTable,
   pickEntryFormTable,
   pickTocTable,
+  shouldAutoCreateDocument,
   type ApplyResult,
   type ChangedPara,
   type FormSourceTable,
@@ -87,6 +88,8 @@ type AgentBridge = AiBridgeApi &
     exportHwp?(): Uint8Array;
     exportHwpx?(): Uint8Array;
     loadDocument?(data: Uint8Array, fileName?: string): unknown;
+    /** 새 빈 문서 생성(데스크톱 런타임). 문서 없이 들어온 요구를 위해 사이드바가 직접 호출한다. */
+    createNewDocumentAsync?(): Promise<{ docInfo: unknown; message: string } | null>;
     readonly fileName?: string;
   };
 
@@ -824,13 +827,63 @@ export class AgentSidebar {
     await this.send();
   }
 
-  /** 전송 공통 가드(문서/민감/키/Base URL). 통과 시 요청 파라미터를, 막히면 null을 반환한다. */
-  private checkSendGuards(): { docId: string; provider: string; baseUrl: string | null } | null {
-    const docId = this.deps.bridge.currentDocId();
-    if (!docId) {
+  /**
+   * 요청에 쓸 문서 ID를 확보한다(F-d448f667). 열린 문서가 없으면 — 그 요구가 빈 문서에서
+   * 의미가 있는 경우에 한해 — 새 문서를 만들어 진행한다. 막을 때는 사유를 남긴다.
+   */
+  private async resolveDocId(allowCreate: boolean): Promise<string | null> {
+    const existing = this.deps.bridge.currentDocId();
+    if (existing) return existing;
+    if (!allowCreate || !shouldAutoCreateDocument(this.mode, this.attachments.length > 0)) {
       this.setStatus('먼저 문서를 여세요.', 'warn');
       return null;
     }
+    return this.createBlankDocument();
+  }
+
+  /**
+   * 빈 문서를 만들고 에디터를 그 문서로 초기화한다. 생성은 브리지가, 폰트·캔버스·툴바
+   * 초기화는 main.ts의 `desktop-document-loaded` 핸들러가 담당한다 — 사이드바가 로드
+   * 시퀀스를 재구현하지 않는다.
+   */
+  private async createBlankDocument(): Promise<string | null> {
+    const create = this.deps.bridge.createNewDocumentAsync;
+    if (!create) {
+      this.setStatus('먼저 문서를 여세요.', 'warn');
+      return null;
+    }
+    this.setStatus('열린 문서가 없어 새 문서를 만듭니다…', 'info');
+    this.log('열린 문서 없음 — 새 문서를 만들고 요구를 진행합니다.');
+    try {
+      const payload = await create.call(this.deps.bridge);
+      if (!payload) {
+        // 직전 문서 저장 확인을 사용자가 취소한 경우 — 요구를 진행하지 않는다.
+        this.setStatus('새 문서 생성이 취소되었습니다.', 'warn');
+        return null;
+      }
+      this.deps.eventBus.emit('desktop-document-loaded', payload);
+    } catch (error) {
+      this.setStatus(`새 문서를 만들지 못했습니다: ${String(error)}`, 'error');
+      return null;
+    }
+    const docId = this.deps.bridge.currentDocId();
+    if (!docId) {
+      this.setStatus('새 문서를 만들지 못했습니다 — 문서를 먼저 여세요.', 'warn');
+      return null;
+    }
+    return docId;
+  }
+
+  /**
+   * 전송 공통 가드(문서/민감/키/Base URL). 통과 시 요청 파라미터를, 막히면 null을 반환한다.
+   *
+   * `autoCreateDoc: false`는 빈 문서로는 뜻이 없는 요구(문서 전수 교정)에서 쓴다.
+   */
+  private async checkSendGuards(
+    opts: { autoCreateDoc?: boolean } = {},
+  ): Promise<{ docId: string; provider: string; baseUrl: string | null } | null> {
+    const docId = await this.resolveDocId(opts.autoCreateDoc !== false);
+    if (!docId) return null;
     const provider = this.providerSelect.value;
     if (this.sensitive && !LOCAL_PROVIDERS.has(provider)) {
       this.setStatus('민감 문서로 표시됨 — 로컬 모델(ollama)만 사용할 수 있습니다.', 'warn');
@@ -876,7 +929,7 @@ export class AgentSidebar {
         }
       }
     }
-    const guard = this.checkSendGuards();
+    const guard = await this.checkSendGuards();
     if (!guard) return;
     const { docId, provider, baseUrl } = guard;
 
@@ -1347,7 +1400,8 @@ export class AgentSidebar {
    */
   private async runProofread(): Promise<void> {
     if (this.session.state === 'REQUESTING') return; // 이미 요청 진행 중.
-    const guard = this.checkSendGuards();
+    // 교정은 기존 본문을 대상으로 한다 — 문서가 없으면 새로 만들지 않고 안내한다(F-d448f667).
+    const guard = await this.checkSendGuards({ autoCreateDoc: false });
     if (!guard) return;
     const { docId, provider, baseUrl } = guard;
     // 미확정 편집이 있으면 정리하고 시작한다.
@@ -1442,15 +1496,13 @@ export class AgentSidebar {
       ? undefined
       : this.attachments.find((a) => a.path && /\.(docx|pdf)$/i.test(a.path));
     if (docxAtt?.path) {
-      const docId0 = this.deps.bridge.currentDocId();
-      if (!docId0) {
-        this.setStatus('먼저 문서를 여세요.', 'warn');
-        return;
-      }
+      // 첨부를 넣고 눌렀으니 담을 문서가 없으면 만들어 준다(F-d448f667).
+      const docId0 = await this.resolveDocId(true);
+      if (!docId0) return;
       const handled = await this.runDocxFormFill(docId0, docxAtt.path);
       if (handled) return;
     }
-    const guard = this.checkSendGuards();
+    const guard = await this.checkSendGuards();
     if (!guard) return;
     const { docId, provider, baseUrl } = guard;
     if (this.session.isPending) this.session.cancel();

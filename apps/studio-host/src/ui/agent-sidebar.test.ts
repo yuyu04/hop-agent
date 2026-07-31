@@ -228,9 +228,12 @@ const TWO_EDIT_SCRIPT = {
   ],
 };
 
-/** 사이드바 생성자가 await하는 구독/요청 마이크로태스크를 비운다. */
+/**
+ * 사이드바 생성자가 await하는 구독/요청 마이크로태스크를 비운다. 전송 경로는 가드에서
+ * 문서 확보(비동기)까지 await하므로 여유 있게 돌린다.
+ */
 async function flush(): Promise<void> {
-  for (let i = 0; i < 6; i += 1) await Promise.resolve();
+  for (let i = 0; i < 16; i += 1) await Promise.resolve();
 }
 
 function createBridge() {
@@ -242,6 +245,10 @@ function createBridge() {
     aiHasApiKey: vi.fn(async () => false),
     aiDeleteApiKey: vi.fn(async () => undefined),
     aiListModels: vi.fn(async (_provider: string, _baseUrl?: string) => [] as string[]),
+    createNewDocumentAsync: vi.fn(async () => ({
+      docInfo: { pageCount: 1 },
+      message: '새 문서.hwp — 1페이지',
+    }) as { docInfo: unknown; message: string } | null),
     aiSetDocumentSensitivity: vi.fn(async () => undefined),
     aiExtractText: vi.fn(async () => '추출된 본문'),
     currentDocId: vi.fn(() => 'doc-1' as string | null),
@@ -347,15 +354,119 @@ describe('AgentSidebar', () => {
     expect(find('hop-ai-status').textContent).toBe('지시를 입력하세요.');
   });
 
-  it('refuses to send when no document is open', async () => {
+  /**
+   * F-d448f667 — 문서를 안 열고 지시해도 진행된다. '먼저 문서를 여세요'는 빈 문서가
+   * 의미 없는 요구(첨부 없는 질문·전수 교정)에만 남는다.
+   */
+  function askMode(): FakeElement {
+    const buttons = doc.body.querySelectorAll('.hop-ai-mode-btn');
+    if (buttons.length < 2) throw new Error('mode buttons missing');
+    return buttons[1];
+  }
+
+  /** 새 문서 생성이 성공하면 그때부터 문서 ID가 생긴다(실제 브리지 동작). */
+  function makeCreateOpenDocument(docId = 'doc-new'): void {
     bridge.currentDocId.mockReturnValue(null);
+    bridge.createNewDocumentAsync.mockImplementation(async () => {
+      bridge.currentDocId.mockReturnValue(docId);
+      return { docInfo: { pageCount: 1 }, message: '새 문서.hwp — 1페이지' };
+    });
+  }
+
+  it('F-d448f667 AC-001: 문서가 없으면 새 문서를 만들고 그 문서로 요구를 진행한다', async () => {
+    makeCreateOpenDocument();
     build();
     await flush();
-    find('hop-ai-prompt').value = '요약해줘';
+    await selectProvider('ollama');
+    find('hop-ai-prompt').value = '연구 계획 초안 써줘';
     find('hop-ai-send').click();
     await flush();
+
+    expect(bridge.createNewDocumentAsync).toHaveBeenCalledTimes(1);
+    // 폰트·캔버스·툴바 초기화는 main.ts 핸들러가 한다 — 사이드바는 payload를 넘긴다.
+    expect(emit).toHaveBeenCalledWith('desktop-document-loaded', {
+      docInfo: { pageCount: 1 },
+      message: '새 문서.hwp — 1페이지',
+    });
+    expect(bridge.aiRequestEdit).toHaveBeenCalledWith(
+      'doc-new',
+      '연구 계획 초안 써줘',
+      'ollama',
+      'llama3.2',
+      null,
+      null,
+      null,
+      null,
+      null,
+    );
+  });
+
+  it('F-d448f667 AC-002: 첨부 없는 질문(ask)은 새 문서를 만들지 않고 안내한다', async () => {
+    makeCreateOpenDocument();
+    build();
+    await flush();
+    askMode().click();
+    find('hop-ai-prompt').value = '이 문서 요약해줘';
+    find('hop-ai-send').click();
+    await flush();
+
+    expect(bridge.createNewDocumentAsync).not.toHaveBeenCalled();
     expect(bridge.aiRequestEdit).not.toHaveBeenCalled();
     expect(find('hop-ai-status').textContent).toBe('먼저 문서를 여세요.');
+  });
+
+  it('F-d448f667 AC-004: 새 문서 생성이 취소되면 요구를 진행하지 않는다', async () => {
+    bridge.currentDocId.mockReturnValue(null);
+    bridge.createNewDocumentAsync.mockResolvedValue(null);
+    build();
+    await flush();
+    await selectProvider('ollama');
+    find('hop-ai-prompt').value = '초안 써줘';
+    find('hop-ai-send').click();
+    await flush();
+
+    expect(bridge.aiRequestEdit).not.toHaveBeenCalled();
+    expect(find('hop-ai-status').textContent).toContain('취소');
+  });
+
+  it('F-d448f667 AC-004: 새 문서 생성이 실패하면 사유를 남기고 멈춘다', async () => {
+    bridge.currentDocId.mockReturnValue(null);
+    bridge.createNewDocumentAsync.mockRejectedValue(new Error('디스크 오류'));
+    build();
+    await flush();
+    await selectProvider('ollama');
+    find('hop-ai-prompt').value = '초안 써줘';
+    find('hop-ai-send').click();
+    await flush();
+
+    expect(bridge.aiRequestEdit).not.toHaveBeenCalled();
+    expect(find('hop-ai-status').textContent).toContain('새 문서를 만들지 못했습니다');
+  });
+
+  it('F-d448f667 AC-003: 전수 교정은 문서가 없으면 새로 만들지 않는다', async () => {
+    makeCreateOpenDocument();
+    build();
+    await flush();
+    await selectProvider('ollama');
+
+    clickQuickAction('proofread');
+    await flush();
+
+    expect(bridge.createNewDocumentAsync).not.toHaveBeenCalled();
+    expect(bridge.aiRequestEdit).not.toHaveBeenCalled();
+    expect(find('hop-ai-status').textContent).toBe('먼저 문서를 여세요.');
+  });
+
+  it('F-d448f667: 문서가 이미 열려 있으면 새로 만들지 않는다', async () => {
+    build();
+    await flush();
+    await selectProvider('ollama');
+    find('hop-ai-prompt').value = '첫 문단 바꿔줘';
+    find('hop-ai-send').click();
+    await flush();
+
+    expect(bridge.createNewDocumentAsync).not.toHaveBeenCalled();
+    expect(bridge.aiRequestEdit).toHaveBeenCalled();
   });
 
   it('streams deltas, previews the diff, and applies on accept', async () => {

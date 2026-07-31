@@ -1847,6 +1847,17 @@ export function resolveBodyCell(
 }
 
 /**
+ * 문서가 하나도 열려 있지 않을 때 빈 문서를 만들어 진행해도 되는 요청인지(F-d448f667).
+ *
+ * '먼저 문서를 여세요'로 막는 것은 사용자가 이미 재료(첨부)를 넣었거나 무언가를 써
+ * 달라고 한 경우에 특히 부당하다 — 그 두 경우는 빈 문서가 정확히 필요한 것이다.
+ * 반대로 첨부 없는 질문(ask)은 빈 문서를 만들어도 답할 대상이 없으므로 만들지 않는다.
+ */
+export function shouldAutoCreateDocument(mode: 'edit' | 'ask', hasAttachments: boolean): boolean {
+  return hasAttachments || mode === 'edit';
+}
+
+/**
  * 지시문이 '연구노트를 만들어 달라'는 의도인지(F-5e9c6033).
  *
  * 첨부가 있는 모든 요청을 양식 채움으로 보내면 "이 PDF 요약해줘" 같은 정상 요청을
