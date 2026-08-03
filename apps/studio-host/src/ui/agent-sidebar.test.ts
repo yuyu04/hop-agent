@@ -1179,6 +1179,108 @@ describe('AgentSidebar', () => {
     expect(bridge.aiListModels).toHaveBeenCalledTimes(1);
   });
 
+  /**
+   * F-9dbe7a25 — 설정 모달에는 provider select가 없다. 키를 요구할 때는 어느
+   * provider 것인지 밝히고, 키가 없으면 키 없이 쓰는 길을 같이 보여준다.
+   */
+  function hidden(cls: string): boolean {
+    return find(cls).classList.contains('hop-ai-hidden');
+  }
+
+  it('F-9dbe7a25 AC-001: 키 줄이 어느 provider의 키인지 밝힌다', async () => {
+    bridge.aiHasApiKey.mockResolvedValue(false);
+    build();
+    await flush();
+
+    await selectProvider('anthropic');
+    expect(find('hop-ai-key-label').textContent).toBe('anthropic API 키');
+    expect(find('hop-ai-key').placeholder).toBe('anthropic API 키');
+
+    await selectProvider('openai');
+    expect(find('hop-ai-key-label').textContent).toBe('openai API 키');
+  });
+
+  it('F-9dbe7a25 AC-001: provider 라벨이 있으면 라벨 문구를 쓴다', async () => {
+    bridge.aiHasApiKey.mockResolvedValue(false);
+    build();
+    await flush();
+
+    await selectProvider('openai-compat');
+
+    expect(find('hop-ai-key-label').textContent).toBe('OpenAI 호환 (Groq 등) API 키');
+  });
+
+  it('F-9dbe7a25 AC-002: 키가 없으면 키 없는 대안과 전환 버튼을 보여준다', async () => {
+    bridge.aiHasApiKey.mockResolvedValue(false);
+    build();
+    await flush();
+
+    await selectProvider('anthropic');
+
+    expect(hidden('hop-ai-keyless-hint')).toBe(false);
+    expect(find('hop-ai-keyless-text').textContent).toContain('키 없이');
+  });
+
+  it('F-9dbe7a25 AC-002: 전환 버튼이 로컬 CLI provider로 바꾸고 키 줄을 없앤다', async () => {
+    bridge.aiHasApiKey.mockResolvedValue(false);
+    build();
+    await flush();
+    await selectProvider('anthropic');
+
+    find('hop-ai-keyless-switch').click();
+    await flush();
+
+    expect(find('hop-ai-provider').value).toBe('claude-cli');
+    // provider 변경 경로를 그대로 탔는지 — 키 줄·안내가 사라지고 모델이 CLI 별칭이다.
+    expect(hidden('hop-ai-key-row')).toBe(true);
+    expect(hidden('hop-ai-keyless-hint')).toBe(true);
+    expect(find('hop-ai-model-select').value).toBe('default');
+    expect(find('hop-ai-status').textContent).toContain('API 키가 필요 없습니다');
+  });
+
+  it('F-9dbe7a25 AC-003: 키가 저장돼 있으면 대안을 띄우지 않는다', async () => {
+    bridge.aiHasApiKey.mockResolvedValue(true);
+    build();
+    await flush();
+
+    await selectProvider('anthropic');
+
+    expect(hidden('hop-ai-key-row')).toBe(false);
+    expect(hidden('hop-ai-keyless-hint')).toBe(true);
+  });
+
+  it('F-9dbe7a25 AC-003: 키가 선택인 provider(openai-compat)는 대안을 띄우지 않는다', async () => {
+    bridge.aiHasApiKey.mockResolvedValue(false);
+    build();
+    await flush();
+
+    await selectProvider('openai-compat');
+
+    expect(hidden('hop-ai-key-row')).toBe(false);
+    expect(hidden('hop-ai-keyless-hint')).toBe(true);
+  });
+
+  it('F-9dbe7a25 AC-004: 키 줄이 라벨·입력·동작 묶음으로 나뉜다(좁은 모달 줄바꿈)', async () => {
+    bridge.aiHasApiKey.mockResolvedValue(false);
+    build();
+    await flush();
+    await selectProvider('anthropic');
+
+    const row = find('hop-ai-key-row');
+    expect(row.children.map((node) => node.className)).toEqual([
+      'hop-ai-key-label',
+      'hop-ai-key',
+      'hop-ai-key-actions',
+    ]);
+    // 저장·삭제·상태는 한 묶음 안에 있어야 함께 줄바꿈된다.
+    const actions = find('hop-ai-key-actions');
+    expect(actions.children.map((node) => node.className)).toEqual([
+      'hop-ai-key-save',
+      'hop-ai-key-clear',
+      'hop-ai-key-status',
+    ]);
+  });
+
   it('hides the key row for keyless providers and shows it for key providers', async () => {
     bridge.aiHasApiKey.mockResolvedValue(true);
     build();

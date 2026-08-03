@@ -272,6 +272,8 @@ export class AgentSidebar {
   private variationState: { edit: Edit; btns: HTMLButtonElement[]; container: HTMLElement } | null =
     null;
   private readonly keyRow: HTMLElement;
+  private readonly keyLabel: HTMLElement;
+  private readonly keylessHint: HTMLElement;
   private readonly keyInput: HTMLInputElement;
   private readonly keyStatus: HTMLElement;
   private readonly keyClearBtn: HTMLButtonElement;
@@ -332,6 +334,8 @@ export class AgentSidebar {
     this.skillSelect = built.skillSelect;
     this.themeSelect = built.themeSelect;
     this.keyRow = built.keyRow;
+    this.keyLabel = built.keyLabel;
+    this.keylessHint = built.keylessHint;
     this.keyInput = built.keyInput;
     this.keyStatus = built.keyStatus;
     this.keyClearBtn = built.keyClearBtn;
@@ -354,6 +358,7 @@ export class AgentSidebar {
     this.modelSelect.addEventListener('change', () => this.updateModelVisibility());
     this.modelRefreshBtn.addEventListener('click', () => void this.refreshModels());
     built.keySaveBtn.addEventListener('click', () => void this.saveKey());
+    built.keylessBtn.addEventListener('click', () => void this.switchToLocalCli());
     this.keyClearBtn.addEventListener('click', () => void this.clearKey());
     this.sensitiveCheckbox.addEventListener('change', () => void this.onSensitivityToggle());
     this.presetSelect.addEventListener('change', () => this.applyPreset());
@@ -2466,7 +2471,14 @@ export class AgentSidebar {
     const showsKey = requiresKey || isCustom;
     this.keyRow.classList.toggle('hop-ai-hidden', !showsKey);
     this.customRow.classList.toggle('hop-ai-hidden', !isCustom);
-    if (!showsKey) return;
+    // 어느 provider의 키인지 밝힌다 — 모달에는 provider select가 없다(F-9dbe7a25).
+    const providerName = PROVIDER_LABELS[provider] ?? provider;
+    this.keyLabel.textContent = `${providerName} API 키`;
+    this.keyInput.placeholder = `${providerName} API 키`;
+    if (!showsKey) {
+      this.keylessHint.classList.add('hop-ai-hidden');
+      return;
+    }
 
     let present = false;
     try {
@@ -2479,6 +2491,22 @@ export class AgentSidebar {
     this.keyStatus.textContent = present ? '키 저장됨' : isCustom ? '키 없음(선택)' : '키 없음';
     this.keyStatus.dataset.tone = present ? 'ok' : isCustom ? 'info' : 'warn';
     this.keyClearBtn.disabled = !present;
+    // 키가 정말 필요한데 없을 때만 대안을 권한다 — 문제 없을 땐 조용히 둔다.
+    this.keylessHint.classList.toggle('hop-ai-hidden', present || !requiresKey);
+  }
+
+  /**
+   * 키 없는 경로로 갈아탄다(F-9dbe7a25). provider select 값을 바꾸고 기존 변경 경로를
+   * 그대로 태워, 모델 목록·키 줄 갱신이 한 곳에서만 일어나게 한다.
+   */
+  private async switchToLocalCli(): Promise<void> {
+    this.providerSelect.value = CLAUDE_CLI_PROVIDER;
+    await this.onProviderChange();
+    this.toggleSettings(false);
+    this.setStatus(
+      'Claude Code (로컬 CLI)로 전환했습니다 — 터미널에 로그인된 계정을 사용하며 API 키가 필요 없습니다.',
+      'ok',
+    );
   }
 
   private applyPreset(): void {
@@ -3106,10 +3134,13 @@ interface PanelParts {
   attachBtn: HTMLButtonElement;
   settingsPanel: HTMLElement;
   keyRow: HTMLElement;
+  keyLabel: HTMLElement;
   keyInput: HTMLInputElement;
   keySaveBtn: HTMLButtonElement;
   keyClearBtn: HTMLButtonElement;
   keyStatus: HTMLElement;
+  keylessHint: HTMLElement;
+  keylessBtn: HTMLButtonElement;
   sensitiveCheckbox: HTMLInputElement;
   customRow: HTMLElement;
   baseUrlInput: HTMLInputElement;
@@ -3159,13 +3190,27 @@ function buildPanel(): PanelParts {
   const threadsWrap = el('div', 'hop-ai-threads');
 
   // 옵션 패널(⚙)
+  // 키 줄 — 어느 provider의 키인지 라벨로 밝히고, 좁은 모달에서 잘리지 않게
+  // [라벨] / [입력] / [동작 묶음] 세 덩어리로 나눈다(F-9dbe7a25).
+  const keyLabel = el('span', 'hop-ai-key-label');
   const keyInput = inputEl('hop-ai-key', 'password', 'API 키');
   keyInput.autocomplete = 'off';
   const keySaveBtn = btn('hop-ai-key-save', '키 저장');
   const keyClearBtn = btn('hop-ai-key-clear', '삭제');
   const keyStatus = el('span', 'hop-ai-key-status');
+  const keyActions = el('div', 'hop-ai-key-actions');
+  keyActions.append(keySaveBtn, keyClearBtn, keyStatus);
   const keyRow = el('div', 'hop-ai-key-row');
-  keyRow.append(keyInput, keySaveBtn, keyClearBtn, keyStatus);
+  keyRow.append(keyLabel, keyInput, keyActions);
+
+  // 키가 없을 때만 뜨는 대안 — 구독(팀·Pro)이면 로컬 CLI로 키 없이 쓸 수 있다.
+  const keylessText = el('span', 'hop-ai-keyless-text');
+  keylessText.textContent =
+    '구독 플랜(팀·Pro)이 있으면 키 없이 쓸 수 있습니다 — 터미널에 로그인된 Claude Code를 그대로 사용합니다.';
+  const keylessBtn = btn('hop-ai-keyless-switch', 'Claude Code (로컬 CLI)로 전환');
+  const keylessHint = el('div', 'hop-ai-keyless-hint');
+  keylessHint.append(keylessText, keylessBtn);
+  keylessHint.classList.add('hop-ai-hidden');
 
   const presetSelect = document.createElement('select');
   presetSelect.className = 'hop-ai-preset';
@@ -3190,7 +3235,7 @@ function buildPanel(): PanelParts {
   sensitiveRow.append(sensitiveCheckbox, sensitiveText);
 
   const settingsPanel = el('div', 'hop-ai-settings');
-  settingsPanel.append(customRow, keyRow, sensitiveRow);
+  settingsPanel.append(customRow, keyRow, keylessHint, sensitiveRow);
 
   // 설정 모달(별도 창처럼) — 'Agent 설정'에서 열린다. 기본 숨김.
   const settingsModal = el('div', 'hop-ai-modal');
@@ -3344,10 +3389,13 @@ function buildPanel(): PanelParts {
     attachBtn,
     settingsPanel,
     keyRow,
+    keyLabel,
     keyInput,
     keySaveBtn,
     keyClearBtn,
     keyStatus,
+    keylessHint,
+    keylessBtn,
     sensitiveCheckbox,
     customRow,
     baseUrlInput,

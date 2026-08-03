@@ -29,6 +29,7 @@ features:
   F-85327e55: {slug: toc-page-chunking, status: done, modules: 3}
   F-8eb1f86f: {slug: ai-table-formula, status: done, modules: 3}
   F-9a5045da: {slug: toc-regenerate-from-docx, status: done, modules: 2}
+  F-9dbe7a25: {slug: keyless-provider-guidance, status: done, modules: 2}
   F-addf13c1: {slug: merged-label-value-resolve, status: done, modules: 1}
   F-ae778890: {slug: form-continue-deterministic-clone, status: done, modules: 5}
   F-beb35fbb: {slug: docx-batch-form-fill, status: done, modules: 6}

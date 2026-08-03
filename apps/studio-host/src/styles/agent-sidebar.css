@@ -446,13 +446,36 @@ body.hop-ai-open #studio-root {
   gap: 10px;
   padding: 12px;
 }
-.hop-ai-key-row,
+/* 키 줄은 320px 모달에서 [라벨]/[입력]/[버튼 묶음]이 각각 한 줄을 차지한다 —
+   한 줄에 밀어 넣으면 '키 저장·삭제·상태'가 뭉개진다(F-9dbe7a25). */
+.hop-ai-key-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.hop-ai-key-label {
+  flex: 1 1 100%;
+  font-size: 11.5px;
+  color: var(--hop-ai-muted);
+}
+.hop-ai-key-actions {
+  flex: 1 1 100%;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
 .hop-ai-custom-row {
   display: flex;
   gap: 6px;
   align-items: center;
 }
-.hop-ai-key,
+.hop-ai-key {
+  flex: 1 1 100%;
+  min-width: 0;
+  font: inherit;
+  box-sizing: border-box;
+}
 .hop-ai-base-url {
   flex: 1 1 auto;
   min-width: 0;
@@ -478,6 +501,34 @@ body.hop-ai-open #studio-root {
 }
 .hop-ai-key-status[data-tone='info'] {
   color: #666;
+}
+/* 키 없는 대안 — 키가 필요한데 없을 때만 보인다. */
+.hop-ai-keyless-hint {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid rgba(26, 24, 21, 0.12);
+  border-radius: var(--hop-ai-r-sm);
+  background: var(--hop-ai-warm-1);
+}
+.hop-ai-keyless-text {
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--hop-ai-ink-3);
+}
+.hop-ai-keyless-switch {
+  align-self: flex-start;
+  padding: 5px 10px;
+  border: 1px solid rgba(26, 24, 21, 0.18);
+  border-radius: var(--hop-ai-r-sm);
+  background: #fff;
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.hop-ai-keyless-switch:hover {
+  background: var(--hop-ai-hover);
 }
 .hop-ai-sensitive-row {
   display: flex;

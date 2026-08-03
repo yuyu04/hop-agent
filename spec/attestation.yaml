@@ -33,7 +33,8 @@ attested_modules:
   apps/studio-host/src/core/chart-render.ts: 48b8c91bdf1a2430
   apps/studio-host/src/core/model-catalog.ts: 04e6f8be28172e28
   apps/studio-host/src/core/tauri-bridge.ts: 8bb53d4c0f3dd425
-  apps/studio-host/src/ui/agent-sidebar.ts: 1456b23756889540
+  apps/studio-host/src/styles/agent-sidebar.css: 0ac2c3ec4ad79dd0
+  apps/studio-host/src/ui/agent-sidebar.ts: 03ceab229d8fe625
   apps/studio-host/src/ui/ai-inline-diff.ts: bb8e2d0f24bec827
 attested_features:
   F-04a91c: ok
@@ -63,6 +64,7 @@ attested_features:
   F-85327e55: ok
   F-8eb1f86f: ok
   F-9a5045da: ok
+  F-9dbe7a25: ok
   F-addf13c1: ok
   F-ae778890: ok
   F-beb35fbb: ok
