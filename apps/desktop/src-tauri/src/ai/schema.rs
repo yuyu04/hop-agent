@@ -364,10 +364,15 @@ pub struct FormFillField {
     pub value: String,
 }
 
-/// 새로 추가할 항목 하나 — 라벨→값 쌍의 집합. 표 구조 정보는 일절 없다.
+/// 새로 추가할 항목 하나 — 라벨→값 쌍 + (선택) 본문. 표 구조 정보는 일절 없다.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FormFillEntry {
     pub fields: Vec<FormFillField>,
+    /// 라벨 없는 '본문 통칸'에 넣을 단락들(F-86317c64). 연구노트처럼 제목·날짜 칸 외에
+    /// 내용 본문이 있는 양식에서 쓴다. **여기 없으면 canonical 재직렬화에서 버려져
+    /// 프론트가 본문을 영영 못 받는다** — 스키마에만 추가하면 안 된다.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub body: Vec<String>,
 }
 
 /// 양식 이어쓰기 응답(내용 전용). entries.len() = 추가할 항목 수 N. 표/compose 없음.
@@ -428,6 +433,11 @@ pub fn form_fill_schema() -> Value {
                                 },
                                 "required": ["label", "value"]
                             }
+                        },
+                        "body": {
+                            "type": "array",
+                            "description": "라벨 없는 '본문 통칸'에 들어갈 단락들. 연구노트처럼 제목·날짜 칸 외에 내용 본문이 있는 양식에서 채운다. 배열 원소 1개 = 문단 1개.",
+                            "items": { "type": "string" }
                         }
                     },
                     "required": ["fields"]
@@ -1129,6 +1139,7 @@ mod tests {
                     label: "제목".to_string(),
                     value: "x".to_string(),
                 }],
+                body: Vec::new(),
             }],
             message: None,
         };
@@ -1136,6 +1147,33 @@ mod tests {
         for forbidden in ["table", "clone", "matrix", "merge", "compose", "command"] {
             assert!(!json.contains(forbidden), "표/compose 키 노출 금지: {}", forbidden);
         }
+    }
+
+    #[test]
+    fn form_fill_body_survives_parse_and_canonical_reserialization() {
+        // emit_form_fill은 파싱 결과를 다시 직렬화해 프론트로 보낸다 — 구조체에 body가
+        // 없으면 모델이 본문을 줘도 조용히 사라진다(F-86317c64 AC-fcef045d).
+        let raw = r#"{"entries":[{"fields":[{"label":"제목","value":"1주차"}],
+                       "body":["첫 단락","둘째 단락"]}]}"#;
+        let resp = parse_form_fill_response(raw).unwrap();
+        assert_eq!(resp.entries[0].body, vec!["첫 단락", "둘째 단락"]);
+        let canonical = serde_json::to_string(&resp).unwrap();
+        assert!(canonical.contains("첫 단락"), "canonical: {}", canonical);
+        assert!(canonical.contains("\"body\""), "canonical: {}", canonical);
+    }
+
+    #[test]
+    fn form_fill_body_is_optional_and_omitted_when_empty() {
+        // 본문 칸이 없는 양식에서는 body를 안 보낸다 — 빈 배열 키로 프롬프트를 오염시키지 않는다.
+        let resp = parse_form_fill_response(r#"{"entries":[{"fields":[]}]}"#).unwrap();
+        assert!(resp.entries[0].body.is_empty());
+        assert!(!serde_json::to_string(&resp).unwrap().contains("body"));
+    }
+
+    #[test]
+    fn form_fill_schema_offers_a_body_channel() {
+        let schema = form_fill_schema().to_string();
+        assert!(schema.contains("body"), "본문 통칸 채널이 스키마에 없다");
     }
 
     #[test]

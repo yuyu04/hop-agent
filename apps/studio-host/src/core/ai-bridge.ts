@@ -383,7 +383,14 @@ export function parseActionScript(json: string): ActionScript | null {
 
 /** 양식 이어쓰기 응답(F-ae778890) — 내용 전용. 표/compose 구조는 일절 없다. */
 export interface FormFillResponse {
-  entries: { fields: { label: string; value: string }[] }[];
+  entries: {
+    fields: { label: string; value: string }[];
+    /**
+     * 라벨 없는 '본문 통칸'에 넣을 단락들(F-86317c64). 연구노트처럼 제목·날짜 칸 외에
+     * 내용 본문이 있는 양식에서만 온다. 원소 1개 = 문단 1개.
+     */
+    body?: string[];
+  }[];
   message?: string;
 }
 

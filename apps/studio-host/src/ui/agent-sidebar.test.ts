@@ -261,7 +261,7 @@ function createBridge() {
     splitParagraph: vi.fn(() => ''),
     mergeParagraph: vi.fn(() => ''),
     insertPageBreak: vi.fn(() => ''),
-    createTable: vi.fn(() => ({ ok: true, paraIdx: 0, controlIdx: 0 })),
+    createTable: vi.fn(() => ({ ok: true, paraIdx: 3, controlIdx: 0 })),
     mergeTableCells: vi.fn(() => ({ ok: true, cellCount: 1 })),
     getCellParagraphLength: vi.fn(() => 0),
     insertTextInCell: vi.fn(() => ''),
@@ -271,6 +271,12 @@ function createBridge() {
     deleteTextInCellByPath: vi.fn(() => ''),
     splitParagraphInCellByPath: vi.fn(() => ''),
     markDocumentDirty: vi.fn(),
+    aiParseResearchNoteDocx: vi.fn(async () => {
+      throw new Error('연구노트 구조 아님');
+    }),
+    aiParseResearchNotePdf: vi.fn(async () => {
+      throw new Error('연구노트 구조 아님');
+    }),
   };
 }
 
@@ -1186,6 +1192,189 @@ describe('AgentSidebar', () => {
   function hidden(cls: string): boolean {
     return find(cls).classList.contains('hop-ai-hidden');
   }
+
+  /**
+   * F-86317c64 — "PDF 첨부 + 연구노트 만들어줘"가 빈 양식 표만 남기고 끝나던 회귀.
+   * 라우팅(문서 없음) · 복제 앵커 · 본문 요구 · 빈 템플릿 정리를 고정한다.
+   */
+  const FORM_FILL_JSON = JSON.stringify({
+    message: '3주치 연구노트를 정리했습니다.',
+    entries: [1, 2, 3].map((n) => ({
+      fields: [
+        { label: '제목', value: `${n}주차 요약` },
+        { label: '기록 일자', value: `2026.01.0${n}` },
+      ],
+      body: [`${n}주차 본문 단락 하나`, `${n}주차 본문 단락 둘`],
+    })),
+  });
+
+  /**
+   * 양식 복제 경로가 필요로 하는 브리지 표면(스냅샷·표 복제·정리)을 켠다. 공유 목에 넣으면
+   * 다른 테스트가 '제안'이 아니라 '낙관적 적용' 경로로 넘어가므로 여기서만 붙인다.
+   */
+  function enableFormFillSurface() {
+    const surface = {
+      getSourceFormat: vi.fn(() => 'hwp'),
+      exportHwp: vi.fn(() => new Uint8Array([1, 2, 3])),
+      loadDocument: vi.fn(() => undefined),
+      getTableCellBboxes: vi.fn(() => {
+        const out: { row: number; col: number; cellIdx: number; colSpan: number }[] = [];
+        let idx = 0;
+        for (let r = 0; r < 6; r += 1) {
+          for (let c = 0; c < 2; c += 1) {
+            if (r === 1 && c === 1) continue; // 본문 행은 전폭 병합
+            out.push({ row: r, col: c, cellIdx: idx, colSpan: r === 1 ? 2 : 1 });
+            idx += 1;
+          }
+        }
+        return out;
+      }),
+      copyControl: vi.fn(() => JSON.stringify({ ok: true, text: '[표]' })),
+      pasteControl: vi.fn(() => JSON.stringify({ ok: true, paraIdx: 9, controlIdx: 0 })),
+      clipboardHasControl: vi.fn(() => true),
+      removeSourceFormTable: vi.fn(() => ({ removedBreak: false })),
+      setTableProperties: vi.fn(),
+      // 본문 통칸 다단락 채우기가 쓰는 셀 편집 표면.
+      splitParagraphInCell: vi.fn(() => ''),
+      insertTextInCell: vi.fn(() => ''),
+      deleteTextInCell: vi.fn(() => ''),
+      getCellParagraphLength: vi.fn(() => 0),
+    };
+    Object.assign(bridge, surface);
+    return surface;
+  }
+
+  /** 양식 이어쓰기를 끝까지 돌린다(요청 → 모델 응답 → 미리 적용). */
+  async function runFormFill(prompt: string): Promise<void> {
+    find('hop-ai-prompt').value = prompt;
+    clickQuickAction('form_fill');
+    await flush();
+    captured!.onEditReady?.({ requestId: 'req-1', actionScriptJson: FORM_FILL_JSON });
+    await flush();
+  }
+
+  /** 마지막 aiRequestEdit 호출의 인자. */
+  function lastRequest(): unknown[] {
+    const calls = bridge.aiRequestEdit.mock.calls as unknown as unknown[][];
+    return calls[calls.length - 1] ?? [];
+  }
+
+  /** 분할된 문단 인덱스들 — INSERT_AFTER는 앵커 문단을 분할하므로 곧 앵커 위치다. */
+  function splitParagraphs(): number[] {
+    const calls = bridge.splitParagraph.mock.calls as unknown as unknown[][];
+    return calls.map((c) => Number(c[1]));
+  }
+
+  it('F-86317c64 AC-119ff14f: 문서가 없어도 PDF+연구노트는 연구노트 경로로 간다', async () => {
+    bridge.currentDocId.mockReturnValue(null);
+    bridge.createNewDocumentAsync.mockImplementation(async () => {
+      bridge.currentDocId.mockReturnValue('doc-new');
+      return { docInfo: { pageCount: 1 }, message: '새 문서.hwp — 1페이지' };
+    });
+    const surface = enableFormFillSurface();
+    const sidebar = build();
+    await flush();
+    await selectProvider('ollama');
+    // PDF 첨부가 있는 상태를 만든다(드래그&드롭·파일 선택과 같은 상태).
+    (sidebar as unknown as { attachments: unknown[] }).attachments.push({
+      id: 'a1',
+      kind: 'file',
+      name: 'paper.pdf',
+      path: '/tmp/paper.pdf',
+    });
+
+    find('hop-ai-prompt').value = '해당 논문에 대한 연구노트 작성해줘 3주짜리로';
+    find('hop-ai-send').click();
+    await flush();
+
+    // 연구노트 경로로 들어갔다 — 구조 파싱을 시도했고, 일반 편집으로 새지 않았다.
+    expect(bridge.aiParseResearchNotePdf).toHaveBeenCalledWith('/tmp/paper.pdf');
+    expect(bridge.createNewDocumentAsync).toHaveBeenCalled();
+    // 일반 편집이 아니라 양식 채움 요청이다 — 마지막 인자에 양식 라벨이 실린다.
+    expect(lastRequest()[10], '양식 채움 라벨이 실려야 form_fill 경로다').toBeTruthy();
+
+    // 모델 응답까지 주면 복제·본문 채움이 이어진다.
+    captured!.onEditReady?.({ requestId: 'req-1', actionScriptJson: FORM_FILL_JSON });
+    await flush();
+    expect(surface.copyControl).toHaveBeenCalled();
+  });
+
+  it('F-86317c64 AC-f8890de9: 만든 양식의 복제 앵커는 그 표 "뒤" 문단이다', async () => {
+    const surface = enableFormFillSurface();
+    build();
+    await flush();
+    await selectProvider('ollama');
+
+    await runFormFill('연구노트 3개 만들어줘');
+
+    // createTable이 p3에 표를 만들었으므로 앵커는 p4여야 한다. INSERT_AFTER는 앵커 문단을
+    // 분할하므로, 분할 위치가 곧 앵커다 — p3 이하를 분할하면 소스 표가 밀려 복제가 깨진다.
+    const splits = splitParagraphs();
+    expect(splits.length, '복제가 한 번도 시도되지 않았다').toBeGreaterThan(0);
+    expect(splits.every((p) => p > 3), `분할된 문단: ${splits}`).toBe(true);
+    // 소스는 만든 표 그대로.
+    expect(surface.copyControl.mock.calls.every((c) => c.join(',') === '0,3,0')).toBe(true);
+  });
+
+  it('F-86317c64 AC-fcef045d: 본문 통칸이 있으면 LLM에게 본문을 요구한다', async () => {
+    enableFormFillSurface();
+    build();
+    await flush();
+    await selectProvider('ollama');
+
+    await runFormFill('연구노트 3개 만들어줘');
+
+    const prompt = String(lastRequest()[1]);
+    expect(prompt).toContain('본문 통칸');
+    expect(prompt).toContain('body');
+  });
+
+  it('F-86317c64 AC-10a70e19: 복제한 뒤 앱이 만든 빈 템플릿을 지운다', async () => {
+    const surface = enableFormFillSurface();
+    build();
+    await flush();
+    await selectProvider('ollama');
+
+    await runFormFill('연구노트 3개 만들어줘');
+
+    expect(surface.removeSourceFormTable).toHaveBeenCalledWith(0, 3, 0);
+  });
+
+  it('F-86317c64 AC-26eb07c9: 사용자 문서의 양식 표는 소스로 쓰되 지우지 않는다', async () => {
+    // 공유 CONTEXT는 form_tables가 없는 모양이라 목 반환 타입을 넓혀 준다.
+    bridge.aiGetDocumentContext.mockResolvedValue({
+      document_metadata: {
+        total_sections: 1,
+        form_tables: [
+          {
+            section: 0,
+            paragraph: 2,
+            control_index: 0,
+            rows: 2,
+            cols: 2,
+            cells: [
+              { row: 0, col: 0, role: 'label', text: '제목' },
+              { row: 0, col: 1, role: 'input', text: '' },
+              { row: 1, col: 0, role: 'label', text: '기록 일자' },
+              { row: 1, col: 1, role: 'input', text: '' },
+            ],
+          },
+        ],
+      },
+      content: [{ type: 'paragraph', id: 'sec[0].p[5]', text: '본문' }],
+    } as unknown as Awaited<ReturnType<typeof bridge.aiGetDocumentContext>>);
+    const surface = enableFormFillSurface();
+    build();
+    await flush();
+    await selectProvider('ollama');
+
+    await runFormFill('항목 3개 더 추가해줘');
+
+    // 사용자 표를 소스로 복제했고(2,0), 새 양식을 만들지도 지우지도 않았다.
+    expect(bridge.createTable).not.toHaveBeenCalled();
+    expect(surface.copyControl.mock.calls.every((c) => c.join(',') === '0,2,0')).toBe(true);
+    expect(surface.removeSourceFormTable).not.toHaveBeenCalled();
+  });
 
   it('F-9dbe7a25 AC-001: 키 줄이 어느 provider의 키인지 밝힌다', async () => {
     bridge.aiHasApiKey.mockResolvedValue(false);

@@ -16,25 +16,25 @@
 attested_modules:
   apps/desktop/src-tauri/src/ai/adapters/models.rs: 222f32ae62ac2724
   apps/desktop/src-tauri/src/ai/docx.rs: 568924b721f1a736
-  apps/desktop/src-tauri/src/ai/mod.rs: 61520441b1018c17
+  apps/desktop/src-tauri/src/ai/mod.rs: 171c47b5398535a0
   apps/desktop/src-tauri/src/ai/pdf_pages.rs: 87f26b965922b062
   apps/desktop/src-tauri/src/ai/pdf_pdfium.rs: 7fd2cbc41e92c72b
   apps/desktop/src-tauri/src/ai/pdf_render.rs: 5391f3d93c2c2ac9
-  apps/desktop/src-tauri/src/ai/schema.rs: d22be57aaee3f028
+  apps/desktop/src-tauri/src/ai/schema.rs: 676533b949e4747e
   apps/desktop/src-tauri/src/ai/serialize.rs: 013d17dd9bf54d79
   apps/desktop/src-tauri/src/commands.rs: 1377b34010fc7f56
   apps/desktop/src-tauri/src/docx_export.rs: cbfa5c5889e8bfd3
   apps/desktop/src-tauri/src/hwp_table_fix.rs: e70c3701e9f64545
   apps/desktop/src-tauri/src/lib.rs: 074a4c6fc592cd47
   apps/studio-host/src/core/ai-apply.ts: 78400e9e23d74014
-  apps/studio-host/src/core/ai-bridge.ts: 1b3a8ce790be75d3
+  apps/studio-host/src/core/ai-bridge.ts: 850590545f8b3f5c
   apps/studio-host/src/core/ai-diff.ts: a5692921ffdb80cb
   apps/studio-host/src/core/ai-session.ts: 5534edd7c7e36ec3
   apps/studio-host/src/core/chart-render.ts: 48b8c91bdf1a2430
   apps/studio-host/src/core/model-catalog.ts: 04e6f8be28172e28
   apps/studio-host/src/core/tauri-bridge.ts: 8bb53d4c0f3dd425
   apps/studio-host/src/styles/agent-sidebar.css: 0ac2c3ec4ad79dd0
-  apps/studio-host/src/ui/agent-sidebar.ts: 03ceab229d8fe625
+  apps/studio-host/src/ui/agent-sidebar.ts: 303b9d0843501577
   apps/studio-host/src/ui/ai-inline-diff.ts: bb8e2d0f24bec827
 attested_features:
   F-04a91c: ok
@@ -62,6 +62,7 @@ attested_features:
   F-6daa56b3: ok
   F-7a3dbe: ok
   F-85327e55: ok
+  F-86317c64: ok
   F-8eb1f86f: ok
   F-9a5045da: ok
   F-9dbe7a25: ok

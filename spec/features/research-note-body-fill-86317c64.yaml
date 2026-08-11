@@ -1,0 +1,64 @@
+id: F-86317c64
+slug: research-note-body-fill
+title: "PDF로 연구노트를 만들면 항목이 실제로 채워진다 — 빈 양식 표만 남지 않게"
+status: done
+modules:
+  - apps/desktop/src-tauri/src/ai/mod.rs
+  - apps/desktop/src-tauri/src/ai/schema.rs
+  - apps/studio-host/src/core/ai-bridge.ts
+  - apps/studio-host/src/ui/agent-sidebar.ts
+acceptance_criteria:
+  - id: AC-119ff14f
+    ears: event
+    condition: "When 문서를 열지 않은 채 PDF를 첨부하고 연구노트 작성을 지시할 때"
+    text: "The system shall 연구노트 경로로 라우팅한다 — 문서가 없다는 이유로 일반 편집 경로로 새지 않는다."
+    test_refs:
+      - apps/studio-host/src/ui/agent-sidebar.test.ts
+    notes: |
+      ## Why
+      2026-08-11 사용자 실사용: 문서를 안 연 상태에서 PDF + "연구노트 작성해줘"를 보냈더니
+      일반 편집 경로로 가서 'Action Script JSON 파싱 실패'가 났다. F-d448f667(자동 문서
+      생성)이 send()의 이른 라우팅 게이트에는 적용되지 않아, 그 게이트가 currentDocId()가
+      null이면 연구노트 라우팅을 통째로 건너뛰었다.
+  - id: AC-f8890de9
+    ears: event
+    condition: "When 앱이 기본 연구노트 양식을 새로 만들고 그 표를 복제할 때"
+    text: "The system shall 복제 앵커를 만든 표 '뒤' 문단으로 잡는다 — 표 앞에 삽입하면 문단 분할로 원본 좌표가 밀려 복제가 전부 실패한다."
+    test_refs:
+      - apps/studio-host/src/ui/agent-sidebar.test.ts
+      - apps/studio-host/src/tools/clad-smoke.smoke.ts
+    notes: |
+      ## Why
+      2026-08-11 실측 재현: 앵커가 낡은 네이티브 컨텍스트(sec[0].p[0])에서 와 표(p1) 앞에
+      삽입됐다. splitParagraph(0,0)이 표를 p1→p2로 밀어 copyControl(0,1,0)이
+      '렌더링 오류: 컨트롤 0 범위 초과'로 실패 → 항목 0개, 빈 양식만 남았다.
+      ## Decision
+      네이티브 컨텍스트(ai_get_document_context)는 프론트 WASM 문서의 편집을 모른다.
+      우리가 만든 표는 좌표를 우리가 아니까, 그 표 뒤 문단(paragraph+1)을 앵커로 쓴다.
+      rhwp createTable이 표 뒤 빈 문단을 남기는 것을 headless 실측으로 확인했다.
+  - id: AC-fcef045d
+    ears: ubiquitous
+    text: "The system shall 라벨 없는 본문 통칸이 있는 양식이면 LLM에게 각 항목의 본문을 요구하고 그 본문을 통칸에 채운다 — 제목·날짜만 있고 내용이 없는 연구노트를 만들지 않는다."
+    test_refs:
+      - apps/studio-host/src/ui/agent-sidebar.test.ts
+      - apps/desktop/src-tauri/src/ai/schema.rs
+    notes: |
+      form_fill 스키마·프롬프트가 라벨→값 쌍만 받아, 라벨이 없는 본문 통칸은 LLM에게
+      보이지도 않았다. 적용 계층(FormFillEntry.body)은 이미 본문을 지원하므로 채널만
+      뚫으면 된다. Rust FormFillEntry에 body를 추가하지 않으면 emit_form_fill이
+      canonical 재직렬화에서 조용히 버린다(실측 확인).
+  - id: AC-10a70e19
+    ears: event
+    condition: "When 앱이 만든 빈 양식 표를 소스로 항목을 복제한 뒤"
+    text: "The system shall 그 빈 원본 표를 문서에서 제거한다 — 채워진 항목 앞에 빈 양식이 남지 않는다."
+    test_refs:
+      - apps/studio-host/src/ui/agent-sidebar.test.ts
+    notes: |
+      docx 일괄 변환 경로가 이미 같은 정리(removeSourceFormTable)를 한다. 미리보기
+      스냅샷 안에서 수행하므로 사용자가 거절하면 원본과 함께 복원된다.
+  - id: AC-26eb07c9
+    ears: unwanted
+    condition: "If 사용자가 연 문서에 이미 양식 표가 있으면"
+    text: "The system shall 그 표를 소스로 쓰고 원본을 지우지 않는다 — 자동 생성 경로의 정리 동작이 사용자 문서를 건드리지 않는다."
+    test_refs:
+      - apps/studio-host/src/ui/agent-sidebar.test.ts

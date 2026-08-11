@@ -39,8 +39,10 @@ import {
   createEntryFormTable,
   pickEntryFormTable,
   pickTocTable,
+  resolveBodyCell,
   shouldAutoCreateDocument,
   type ApplyResult,
+  type CreatedEntryForm,
   type ChangedPara,
   type FormSourceTable,
   type ImageForInsert,
@@ -919,7 +921,9 @@ export class AgentSidebar {
     // runDocxFormFill이 false를 반환하고 아래 기존 LLM 편집 경로로 폴백한다(일반 편집 영향 없음).
     if (this.session.state !== 'REQUESTING') {
       const docxAtt = this.attachments.find((a) => a.path && /\.(docx|pdf)$/i.test(a.path));
-      const docId0 = docxAtt?.path ? this.deps.bridge.currentDocId() : null;
+      // 문서가 없으면 만들어서라도 이 경로를 탄다(F-86317c64 AC-119ff14f) — currentDocId()만
+      // 보고 건너뛰면 "문서 안 열고 PDF+연구노트"가 일반 편집 경로로 새서 실패한다.
+      const docId0 = docxAtt?.path ? await this.resolveDocId(true) : null;
       if (docxAtt?.path && docId0) {
         const handled = await this.runDocxFormFill(docId0, docxAtt.path);
         if (handled) return;
@@ -1524,7 +1528,8 @@ export class AgentSidebar {
       let context = await this.deps.bridge.aiGetDocumentContext(docId, false, null, true);
       this.context = context;
       let source = this.pickSourceFormTable(context);
-      let createdForm = false;
+      /** 앱이 만든 양식이면 그 표 — 복제 뒤 제거할 대상(사용자 문서의 표는 건드리지 않는다). */
+      let createdForm: CreatedEntryForm | null = null;
       if (!source) {
         // 복제할 양식 표가 없으면 앱이 기본 연구노트 양식을 만들어 소스로 쓴다(F-403700d8).
         // AC-0d49695d의 'compose 폴백 금지'는 LLM에게 표 구조를 맡기지 말라는 뜻이고,
@@ -1546,14 +1551,16 @@ export class AgentSidebar {
             seedAt.sec,
             seedAt.para,
           );
-          createdForm = true;
+          createdForm = created;
           this.log(
             `양식 표가 없어 기본 연구노트 양식을 생성했습니다 ` +
               `(sec${created.section}.p${created.paragraph}.tbl${created.controlIndex})`,
           );
-          context = await this.deps.bridge.aiGetDocumentContext(docId, false, null, true);
-          this.context = context;
-          source = this.pickSourceFormTable(context) ?? created.table;
+          // 네이티브 컨텍스트(ai_get_document_context)는 방금 WASM에 그린 표를 모른다 —
+          // 다시 읽어도 이 표는 안 보이고, 그 컨텍스트의 앵커는 표 '앞'을 가리킨다. 표 앞에
+          // 삽입하면 문단 분할이 원본 좌표를 밀어 복제가 전부 실패한다(2026-08-11 실측).
+          // 우리가 만든 표이니 좌표도 우리가 쥔다.
+          source = created.table;
         } catch (error) {
           const reason = `기본 연구노트 양식을 만들지 못했습니다: ${String(error)}`;
           if (this.active) this.active.msgEl.textContent = reason;
@@ -1568,7 +1575,13 @@ export class AgentSidebar {
       // 첨부 문서의 추출 본문을 함께 넘긴다 — 지시문만 보내면 LLM이 PDF 내용을 못 봐서
       // 항목을 만들 수 없다(F-5e9c6033). 일반 전송 경로와 같은 형식으로 앞에 붙인다.
       const docText = attachmentDocText(this.attachments);
-      const promptWithDoc = docText ? `${docText}\n\n${userText}` : userText;
+      // 라벨 없는 '본문 통칸'은 라벨 목록에 안 실려 LLM이 존재를 모른다 — 있으면 본문을
+      // 명시적으로 요구한다. 없으면 요구하지 않는다(F-86317c64 AC-fcef045d).
+      const bodyAsk = resolveBodyCell(source, new Set())
+        ? '\n\n이 양식에는 라벨 없는 본문 통칸이 있습니다. 각 항목의 body 배열에 그 칸에 들어갈 ' +
+          '본문 단락들을 채우세요(원소 1개 = 문단 1개). 제목·날짜 칸만 채우고 본문을 비우지 마세요.'
+        : '';
+      const promptWithDoc = (docText ? `${docText}\n\n${userText}` : userText) + bodyAsk;
       const rawJson = await this.requestFormFillContent(
         docId,
         provider,
@@ -1591,7 +1604,11 @@ export class AgentSidebar {
 
       // 항목마다 소스 표를 결정적 복제하는 clone_table 편집 목록(AC-6bdb1e17).
       // anchor는 표 바깥 본문 문단(.tbl 없는 마지막 sec[s].p[p]) — 새 항목을 그 뒤/새 페이지에.
-      const anchor = lastBodyParagraphId(context);
+      // 앱이 방금 만든 양식이면 그 표 '뒤' 문단이어야 한다 — 앞에 넣으면 분할이 소스 표를
+      // 밀어내 복제가 전부 실패한다(F-86317c64 AC-f8890de9).
+      const anchor = createdForm
+        ? `sec[${createdForm.section}].p[${createdForm.paragraph + 1}]`
+        : lastBodyParagraphId(context);
       if (!anchor) {
         const reason = '새 항목을 넣을 본문 문단을 찾지 못했습니다.';
         if (this.active) this.active.msgEl.textContent = reason;
@@ -1610,6 +1627,20 @@ export class AgentSidebar {
         return;
       }
       const result = applyActionScript(this.deps.bridge, script, [], this.compiledTheme);
+      // 앱이 만든 원본은 빈 껍데기다 — 항목을 복제한 뒤 지워 채워진 항목만 남긴다.
+      // 사용자 문서의 양식 표는 대상이 아니다(createdForm일 때만). 스냅샷 안이라 거절 시 복원된다.
+      if (createdForm && result.applied > 0) {
+        try {
+          (this.deps.bridge as unknown as WasmEditing).removeSourceFormTable?.(
+            createdForm.section,
+            createdForm.paragraph,
+            createdForm.controlIndex,
+          );
+          this.log('앱이 만든 빈 양식 표 제거(채워진 항목만 남김)');
+        } catch {
+          /* 제거 실패는 무시 — 항목 내용은 정상이다. */
+        }
+      }
       this.reflowAndRender();
       this.applied = result;
       this.pendingScript = script;

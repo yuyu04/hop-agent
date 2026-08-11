@@ -27,6 +27,7 @@ features:
   F-6daa56b3: {slug: ai-table-split-cell, status: done, modules: 3}
   F-7a3dbe: {slug: table-structure-editing, status: done, modules: 4}
   F-85327e55: {slug: toc-page-chunking, status: done, modules: 3}
+  F-86317c64: {slug: research-note-body-fill, status: done, modules: 4}
   F-8eb1f86f: {slug: ai-table-formula, status: done, modules: 3}
   F-9a5045da: {slug: toc-regenerate-from-docx, status: done, modules: 2}
   F-9dbe7a25: {slug: keyless-provider-guidance, status: done, modules: 2}
