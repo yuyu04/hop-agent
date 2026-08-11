@@ -26,7 +26,7 @@ attested_modules:
   apps/desktop/src-tauri/src/docx_export.rs: cbfa5c5889e8bfd3
   apps/desktop/src-tauri/src/hwp_table_fix.rs: e70c3701e9f64545
   apps/desktop/src-tauri/src/lib.rs: 074a4c6fc592cd47
-  apps/studio-host/src/core/ai-apply.ts: 78400e9e23d74014
+  apps/studio-host/src/core/ai-apply.ts: f99f9515ed096b4d
   apps/studio-host/src/core/ai-bridge.ts: 850590545f8b3f5c
   apps/studio-host/src/core/ai-diff.ts: a5692921ffdb80cb
   apps/studio-host/src/core/ai-session.ts: 5534edd7c7e36ec3
@@ -34,7 +34,7 @@ attested_modules:
   apps/studio-host/src/core/model-catalog.ts: 04e6f8be28172e28
   apps/studio-host/src/core/tauri-bridge.ts: 8bb53d4c0f3dd425
   apps/studio-host/src/styles/agent-sidebar.css: 0ac2c3ec4ad79dd0
-  apps/studio-host/src/ui/agent-sidebar.ts: 303b9d0843501577
+  apps/studio-host/src/ui/agent-sidebar.ts: 543d3e5b1527b189
   apps/studio-host/src/ui/ai-inline-diff.ts: bb8e2d0f24bec827
 attested_features:
   F-04a91c: ok

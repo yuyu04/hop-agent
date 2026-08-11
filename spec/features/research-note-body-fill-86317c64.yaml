@@ -56,6 +56,17 @@ acceptance_criteria:
     notes: |
       docx 일괄 변환 경로가 이미 같은 정리(removeSourceFormTable)를 한다. 미리보기
       스냅샷 안에서 수행하므로 사용자가 거절하면 원본과 함께 복원된다.
+  - id: AC-2ec3e62f
+    ears: unwanted
+    condition: "If 앱이 만든 빈 양식을 소스로 첫 항목을 붙일 때"
+    text: "The system shall 첫 항목에는 쪽 나누기를 넣지 않는다 — 앞에 아무 내용이 없어 첫 장이 빈 페이지로 남는다."
+    test_refs:
+      - apps/studio-host/src/tools/research-note-fill.smoke.ts
+    notes: |
+      2026-08-11 사용자 보고: 내용은 맞게 채워졌는데 1쪽이 백지였다. 실측으로 3항목 →
+      4페이지를 재현했고, 첫 항목만 쪽 나누기를 빼니 3페이지가 됐다. 사용자 문서의 기존
+      양식을 소스로 쓸 때는 앞에 그 표가 있으므로 기존대로 첫 항목도 쪽을 나눈다.
+
   - id: AC-26eb07c9
     ears: unwanted
     condition: "If 사용자가 연 문서에 이미 양식 표가 있으면"

@@ -63,8 +63,9 @@ test('양식 없는 문서에서 연구노트 3항목이 본문까지 채워지�
   expect(resolveBodyCell(created.table, new Set()), '본문 통칸이 해석되어야 한다').not.toBeNull();
 
   // 2) 앵커는 만든 표 '뒤' 문단이어야 한다 — 앞이면 분할이 원본을 밀어 복제가 전부 실패한다.
+  //    첫 항목은 쪽을 나누지 않는다 — 앞에 내용이 없어 첫 장이 빈 페이지가 된다.
   const anchor = `sec[${created.section}].p[${created.paragraph + 1}]`;
-  const plans = buildFormFillEdits(created.table, ENTRIES, anchor);
+  const plans = buildFormFillEdits(created.table, ENTRIES, anchor, true, false);
   const script: ActionScript = { edits: plans.map((p) => p.edit) };
   expect(plans.flatMap((p) => p.skipped), '라벨/본문 매핑이 누락 없이 되어야 한다').toEqual([]);
 
@@ -72,14 +73,20 @@ test('양식 없는 문서에서 연구노트 3항목이 본문까지 채워지�
   expect(result.skipped, `복제 실패: ${JSON.stringify(result.skipped)}`).toEqual([]);
   expect(result.applied).toBe(3);
 
-  // 3) 빈 원본 템플릿을 제거한다(채워진 항목만 남게).
+  // 3) 빈 원본 템플릿과 남은 빈 문단을 제거한다(채워진 항목만 남게).
   wasm.removeSourceFormTable?.(created.section, created.paragraph, created.controlIndex);
+  wasm.removeOrphanParasBeforePageBreaks?.(created.section);
+  wasm.trimTrailingParasAfterLastTable?.(created.section);
 
   // 4) 저장 왕복 후에도 남아 있는가 — 바이트에 실제로 들어갔는지까지 확인한다.
   bridge.loadDocument(bridge.exportHwp(), 'research-note.hwp');
   const tables = collectFormTables(rawDocOf(bridge));
 
   expect(tables.length, '항목 표 3개만 남아야 한다(빈 양식 제거)').toBe(3);
+  // 항목 1개 = 페이지 1장. 첫 장이 비면 4페이지가 된다(2026-08-11 사용자 보고).
+  expect(rawDocOf(bridge).pageCount(), '첫 빈 페이지 없이 항목 수만큼이어야 한다').toBe(
+    ENTRIES.length,
+  );
   tables.forEach((table, i) => {
     const text = table.cells.map((c) => c.text ?? '').join('\n');
     expect(text, `${i + 1}번째 항목의 제목`).toContain(`${i + 1}주차: 그래프 엔지니어링 시스템 구축`);

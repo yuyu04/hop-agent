@@ -1615,7 +1615,9 @@ export class AgentSidebar {
         this.setActiveStatus(reason, 'warn');
         return;
       }
-      const plans = buildFormFillEdits(source, entries, anchor);
+      // 앱이 방금 만든 빈 양식이면 앞에 내용이 없다 — 첫 항목까지 쪽을 나누면 첫 장이
+      // 빈 페이지가 된다(F-86317c64 실측: 3항목 → 4페이지). 그때만 첫 항목을 현재 페이지에.
+      const plans = buildFormFillEdits(source, entries, anchor, true, !createdForm);
       const script: ActionScript = { edits: plans.map((p) => p.edit) };
       const labelSkips = plans.flatMap((p) => p.skipped);
       if (labelSkips.length) {
@@ -1639,6 +1641,14 @@ export class AgentSidebar {
           this.log('앱이 만든 빈 양식 표 제거(채워진 항목만 남김)');
         } catch {
           /* 제거 실패는 무시 — 항목 내용은 정상이다. */
+        }
+        // 표 뒤/문서 끝에 남은 빈 문단 정리 — 한컴에서 빈 페이지로 흘러가는 것을 막는다.
+        const cleaner = this.deps.bridge as unknown as WasmEditing;
+        try {
+          cleaner.removeOrphanParasBeforePageBreaks?.(createdForm.section);
+          cleaner.trimTrailingParasAfterLastTable?.(createdForm.section);
+        } catch {
+          /* 정리 실패는 무시 — 내용은 정상이다. */
         }
       }
       this.reflowAndRender();

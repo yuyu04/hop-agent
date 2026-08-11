@@ -2470,15 +2470,21 @@ export function buildFormFillEdits(
   entries: FormFillEntry[],
   anchorTargetId: string,
   pageBreak = true,
+  /**
+   * 첫 항목의 쪽 나누기(기본=pageBreak). 앱이 방금 만든 빈 양식을 소스로 쓸 때는 앞에
+   * 아무 내용도 없으므로 첫 항목까지 쪽을 나누면 첫 장이 빈 페이지가 된다(F-86317c64
+   * 실측: 3항목 → 4페이지). 그 경우만 false로 첫 항목을 현재 페이지에서 시작시킨다.
+   */
+  pageBreakFirst = pageBreak,
 ): FormFillEditPlan[] {
-  return entries.map((entry) => {
+  return entries.map((entry, index) => {
     const { cellFills, skipped, bodyImages, bodyTables } = buildFormFillMapping(table, entry);
     const edit: Edit = {
       command: 'INSERT_AFTER',
       target_id: anchorTargetId,
       payload: {
         type: 'clone_table',
-        page_break: pageBreak,
+        page_break: index === 0 ? pageBreakFirst : pageBreak,
         clone_table: {
           clone_from: {
             section: table.section,
