@@ -152,3 +152,73 @@ fn live_format_request_yields_run_level_format() {
     assert_eq!(edit.payload.char_format.as_ref().unwrap().bold, Some(true));
     eprintln!("✅ 부분 서식 액션 통과: target={:?}", target);
 }
+
+/// 연구노트 양식 채움(F-86317c64): 실제 PDF 텍스트 + 실제 CLI로 form_fill을 돌려
+/// 모델이 라벨 값 **과 본문(body)** 을 모두 채우는지 본다. 프로덕션에서 본문이 통째로
+/// 비어 나온 회귀가 바로 이 지점이었다(스키마·프롬프트에 본문 채널이 없었다).
+#[test]
+#[ignore]
+fn live_form_fill_returns_labels_and_body() {
+    use super::form_fill_system_prompt;
+
+    let labels: Vec<String> = ["제목", "기록자", "기록 일자", "확인자", "확인 일자"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    // 검증에 쓸 PDF는 환경변수로 받는다 — 저장소에 실데이터를 두지 않는다.
+    let pdf = std::env::var("HOP_LIVE_PDF").unwrap_or_default();
+    if pdf.is_empty() {
+        eprintln!("HOP_LIVE_PDF 미설정 — 건너뜀 (예: HOP_LIVE_PDF=/path/to.pdf)");
+        return;
+    }
+    let doc_text = super::extract_text_blocking(&pdf).expect("PDF 텍스트 추출 실패");
+    let excerpt: String = doc_text.chars().take(12_000).collect();
+
+    let (core, _, _) = doc_with_table();
+    let (context, _) = serialize::build_full_context(&core).unwrap();
+    let req = LlmRequest {
+        system_prompt: form_fill_system_prompt(&labels),
+        user_prompt: format!(
+            "[첨부 문서: {}]\n{}\n\n이 논문을 보고 연구노트 3개를 3주치로 만들어줘.\n\n\
+             이 양식에는 라벨 없는 본문 통칸이 있습니다. 각 항목의 body 배열에 그 칸에 \
+             들어갈 본문 단락들을 채우세요(원소 1개 = 문단 1개). 제목·날짜 칸만 채우고 \
+             본문을 비우지 마세요.",
+            pdf, excerpt
+        ),
+        document_context_json: serde_json::to_string(&context).unwrap(),
+        output_schema: schema::form_fill_schema(),
+        images: Vec::new(),
+        documents: Vec::new(),
+        file_paths: Vec::new(),
+    };
+    let provider = CliProvider::claude("default".to_string());
+    let cancel: CancelToken = Arc::new(AtomicBool::new(false));
+    let raw = tauri::async_runtime::block_on(provider.generate_edit(req, Box::new(|_| {}), cancel))
+        .expect("CLI 호출 실패");
+    let resp = schema::parse_form_fill_response(&raw).expect("form_fill 파싱 실패");
+
+    eprintln!("항목 {}개", resp.entries.len());
+    assert_eq!(resp.entries.len(), 3, "3개를 요청했는데 {}개", resp.entries.len());
+    for (i, e) in resp.entries.iter().enumerate() {
+        let title = e
+            .fields
+            .iter()
+            .find(|f| f.label.replace(' ', "") == "제목")
+            .map(|f| f.value.as_str())
+            .unwrap_or("(없음)");
+        eprintln!(
+            "  [{}] 제목={} / 필드 {}개 / 본문 {}단락 {}자",
+            i + 1,
+            title,
+            e.fields.len(),
+            e.body.len(),
+            e.body.iter().map(|p| p.chars().count()).sum::<usize>()
+        );
+        assert!(!e.body.is_empty(), "{}번째 항목의 본문이 비었다", i + 1);
+    }
+    // 프론트가 그대로 받는 canonical JSON에 본문이 살아 있는지.
+    let canonical = serde_json::to_string(&resp).unwrap();
+    assert!(canonical.contains("body"), "canonical에 body 없음");
+    eprintln!("✅ form_fill 라이브 통과 — 라벨 + 본문 모두 채워짐");
+    std::fs::write("/tmp/hop-live-formfill.json", &canonical).ok();
+}
