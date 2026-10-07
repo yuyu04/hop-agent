@@ -13,7 +13,7 @@
 use super::adapters::cli::CliProvider;
 use super::provider::{CancelToken, LlmProvider, LlmRequest};
 use super::{schema, serialize, system_prompt};
-use rhwp::DocumentCore;
+use hop_rhwp_adapter::DocumentCore;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 

@@ -1,0 +1,26 @@
+id: F-ae14b6da
+slug: form-fill-review-flow
+title: "연구노트·양식 채우기 결과를 승인/거절할 수 있고, 실패·거절 시 앱이 만든 빈 양식이 남지 않는다"
+status: in_progress
+modules:
+  - apps/studio-host/src/ui/agent-sidebar.ts
+acceptance_criteria:
+  - id: AC-22433698
+    ears: event
+    condition: "When LLM 양식 채우기(runFormFill) 결과가 미리보기로 적용될 때"
+    text: "The system shall 세션을 승인 대기(DIFF_PENDING)로 전이해 승인·거절 버튼이 실제로 동작하게 한다."
+    test_refs:
+      - apps/studio-host/src/ui/agent-sidebar.test.ts
+    notes: "응답 수신 시 onReady→complete로 IDLE이 되어 accept()/reject()가 무시됐다(F-c63c3a91이 docx 경로만 고쳤던 것과 같은 결함, 감사 P1-6)."
+  - id: AC-dddd7748
+    ears: unwanted
+    condition: "If 앱이 기본 연구노트 양식을 만든 뒤 요청이 취소·실패하거나 항목이 0개이거나 사용자가 거절하면"
+    text: "The system shall 양식을 만들기 전 스냅샷으로 되돌린다 — 빈 양식 표가 문서에 남지 않는다."
+    test_refs:
+      - apps/studio-host/src/ui/agent-sidebar.test.ts
+  - id: AC-06f38469
+    ears: event
+    condition: "When 첨부 PDF·docx의 텍스트 추출이 아직 끝나지 않은 채 연구노트 생성으로 라우팅될 때"
+    text: "The system shall 추출이 끝날 때까지 기다린 뒤 그 본문을 함께 보내고, 요청이 첨부를 소비해 다음 메시지가 같은 첨부로 다시 라우팅되지 않게 한다."
+    test_refs:
+      - apps/studio-host/src/ui/agent-sidebar.test.ts

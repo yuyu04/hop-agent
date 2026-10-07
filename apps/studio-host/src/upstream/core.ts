@@ -12,6 +12,7 @@ export {
 export type { EffectiveTheme } from '@upstream/core/theme';
 export type {
   CharProperties,
+  CursorRect,
   DocumentInfo,
   DocumentPosition,
   PageInfo,

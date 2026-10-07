@@ -464,6 +464,17 @@ impl DocumentSession {
         }
     }
 
+    /// 프론트(WASM)에서 편집 중인 문서로 네이티브 코어를 바꾼다(AI 컨텍스트 동기화).
+    ///
+    /// 네이티브 코어는 열기·저장 때만 갱신되므로, 저장 전 화면의 편집(직전 AI 생성 결과
+    /// 포함)을 AI가 보려면 요청 직전에 이걸로 맞춰야 한다. 저장 상태(경로·revision·dirty)는
+    /// 건드리지 않는다 — 파일과의 관계는 그대로이고, 메모리 사본만 화면과 같아진다.
+    pub(crate) fn replace_core_from_frontend(&mut self, core: DocumentCore) {
+        self.page_count = core.page_count();
+        self.core = Some(core);
+        self.page_svg_cache.clear();
+    }
+
     pub(crate) fn ensure_core_loaded(&mut self) -> Result<&mut DocumentCore, String> {
         if self.core.is_none() {
             let source_path = self

@@ -6,11 +6,26 @@
  * 여기서는 순수하게 편집 변환만 수행해 테스트 가능하게 한다.
  */
 
-import type { ActionScript, Edit, ResearchNoteCover, ResearchNoteEntry } from './ai-bridge';
+import type { ActionScript, Edit, ParaFormatSpec, ResearchNoteCover, ResearchNoteEntry } from './ai-bridge';
 import { DOC_SCOPE_TARGET } from './ai-bridge';
-import { DEFAULT_COMPILED_THEME, type CompiledTheme } from './doc-theme';
+import { DEFAULT_COMPILED_THEME, SPACING_PT, type CompiledTheme } from './doc-theme';
 
 /** `applyActionScript`가 의존하는 최소 WASM 편집 표면(WasmBridge가 구조적으로 충족). */
+/** rhwp PageDef(HWPUNIT, 1mm≈283.465). */
+export interface PageDefLike {
+  width: number;
+  height: number;
+  marginLeft: number;
+  marginRight: number;
+  marginTop: number;
+  marginBottom: number;
+  marginHeader: number;
+  marginFooter: number;
+  marginGutter: number;
+  landscape: boolean;
+  binding: number;
+}
+
 export interface WasmEditing {
   getParagraphLength(sec: number, para: number): number;
   insertText(sec: number, para: number, charOffset: number, text: string): string;
@@ -302,6 +317,25 @@ export interface WasmEditing {
   getTextRange?(sec: number, para: number, startOffset: number, endOffset: number): string;
   /** 본문 문단의 문단 서식(정렬·줄간격·여백 등) 적용. propsJson은 ParaProperties. */
   applyParaFormat?(sec: number, para: number, propsJson: string): string;
+  /** 기본 문단 번호(1. 가. 1) …) 정의를 보장하고 그 ID를 돌려준다. */
+  ensureDefaultNumbering?(): number;
+  /** 글머리표 정의를 보장하고 그 ID를 돌려준다. */
+  ensureDefaultBullet?(bulletChar: string): number;
+  findOrCreateFontId?(name: string): number;
+  getSectionCount?(): number;
+  getPageDef?(sectionIdx: number): PageDefLike;
+  setPageDef?(sectionIdx: number, pageDef: PageDefLike): { ok: boolean; pageCount: number };
+  /** 머리말/꼬리말 마당: 1=왼쪽, 2=가운데, 3=오른쪽 쪽번호(기존 내용 대체). */
+  applyHfTemplate?(sec: number, isHeader: boolean, applyTo: number, templateId: number): { ok: boolean };
+  /** 머리말/꼬리말 문단에 필드: 1=현재 쪽번호, 2=총 쪽수, 3=파일 이름. */
+  insertFieldInHf?(
+    sec: number,
+    isHeader: boolean,
+    applyTo: number,
+    hfParaIdx: number,
+    charOffset: number,
+    fieldType: number,
+  ): { ok: boolean; charOffset: number };
   /** 셀 문단의 글자 서식을 [start,end) 범위에 적용(헤더 굵게 등). */
   applyCharFormatInCell?(
     sec: number,
@@ -363,10 +397,15 @@ export interface WasmEditing {
   /** 내부 클립보드에 컨트롤(표/그림/도형)이 들어 있는지. */
   clipboardHasControl?(): boolean;
   /** 그림(이미지) 삽입. width/height는 표시 크기(HWPUNIT), natural*는 원본 픽셀. */
+  /**
+   * rhwp 0.8.7+: 4번째 인자가 셀 경로 JSON(본문이면 '')이다. 본문 그림은 기본이 '떠 있는'
+   * 개체(쪽 기준 0,0)라, 흐름 안에 두려면 삽입 뒤 setPictureProperties로 글자처럼 취급한다.
+   */
   insertPicture?(
     sec: number,
     paraIdx: number,
     charOffset: number,
+    cellPathJson: string,
     imageData: Uint8Array,
     width: number,
     height: number,
@@ -375,6 +414,7 @@ export interface WasmEditing {
     extension: string,
     description?: string,
   ): { ok: boolean; paraIdx: number; controlIdx: number };
+  setPictureProperties?(sec: number, para: number, ci: number, props: Record<string, unknown>): { ok: boolean };
   /** 표 셀 안에 그림을 넣는다(F-5dc6297e/Phase B). 선택 — 없으면 그림 삽입을 생략. */
   insertPictureInCell?(
     sec: number,
@@ -421,6 +461,8 @@ export interface ApplySkip {
 export interface ChangedPara {
   sec: number;
   para: number;
+  /** 이 문단을 만든 편집의 위치(applyActionScript에 넘긴 script.edits 기준) — 변경별 승인/거절용. */
+  editIndex?: number;
 }
 
 export interface ApplyResult {
@@ -582,7 +624,11 @@ export function applyActionScript(
       !isTableFormulaEdit(edit) &&
       !isFootnoteEdit(edit) &&
       !isPasteHtmlEdit(edit) &&
-      !isFormatEdit(edit);
+      !isFormatEdit(edit) &&
+      // 서식 전용 type은 텍스트 검사 대신 아래 대상 검사가 정확한 사유로 거른다.
+      edit.payload.type !== 'para_format' &&
+      !isPageSetupEdit(edit) &&
+      !isPageNumberEdit(edit);
     if (needsText && (edit.payload.text ?? '') === '') {
       skipped.push({
         targetId: edit.target_id,
@@ -593,10 +639,10 @@ export function applyActionScript(
 
     // 문서 전역 편집(찾아 바꾸기) — 문단이 아니라 문서 전체가 대상이다(F-293e8c99).
     if (edit.target_id === DOC_SCOPE_TARGET) {
-      if (!isReplaceTextEdit(edit)) {
+      if (!isReplaceTextEdit(edit) && !isPageSetupEdit(edit) && !isPageNumberEdit(edit)) {
         skipped.push({
           targetId: edit.target_id,
-          reason: `target_id="${DOC_SCOPE_TARGET}"는 전역 찾아 바꾸기(payload.type="replace_text")에만 쓸 수 있습니다.`,
+          reason: `target_id="${DOC_SCOPE_TARGET}"는 찾아 바꾸기·쪽 설정·쪽 번호 편집에만 쓸 수 있습니다.`,
         });
         return;
       }
@@ -610,9 +656,38 @@ export function applyActionScript(
       });
       return;
     }
+    // 텍스트 없이 오는 서식 전용 편집이 엉뚱한 대상을 겨누면, 아래 일반 경로가 빈 텍스트로
+    // REPLACE해 그 문단·누름틀·머리말을 지워 버린다(조용한 내용 손실). 허용 대상이 아니면
+    // 적용하지 않는다: 쪽 설정·쪽 번호는 "doc"만, 문단 서식은 REPLACE로 본문 문단 또는 셀 문단만.
+    if (isPageSetupEdit(edit) || isPageNumberEdit(edit)) {
+      skipped.push({
+        targetId: edit.target_id,
+        reason: `쪽 설정·쪽 번호는 target_id="${DOC_SCOPE_TARGET}"로만 지정할 수 있습니다.`,
+      });
+      return;
+    }
+    if (edit.payload.type === 'para_format') {
+      const formatTarget =
+        isParaFormatEdit(edit) &&
+        (parseParagraphTarget(edit.target_id) !== null || parseCellTarget(edit.target_id) !== null);
+      if (!formatTarget) {
+        skipped.push({
+          targetId: edit.target_id,
+          reason: '문단 서식(para_format)은 command=REPLACE로 본문 문단이나 표 셀 문단에만 적용할 수 있습니다.',
+        });
+        return;
+      }
+    }
 
     const cell = parseCellTarget(edit.target_id);
     if (cell) {
+      if (isParaFormatEdit(edit) && cell.path.length !== 1) {
+        skipped.push({
+          targetId: edit.target_id,
+          reason: '문단 서식(para_format)은 최상위 표 셀까지만 지원합니다(중첩 표 셀 불가).',
+        });
+        return;
+      }
       // 부분 서식은 본문 문단 전용(셀 텍스트 읽기 API가 없어 대상 탐색 불가).
       if (isFormatEdit(edit)) {
         skipped.push({
@@ -755,7 +830,15 @@ export function applyActionScript(
       if (item.kind === 'cell') {
         if (isTableStructEdit(item.edit)) applyTableEdit(wasm, item.edit, item.cell);
         else if (isTableFormulaEdit(item.edit)) applyTableFormula(wasm, item.edit, item.cell);
-        else applyOneCell(wasm, item.edit, item.cell);
+        else if (isParaFormatEdit(item.edit)) applyParaFormatInCellEdit(wasm, item.edit, item.cell);
+        else {
+          applyOneCell(wasm, item.edit, item.cell);
+          // 텍스트와 함께 온 문단 서식은 채운 셀 문단에 덮어쓴다(INSERT_AFTER는 새 문단이 다음 칸).
+          if (item.edit.payload.para_format && item.cell.path.length === 1) {
+            const offset = item.edit.command === 'INSERT_AFTER' ? 1 : 0;
+            if (item.edit.command !== 'DELETE') applyParaFormatInCellEdit(wasm, item.edit, item.cell, offset);
+          }
+        }
       } else if (item.kind === 'field') {
         // 누름틀 값만 교체 — 서식·구조는 템플릿 그대로(F-10a6a5).
         const result = wasm.setFieldValue(
@@ -769,33 +852,43 @@ export function applyActionScript(
         if (isFootnoteEdit(item.edit)) applyDeleteFootnote(wasm, item.fn);
         else applyOneFootnote(wasm, item.edit, item.fn);
       } else if (item.kind === 'doc') {
-        // 전역 치환 — 바뀐 본문 문단들을 changed에 실어 diff/부분승인이 동작하게 한다.
-        for (const hit of applyReplaceText(wasm, item.edit)) {
-          if (!changed.some((c) => c.sec === hit.sec && c.para === hit.para)) changed.push(hit);
+        if (isPageSetupEdit(item.edit)) applyPageSetup(wasm, item.edit);
+        else if (isPageNumberEdit(item.edit)) applyPageNumber(wasm, item.edit);
+        else {
+          // 전역 치환 — 바뀐 본문 문단들을 changed에 실어 diff/부분승인이 동작하게 한다.
+          for (const hit of applyReplaceText(wasm, item.edit)) {
+            if (!changed.some((c) => c.sec === hit.sec && c.para === hit.para)) {
+              changed.push({ ...hit, editIndex: item.order });
+            }
+          }
         }
       } else if (isFootnoteEdit(item.edit)) {
         // 각주 달기 — 본문 텍스트는 그대로, 표식과 각주만 추가된다.
         applyInsertFootnote(wasm, item.edit, item.sec, item.para);
-        changed.push({ sec: item.sec, para: item.para });
+        changed.push({ sec: item.sec, para: item.para, editIndex: item.order });
       } else if (isFormatEdit(item.edit)) {
         // 부분 서식 — 텍스트는 그대로, 지정 범위 런에만 글자 서식을 입힌다.
         applyFormatEdit(wasm, item.edit, item.sec, item.para);
-        changed.push({ sec: item.sec, para: item.para });
+        changed.push({ sec: item.sec, para: item.para, editIndex: item.order });
+      } else if (isParaFormatEdit(item.edit)) {
+        // 문단 서식·번호 — 텍스트는 그대로, 문단 모양만 바꾼다.
+        applyParaFormatSpec(wasm, item.sec, item.para, item.edit.payload.para_format!);
+        changed.push({ sec: item.sec, para: item.para, editIndex: item.order });
       } else {
         // extra = 다줄 분할로 첫 결과 문단 외에 추가된 문단 수(\n 없으면 0).
         const extra = applyOne(wasm, item, images);
-        const { sec, para, edit } = item;
+        const { sec, para, edit, order: editIndex } = item;
         if (edit.command === 'INSERT_AFTER') {
           // para+1..para+1+extra 에 총 (1+extra)개 문단이 끼어든다.
           shiftFrom(sec, para + 1, 1 + extra);
-          for (let i = 0; i <= extra; i += 1) changed.push({ sec, para: para + 1 + i });
+          for (let i = 0; i <= extra; i += 1) changed.push({ sec, para: para + 1 + i, editIndex });
         } else if (edit.command === 'INSERT_BEFORE') {
           shiftFrom(sec, para, 1 + extra);
-          for (let i = 0; i <= extra; i += 1) changed.push({ sec, para: para + i });
+          for (let i = 0; i <= extra; i += 1) changed.push({ sec, para: para + i, editIndex });
         } else if (edit.command === 'REPLACE') {
           // 원문 문단은 제자리, 그 뒤에 extra개 새 문단이 추가된다.
           if (extra > 0) shiftFrom(sec, para + 1, extra);
-          for (let i = 0; i <= extra; i += 1) changed.push({ sec, para: para + i });
+          for (let i = 0; i <= extra; i += 1) changed.push({ sec, para: para + i, editIndex });
         }
       }
       applied += 1;
@@ -913,49 +1006,59 @@ function applyOne(
         if (pageBreak) wasm.insertPageBreak(sec, para, length);
         return 0;
       }
-      if (isTableEdit(edit)) {
-        createTableAt(wasm, sec, para + 1, edit);
-      } else if (isImageEdit(edit)) {
-        insertImageAt(wasm, sec, para + 1, edit, images);
+      if (isTableEdit(edit) || isImageEdit(edit)) {
+        // 개체 삽입이 실패하면 방금 분할로 만든 빈 문단을 되붙인다(빈 줄을 남기지 않음).
+        withSplitUndo(wasm, sec, para + 1, () =>
+          isTableEdit(edit)
+            ? createTableAt(wasm, sec, para + 1, edit)
+            : insertImageAt(wasm, sec, para + 1, edit, images),
+        );
       } else if (isPasteHtmlEdit(edit)) {
         const extra = pasteHtmlAt(wasm, sec, para + 1, edit);
-        if (pageBreak) wasm.insertPageBreak(sec, para + 1, 0);
+        if (pageBreak) startOnNewPage(wasm, sec, para + 1);
         return extra;
       } else {
         // 새 문단은 style 미지정 시 body 기본 — 미적용 시 문단 간격 0으로 빽빽해진다.
         const extra = fillBodyLines(wasm, sec, para + 1, lines, edit.payload.style ?? 'body');
+        applyAttachedParaFormat(wasm, sec, para + 1, extra, edit);
         // 새 문단을 새 페이지에서 시작(긴 새 내용/새 절 추가용).
-        if (pageBreak) wasm.insertPageBreak(sec, para + 1, 0);
+        if (pageBreak) startOnNewPage(wasm, sec, para + 1);
         return extra;
       }
-      // 새 문단을 새 페이지에서 시작(긴 새 내용/새 절 추가용).
-      if (pageBreak) wasm.insertPageBreak(sec, para + 1, 0);
+      // 새 표/그림을 새 페이지에서 시작.
+      if (pageBreak) startOnNewPage(wasm, sec, para + 1);
       return 0;
     }
     case 'INSERT_BEFORE': {
       // 오프셋 0에서 분할하면 빈 문단이 para 위치에 생기고 원문은 para+1로 밀린다.
       wasm.splitParagraph(sec, para, 0);
-      if (isTableEdit(edit)) {
-        createTableAt(wasm, sec, para, edit);
-      } else if (isImageEdit(edit)) {
-        insertImageAt(wasm, sec, para, edit, images);
+      if (isTableEdit(edit) || isImageEdit(edit)) {
+        // 실패하면 원문(para+1)을 빈 문단(para)에 되붙여 분할 전으로 돌린다.
+        withSplitUndo(wasm, sec, para + 1, () =>
+          isTableEdit(edit)
+            ? createTableAt(wasm, sec, para, edit)
+            : insertImageAt(wasm, sec, para, edit, images),
+        );
       } else if (isPasteHtmlEdit(edit)) {
         const extra = pasteHtmlAt(wasm, sec, para, edit);
-        if (pageBreak) wasm.insertPageBreak(sec, para, 0);
+        if (pageBreak) startOnNewPage(wasm, sec, para);
         return extra;
       } else {
         const extra = fillBodyLines(wasm, sec, para, lines, edit.payload.style ?? 'body');
-        if (pageBreak) wasm.insertPageBreak(sec, para, 0);
+        applyAttachedParaFormat(wasm, sec, para, extra, edit);
+        if (pageBreak) startOnNewPage(wasm, sec, para);
         return extra;
       }
-      if (pageBreak) wasm.insertPageBreak(sec, para, 0);
+      if (pageBreak) startOnNewPage(wasm, sec, para);
       return 0;
     }
     case 'REPLACE': {
       const length = wasm.getParagraphLength(sec, para);
       if (length > 0) wasm.deleteText(sec, para, 0, length);
       if (isPasteHtmlEdit(edit)) return pasteHtmlAt(wasm, sec, para, edit);
-      return fillBodyLines(wasm, sec, para, lines, edit.payload.style);
+      const extra = fillBodyLines(wasm, sec, para, lines, edit.payload.style);
+      applyAttachedParaFormat(wasm, sec, para, extra, edit);
+      return extra;
     }
     case 'DELETE': {
       const length = wasm.getParagraphLength(sec, para);
@@ -1296,6 +1399,203 @@ function indexOfChars(haystack: string[], needle: string[], from = 0): number {
 }
 
 /**
+ * 분할 직후 개체(표·그림)를 넣다가 실패하면 분할을 되돌린다 — `mergeParagraph(sec, joinAt)`로
+ * 분할 경계 뒤 문단을 앞 문단에 다시 붙인 뒤 원래 오류를 그대로 던진다(skipped로 보고됨).
+ */
+function withSplitUndo(wasm: WasmEditing, sec: number, joinAt: number, insert: () => void): void {
+  try {
+    insert();
+  } catch (error) {
+    try {
+      wasm.mergeParagraph(sec, joinAt);
+    } catch {
+      /* 되붙이기 실패는 무시 — 원래 오류를 보고하는 것이 우선이다. */
+    }
+    throw error;
+  }
+}
+
+/**
+ * 문단 sec,para를 새 쪽에서 시작시킨다. 문단 모양의 '문단 앞에서 항상 쪽 나눔'을 켠다 —
+ * 예전처럼 insertPageBreak(sec, para, 0)으로 오프셋 0에서 나누면 쪽나누기용 빈 문단이 하나
+ * 더 생겨(빈 줄 + diff 위치 한 칸 어긋남) 새 쪽 첫 줄이 비었다. 문단 서식 API가 없는
+ * 환경에서만 예전 방식으로 폴백한다.
+ */
+function startOnNewPage(wasm: WasmEditing, sec: number, para: number): void {
+  if (wasm.applyParaFormat) {
+    wasm.applyParaFormat(sec, para, JSON.stringify({ pageBreakBefore: true }));
+    return;
+  }
+  wasm.insertPageBreak(sec, para, 0);
+}
+
+/** 문단 서식 편집인지(payload.type="para_format" + para_format, REPLACE). */
+function isParaFormatEdit(edit: Edit): boolean {
+  return edit.command === 'REPLACE' && edit.payload.type === 'para_format' && !!edit.payload.para_format;
+}
+
+function isPageSetupEdit(edit: Edit): boolean {
+  return edit.payload.type === 'page_setup' && !!edit.payload.page_setup;
+}
+
+function isPageNumberEdit(edit: Edit): boolean {
+  return edit.payload.type === 'page_number';
+}
+
+const ALIGNMENTS = new Set(['left', 'center', 'right', 'justify', 'distribute']);
+
+/**
+ * para_format 스펙 → rhwp applyParaFormat props. 번호 목록은 문서에 기본 번호/글머리표 정의를
+ * 보장한 뒤 그 ID를 건다(한글 '문단 번호'와 같은 구조 — 문단을 넣고 빼도 번호가 다시 매겨진다).
+ */
+/** 목록 수준 하나당 왼쪽 여백(pt). */
+const LIST_LEVEL_INDENT_PT = 15;
+
+export function paraFormatProps(wasm: WasmEditing, spec: ParaFormatSpec): Record<string, unknown> {
+  const props: Record<string, unknown> = {};
+  if (spec.alignment && ALIGNMENTS.has(spec.alignment)) props.alignment = spec.alignment;
+  if (typeof spec.line_spacing_percent === 'number' && spec.line_spacing_percent > 0) {
+    props.lineSpacingType = 'Percent';
+    props.lineSpacing = Math.round(spec.line_spacing_percent);
+  }
+  const spacing = (pt: number | undefined): number | undefined =>
+    typeof pt === 'number' && Number.isFinite(pt) ? Math.round(pt * SPACING_PT) : undefined;
+  const indent = spacing(spec.indent_pt);
+  if (indent !== undefined) props.indent = indent;
+  const marginLeft = spacing(spec.margin_left_pt);
+  if (marginLeft !== undefined) props.marginLeft = marginLeft;
+  const before = spacing(spec.spacing_before_pt);
+  if (before !== undefined) props.spacingBefore = before;
+  const after = spacing(spec.spacing_after_pt);
+  if (after !== undefined) props.spacingAfter = after;
+  if (typeof spec.keep_with_next === 'boolean') props.keepWithNext = spec.keep_with_next;
+  const list = spec.list;
+  if (list) {
+    const level = Math.min(6, Math.max(0, Math.round(list.level ?? 0)));
+    // 하위 수준(가., 1) 등)이 상위 항목과 같은 줄머리에 붙지 않게 수준마다 왼쪽 여백을 둔다.
+    if (list.kind !== 'none' && level > 0 && marginLeft === undefined) {
+      props.marginLeft = Math.round(level * LIST_LEVEL_INDENT_PT * SPACING_PT);
+    }
+    if (list.kind === 'none') {
+      props.headType = 'None';
+    } else if (list.kind === 'outline') {
+      props.headType = 'Outline';
+      props.paraLevel = level;
+    } else if (list.kind === 'number') {
+      if (!wasm.ensureDefaultNumbering) throw new Error('이 환경에서는 문단 번호를 지원하지 않습니다.');
+      props.headType = 'Number';
+      props.numberingId = wasm.ensureDefaultNumbering();
+      props.paraLevel = level;
+    } else if (list.kind === 'bullet') {
+      if (!wasm.ensureDefaultBullet) throw new Error('이 환경에서는 글머리표를 지원하지 않습니다.');
+      props.headType = 'Bullet';
+      props.numberingId = wasm.ensureDefaultBullet(list.bullet_char?.trim() || '●');
+      props.paraLevel = level;
+    }
+  }
+  return props;
+}
+
+/** 본문 문단에 para_format을 적용한다. 적용할 속성이 없으면 사유를 던진다. */
+function applyParaFormatSpec(wasm: WasmEditing, sec: number, para: number, spec: ParaFormatSpec): void {
+  if (!wasm.applyParaFormat) throw new Error('이 환경에서는 문단 서식을 지원하지 않습니다.');
+  const props = paraFormatProps(wasm, spec);
+  if (!Object.keys(props).length) throw new Error('para_format에 적용할 속성이 없습니다.');
+  wasm.applyParaFormat(sec, para, JSON.stringify(props));
+}
+
+/** 텍스트 INSERT/REPLACE에 동봉된 para_format을 새로 채운 문단들(first..first+extra)에 입힌다. */
+function applyAttachedParaFormat(wasm: WasmEditing, sec: number, first: number, extra: number, edit: Edit): void {
+  const spec = edit.payload.para_format;
+  if (!spec || edit.payload.type === 'para_format') return;
+  for (let i = 0; i <= extra; i += 1) applyParaFormatSpec(wasm, sec, first + i, spec);
+}
+
+/** 최상위 표 셀 문단에 para_format을 적용한다. */
+function applyParaFormatInCellEdit(wasm: WasmEditing, edit: Edit, c: CellTarget, paraOffset = 0): void {
+  if (!wasm.applyParaFormatInCell) throw new Error('이 환경에서는 셀 문단 서식을 지원하지 않습니다.');
+  if (c.path.length !== 1) throw new Error('문단 서식은 최상위 표 셀까지만 지원합니다.');
+  const props = paraFormatProps(wasm, edit.payload.para_format!);
+  if (!Object.keys(props).length) throw new Error('para_format에 적용할 속성이 없습니다.');
+  const { controlIndex, cellIndex, cellParaIndex } = c.path[0];
+  wasm.applyParaFormatInCell(
+    c.sec,
+    c.parentPara,
+    controlIndex,
+    cellIndex,
+    cellParaIndex + paraOffset,
+    JSON.stringify(props),
+  );
+}
+
+/** 용지 크기(mm, 세로 기준). */
+const PAPER_MM: Record<string, [number, number]> = {
+  A4: [210, 297],
+  A3: [297, 420],
+  B5: [182, 257],
+  Letter: [215.9, 279.4],
+};
+/** 1mm = 7200/25.4 HWPUNIT. */
+const HWPUNIT_PER_MM = 7200 / 25.4;
+const mmToHu = (mm: number): number => Math.round(mm * HWPUNIT_PER_MM);
+
+/** 쪽 설정(방향·용지·여백)을 모든 구역에 적용한다. */
+function applyPageSetup(wasm: WasmEditing, edit: Edit): void {
+  if (!wasm.getPageDef || !wasm.setPageDef || !wasm.getSectionCount) {
+    throw new Error('이 환경에서는 쪽 설정을 지원하지 않습니다.');
+  }
+  const spec = edit.payload.page_setup!;
+  const sections = wasm.getSectionCount();
+  for (let sec = 0; sec < sections; sec += 1) {
+    const def = { ...wasm.getPageDef(sec) };
+    const paper = spec.paper ? PAPER_MM[spec.paper] : undefined;
+    if (paper) {
+      def.width = mmToHu(paper[0]);
+      def.height = mmToHu(paper[1]);
+    }
+    if (spec.orientation) def.landscape = spec.orientation === 'landscape';
+    const m = spec.margins_mm;
+    if (m) {
+      if (typeof m.top === 'number') def.marginTop = mmToHu(m.top);
+      if (typeof m.bottom === 'number') def.marginBottom = mmToHu(m.bottom);
+      if (typeof m.left === 'number') def.marginLeft = mmToHu(m.left);
+      if (typeof m.right === 'number') def.marginRight = mmToHu(m.right);
+    }
+    const result = wasm.setPageDef(sec, def);
+    if (!result.ok) throw new Error(`구역 ${sec}의 쪽 설정을 바꾸지 못했습니다.`);
+  }
+}
+
+/**
+ * 머리말/꼬리말에 자동 쪽 번호를 넣는다(모든 구역). 한글 '머리말/꼬리말 마당'으로 정렬된
+ * 쪽 번호 필드를 만들고, dash/total 형식이면 앞뒤 글자와 총 쪽수 필드를 덧붙인다.
+ */
+function applyPageNumber(wasm: WasmEditing, edit: Edit): void {
+  if (!wasm.applyHfTemplate || !wasm.getSectionCount) {
+    throw new Error('이 환경에서는 쪽 번호를 지원하지 않습니다.');
+  }
+  const spec = edit.payload.page_number ?? {};
+  const isHeader = spec.position === 'header';
+  const templateId = spec.align === 'left' ? 1 : spec.align === 'right' ? 3 : 2;
+  const format = spec.format ?? 'plain';
+  const sections = wasm.getSectionCount();
+  for (let sec = 0; sec < sections; sec += 1) {
+    const result = wasm.applyHfTemplate(sec, isHeader, 0, templateId);
+    if (!result.ok) throw new Error(`구역 ${sec}에 쪽 번호를 넣지 못했습니다.`);
+    if (format === 'plain') continue;
+    // 마당은 문단 0에 [쪽번호 필드] 한 글자만 넣는다 — 그 앞뒤에 글자를 덧붙인다.
+    if (format === 'dash') {
+      wasm.insertTextInHeaderFooter(sec, isHeader, 0, 0, 1, ' -');
+      wasm.insertTextInHeaderFooter(sec, isHeader, 0, 0, 0, '- ');
+    } else if (format === 'total') {
+      if (!wasm.insertFieldInHf) throw new Error('이 환경에서는 총 쪽수 필드를 지원하지 않습니다.');
+      wasm.insertTextInHeaderFooter(sec, isHeader, 0, 0, 1, ' / ');
+      wasm.insertFieldInHf(sec, isHeader, 0, 0, 4, 2);
+    }
+  }
+}
+
+/**
  * 본문 문단의 [format_target] 범위(생략 시 문단 전체)에 글자 서식을 적용한다.
  * rhwp 오프셋은 문자 단위라 Array.from으로 센다. 대상이 없거나 문단에 여러 번
  * 나타나면 오류를 던져 skipped(사유)로 보고되게 한다(AC4 — 모호하면 적용 금지).
@@ -1336,6 +1636,13 @@ function applyFormatEdit(wasm: WasmEditing, edit: Edit, sec: number, para: numbe
     props.fontSize = Math.round(spec.font_size_pt * 100); // pt → HWPUNIT
   }
   if (spec.text_color) props.textColor = spec.text_color;
+  if (spec.highlight_color) props.shadeColor = spec.highlight_color;
+  if (spec.superscript !== undefined) props.superscript = spec.superscript;
+  if (spec.subscript !== undefined) props.subscript = spec.subscript;
+  if (spec.font_family?.trim()) {
+    if (!wasm.findOrCreateFontId) throw new Error('이 환경에서는 글꼴 변경을 지원하지 않습니다.');
+    props.fontId = wasm.findOrCreateFontId(spec.font_family.trim());
+  }
   if (!Object.keys(props).length) {
     throw new Error('char_format에 적용할 속성이 없습니다.');
   }
@@ -1481,7 +1788,18 @@ function insertImageAt(
     h = Math.round((h * MAX_W) / w);
     w = MAX_W;
   }
-  wasm.insertPicture(sec, para, 0, img.bytes, w, h, natW, natH, img.extension, edit.payload.text ?? '');
+  const placed = wasm.insertPicture(sec, para, 0, '', img.bytes, w, h, natW, natH, img.extension, edit.payload.text ?? '');
+  // rhwp 0.8.7부터 본문 그림은 쪽 기준 (0,0)에 '떠 있는' 개체로 들어간다 — 그대로 두면 생성한
+  // 차트·그림이 모두 쪽 왼쪽 위에 겹쳐 본문을 가린다. 자기 문단 안 글자처럼 취급하고 가운데
+  // 정렬해 본문 흐름을 따라가게 한다(이전 동작과 같은 배치).
+  if (!placed?.ok) throw new Error('그림을 삽입하지 못했습니다.');
+  const placedPara = placed.paraIdx ?? para;
+  if (wasm.setPictureProperties) {
+    wasm.setPictureProperties(sec, placedPara, placed.controlIdx, { treatAsChar: true });
+  }
+  if (wasm.applyParaFormat) {
+    wasm.applyParaFormat(sec, placedPara, JSON.stringify({ alignment: 'center' }));
+  }
 }
 
 /**
@@ -2506,8 +2824,10 @@ function createTableAt(wasm: WasmEditing, sec: number, para: number, edit: Edit)
   const data = edit.payload.table_data!;
   const rows = data.rows;
   const cols = data.cols;
+  const countBefore = wasm.getParagraphCount?.(sec);
   const result = wasm.createTable(sec, para, 0, rows, cols);
   if (!result.ok) throw new Error('표 생성에 실패했습니다.');
+  dropTrailingEmptyParagraph(wasm, sec, result.paraIdx, countBefore);
   // 페이지보다 큰 셀/행이 다음 쪽으로 흘러가도록 '셀 단위 나눔'으로 둔다. 기본값(없음)이면
   // 페이지 경계에 걸친 긴 셀(예: 긴 비고)이 잘려 보인다.
   try {
@@ -2568,6 +2888,30 @@ function createTableAt(wasm: WasmEditing, sec: number, para: number, edit: Edit)
       ? data.col_weights
       : autoColWeights(matrix, cols);
   styleTableCells(wasm, sec, result.paraIdx, result.controlIdx, weights, cols, matrix);
+}
+
+/**
+ * 표 생성은 표 문단 뒤에 빈 문단을 하나 덧붙인다(편집기에서 표 다음에 커서를 둘 자리).
+ * AI 작성에서는 그 빈 문단이 표와 다음 내용 사이의 빈 줄로 남고, 새 문단 위치 추적(changed[])도
+ * 한 칸씩 어긋난다. 표 생성으로 문단이 늘었고 표 바로 뒤 문단이 비어 있으면 표 문단에 되붙인다.
+ */
+function dropTrailingEmptyParagraph(
+  wasm: WasmEditing,
+  sec: number,
+  tablePara: number,
+  countBefore: number | undefined,
+): void {
+  if (countBefore === undefined) return;
+  try {
+    const countAfter = wasm.getParagraphCount?.(sec);
+    if (countAfter === undefined || countAfter <= countBefore) return;
+    const next = tablePara + 1;
+    if (next >= countAfter) return;
+    if (wasm.getParagraphLength(sec, next) !== 0) return;
+    wasm.mergeParagraph(sec, next);
+  } catch {
+    /* 정리 실패는 무시 — 빈 줄 하나가 남을 뿐 표는 정상이다. */
+  }
 }
 
 /** 헤더 셀 배경색(연한 청회색) — 표를 깔끔하게 보이게 하는 기본 테마. */

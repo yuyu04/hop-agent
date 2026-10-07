@@ -4,7 +4,7 @@
 //! 잡으므로, 페이지를 통째로 래스터화한 뒤 그림 영역만 잘라낸다(`crop`). macOS 전용
 //! (Quartz 사용, 별도 무거운 의존성 없음).
 
-#![cfg(target_os = "macos")]
+// macOS 전용 — 모듈 선언(`ai/mod.rs`)의 `#[cfg(target_os = "macos")]`가 게이트한다.
 // objc2-core-graphics 0.3은 자유함수형 CG API를 deprecated(메서드형으로 개명)로 표시하지만
 // 동작은 동일하므로 그대로 쓴다.
 #![allow(deprecated)]

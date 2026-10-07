@@ -18,14 +18,24 @@ import {
 
 describe('F-ec1f3481 AC-002 — 내장 기본값이 현행 세대다', () => {
   it('anthropic 기본값은 Claude 5 계열이다 — 구세대 3.5가 기본으로 남지 않는다', () => {
-    expect(defaultModel('anthropic')).toBe('claude-opus-5');
-    expect(BUILTIN_MODELS.anthropic).toContain('claude-sonnet-5');
+    expect(defaultModel('anthropic')).toBe('claude-opus-5-5');
+    expect(BUILTIN_MODELS.anthropic).toContain('claude-sonnet-5-5');
     expect(BUILTIN_MODELS.anthropic).toContain('claude-haiku-4-5');
     expect(BUILTIN_MODELS.anthropic.some((id) => id.startsWith('claude-3'))).toBe(false);
   });
 
-  it('gemini 기본값은 자체 갱신되는 -latest 별칭이다 — 목록을 손보지 않아도 최신을 탄다', () => {
-    expect(defaultModel('gemini')).toBe('gemini-flash-latest');
+  it('gemini 기본값은 현행 3.8 Flash다 — 아직 3.5를 가리키는 -latest 별칭을 기본으로 쓰지 않는다', () => {
+    expect(defaultModel('gemini')).toBe('gemini-3.8-flash');
+    expect(defaultModel('gemini')).not.toBe('gemini-flash-latest');
+  });
+
+  it('openai 기본값은 GPT-6 세대(gpt-6.1-sol)다', () => {
+    expect(defaultModel('openai')).toBe('gpt-6.1-sol');
+  });
+
+  it('ollama 기본값은 현행 로컬 모델(qwen3.8:27b)이다 — 구세대 llama3.2가 기본으로 남지 않는다', () => {
+    expect(defaultModel('ollama')).toBe('qwen3.8:27b');
+    expect(defaultModel('ollama')).not.toBe('llama3.2');
   });
 
   it('모든 provider가 기본값을 가진다(빈 문자열 모델로 요청하지 않게)', () => {
@@ -42,12 +52,12 @@ describe('F-ec1f3481 AC-002 — 내장 기본값이 현행 세대다', () => {
 
 describe('F-ec1f3481 AC-001 — 조회 결과를 드롭다운 순서로 정규화한다', () => {
   it('권장(내장) 모델을 내장 순서대로 앞에 올린다 — 알파벳 응답에서도 기본 선택이 맞다', () => {
-    const listed = ['claude-haiku-4-5', 'claude-opus-4-1', 'claude-opus-5', 'claude-sonnet-5'];
+    const listed = ['claude-haiku-4-5', 'claude-opus-4-1', 'claude-opus-5-5', 'claude-sonnet-5-5'];
 
     const merged = mergeModelList('anthropic', listed);
 
-    expect(merged[0]).toBe('claude-opus-5');
-    expect(merged.slice(0, 3)).toEqual(['claude-opus-5', 'claude-sonnet-5', 'claude-haiku-4-5']);
+    expect(merged[0]).toBe('claude-opus-5-5');
+    expect(merged.slice(0, 3)).toEqual(['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-4-5']);
     // 내장에 없는 모델도 버리지 않는다 — 조회의 목적은 "전부 보여주기"다.
     expect(merged).toContain('claude-opus-4-1');
   });
@@ -77,7 +87,7 @@ describe('F-ec1f3481 AC-001 — 조회 결과를 드롭다운 순서로 정규�
       'gpt-5',
     ]);
 
-    expect(merged).toEqual(['gpt-5', 'gpt-4o-mini']);
+    expect(merged).toEqual(['gpt-4o-mini', 'gpt-5']);
   });
 
   it('비-OpenAI provider는 걸러내지 않는다 — 이름 규칙이 다르다', () => {
@@ -109,7 +119,7 @@ describe('F-ec1f3481 AC-004 — CLI 위임은 모델 목록 API가 없다', () =
   });
 
   it('CLI 별칭 목록은 모델 ID가 아니라 CLI가 아는 별칭이다', () => {
-    expect(BUILTIN_MODELS['claude-cli']).toEqual(['default', 'sonnet', 'opus', 'haiku']);
+    expect(BUILTIN_MODELS['claude-cli']).toEqual(['default', 'opus', 'sonnet', 'fable', 'haiku', 'opusplan']);
     expect(defaultModel('claude-cli')).toBe('default');
     expect(defaultModel('agy-cli')).toBe('default');
   });

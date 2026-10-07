@@ -5,7 +5,7 @@
  * 만든다. 실제 문서는 건드리지 않는 휘발성 미리보기 데이터다.
  */
 
-import type { ActionScript, ContentNode, DocumentContext, EditCommand } from './ai-bridge';
+import type { ActionScript, ContentNode, DocumentContext, EditCommand, EditPayload } from './ai-bridge';
 
 export interface DiffItem {
   command: EditCommand;
@@ -14,6 +14,50 @@ export interface DiffItem {
   beforeText?: string;
   /** INSERT/REPLACE로 들어오는 텍스트(초록). */
   afterText?: string;
+  /** 본문 문단이 아닌 편집의 종류(표·그림·서식 등). 변경 목록의 아이콘·라벨에 쓴다. */
+  payloadType?: NonNullable<EditPayload['type']>;
+}
+
+/** 글 내용은 그대로 두고 모양만 바꾸는 편집 종류. */
+const FORMAT_ONLY_TYPES = new Set<string>(['format', 'para_format', 'page_setup', 'page_number']);
+
+/** 텍스트가 없는 편집(서식·용지·그림 등)을 한 줄로 설명한다. */
+function describePayload(payload: EditPayload): string | undefined {
+  switch (payload.type) {
+    case 'image':
+      return payload.image_index !== undefined ? `[그림 ${payload.image_index + 1}]` : '[그림]';
+    case 'chart':
+      return `[차트${payload.chart_data?.title ? `: ${payload.chart_data.title}` : ''}]`;
+    case 'format': {
+      const f = payload.char_format ?? {};
+      const parts = [
+        f.bold ? '굵게' : '',
+        f.italic ? '기울임' : '',
+        f.underline ? '밑줄' : '',
+        f.strikethrough ? '취소선' : '',
+        f.font_size_pt ? `${f.font_size_pt}pt` : '',
+        f.font_family ?? '',
+        f.text_color ? `글자색 ${f.text_color}` : '',
+        f.highlight_color ? '형광펜' : '',
+      ].filter(Boolean);
+      const where = payload.format_target ? `「${payload.format_target}」 ` : '';
+      return `[${where}글자 서식${parts.length ? `: ${parts.join(' · ')}` : ''}]`;
+    }
+    case 'para_format':
+      return '[문단 서식]';
+    case 'page_setup':
+      return '[용지 설정]';
+    case 'page_number':
+      return '[쪽 번호]';
+    case 'table_edit':
+      return '[표 고치기]';
+    case 'table_formula':
+      return '[표 계산식]';
+    case 'footnote':
+      return payload.text !== undefined ? undefined : '[각주]';
+    default:
+      return undefined;
+  }
 }
 
 function textOf(node: ContentNode | undefined): string | undefined {
@@ -35,21 +79,28 @@ export function buildDiffModel(script: ActionScript, context: DocumentContext): 
       ? `[표 ${table.rows}×${table.cols}]`
       : clone
         ? `[양식 항목 추가 — 값 ${clone.cell_fills?.length ?? 0}칸]`
-        : edit.payload.text;
+        : (edit.payload.text ?? describePayload(edit.payload));
+    // 문단이 아닌 편집만 종류를 단다(본문 문단 diff 모양은 그대로 둔다).
+    const kind =
+      edit.payload.type && edit.payload.type !== 'paragraph' ? { payloadType: edit.payload.type } : {};
     switch (edit.command) {
       case 'DELETE':
-        return { command: edit.command, targetId: edit.target_id, beforeText: original };
+        return { command: edit.command, targetId: edit.target_id, beforeText: original, ...kind };
       case 'REPLACE':
         return {
           command: edit.command,
           targetId: edit.target_id,
-          beforeText: original,
+          // 서식만 바꾸는 편집은 글이 사라지지 않는다 — 원문을 지운 것처럼 보이지 않게 한다.
+          beforeText: FORMAT_ONLY_TYPES.has(edit.payload.type ?? '') && edit.payload.text === undefined
+            ? undefined
+            : original,
           afterText: inserted,
+          ...kind,
         };
       case 'INSERT_BEFORE':
       case 'INSERT_AFTER':
       default:
-        return { command: edit.command, targetId: edit.target_id, afterText: inserted };
+        return { command: edit.command, targetId: edit.target_id, afterText: inserted, ...kind };
     }
   });
 }

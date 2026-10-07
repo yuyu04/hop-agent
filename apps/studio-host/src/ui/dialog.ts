@@ -5,6 +5,9 @@
  */
 import { enhanceCustomSelects } from './custom-select';
 
+/** 마지막 모달이 닫혀 편집기 포커스를 복원할 수 있음을 알리는 문서 이벤트(rhwp #3414). */
+export const MODAL_DIALOG_CLOSED_EVENT = 'rhwp-modal-dialog-closed';
+
 export abstract class ModalDialog {
   protected overlay!: HTMLDivElement;
   protected dialog!: HTMLDivElement;
@@ -120,6 +123,11 @@ export abstract class ModalDialog {
       this.captureHandler = null;
     }
     this.overlay?.remove();
+    // 중첩 모달에서는 부모가 여전히 키보드를 소유한다. 마지막 overlay가 닫힌 경우에만
+    // 앱 조립 지점(main.ts)에 편집기 포커스 복원을 맡긴다.
+    if (typeof document !== 'undefined' && !document.querySelector?.('.modal-overlay')) {
+      document.dispatchEvent?.(new Event(MODAL_DIALOG_CLOSED_EVENT));
+    }
   }
 
   /** 서브클래스에서 본문 DOM을 생성 */

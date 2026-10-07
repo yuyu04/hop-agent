@@ -37,7 +37,7 @@ if (!g.measureTextWidth) {
 }
 
 import init, { version } from '@wasm/rhwp.js';
-import { WasmBridge } from '@/core/wasm-bridge';
+import { WasmBridge } from '@/upstream/core';
 import {
   applyCoverFill,
   pickCoverHeaderTable,

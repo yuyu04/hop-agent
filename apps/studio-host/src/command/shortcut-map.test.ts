@@ -48,6 +48,23 @@ describe('shortcut-map', () => {
       defaultShortcuts,
     )).toBeNull();
   });
+
+  // F-15098e10 AC-a2df0019: AI panel toggle with Cmd+J / Ctrl+J
+  it('AC-a2df0019: Cmd+J (macOS) / Ctrl+J (Windows) toggles AI panel', () => {
+    installNavigator({ platform: 'MacIntel', userAgent: 'Mac OS X' });
+
+    // macOS: Cmd+J
+    expect(matchShortcut(keyEvent({ key: 'j', code: 'KeyJ', metaKey: true }), defaultShortcuts))
+      .toBe('view:ai-panel');
+  });
+
+  it('AC-a2df0019: Ctrl+J on Windows toggles AI panel', () => {
+    installNavigator({ platform: 'Win32', userAgent: 'Windows NT 10.0' });
+
+    // Windows: Ctrl+J
+    expect(matchShortcut(keyEvent({ key: 'j', code: 'KeyJ', ctrlKey: true }), defaultShortcuts))
+      .toBe('view:ai-panel');
+  });
 });
 
 function installNavigator(value: Pick<Navigator, 'platform' | 'userAgent'>): void {

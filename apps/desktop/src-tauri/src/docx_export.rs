@@ -12,12 +12,12 @@ use std::io::{Cursor, Write};
 use std::path::Path;
 
 use quick_xml::escape::escape;
-use rhwp::model::control::Control;
-use rhwp::model::document::Document;
-use rhwp::model::paragraph::Paragraph;
-use rhwp::model::style::{Alignment, CharShape, ParaShape};
-use rhwp::model::table::Table;
-use rhwp::DocumentCore;
+use hop_rhwp_adapter::model::control::Control;
+use hop_rhwp_adapter::model::document::Document;
+use hop_rhwp_adapter::model::paragraph::Paragraph;
+use hop_rhwp_adapter::model::style::{Alignment, CharShape, ParaShape};
+use hop_rhwp_adapter::model::table::Table;
+use hop_rhwp_adapter::DocumentCore;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
 
@@ -347,12 +347,12 @@ fn zip_docx(document_xml: &str) -> Result<Vec<u8>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rhwp::model::control::Control;
-    use rhwp::model::document::{Document, Section};
-    use rhwp::model::image::Picture;
-    use rhwp::model::paragraph::{CharShapeRef, Paragraph};
-    use rhwp::model::style::{Alignment, CharShape, Font, ParaShape};
-    use rhwp::model::table::{Cell, Table};
+    use hop_rhwp_adapter::model::control::Control;
+    use hop_rhwp_adapter::model::document::{Document, Section};
+    use hop_rhwp_adapter::model::image::Picture;
+    use hop_rhwp_adapter::model::paragraph::{CharShapeRef, Paragraph};
+    use hop_rhwp_adapter::model::style::{Alignment, CharShape, Font, ParaShape};
+    use hop_rhwp_adapter::model::table::{Cell, Table};
 
     // ---- fixture builders (model IR direct, no DocumentCore) ----
 
@@ -398,7 +398,7 @@ mod tests {
         use std::io::Cursor;
         use zip::ZipArchive;
 
-        let mut core = rhwp::DocumentCore::new_empty();
+        let mut core = hop_rhwp_adapter::DocumentCore::new_empty();
         core.create_blank_document_native().unwrap();
         core.insert_text_native(0, 0, 0, "안녕하세요").unwrap();
 

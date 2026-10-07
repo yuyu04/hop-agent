@@ -1,0 +1,44 @@
+id: F-bae302c6
+slug: ai-generation-resilience
+title: "자동 문서 생성 결과가 일부 잘못돼도 나머지는 살리고, 새 문서·쪽나눔에서 빈 문단을 남기지 않는다"
+status: in_progress
+modules:
+  - apps/desktop/src-tauri/src/ai/schema.rs
+  - apps/desktop/src-tauri/src/ai/mod.rs
+  - apps/studio-host/src/core/ai-apply.ts
+  - HOP_AI_Agent_Spec.md
+acceptance_criteria:
+  - id: AC-d7a9a930
+    ears: unwanted
+    condition: "If 응답의 일부 편집이 형식 오류이거나 문서에 없는 대상을 겨누면"
+    text: "The system shall 그 편집만 버리고 나머지를 미리보기로 보내며 버린 건수를 message에 안내한다 — 단 편집의 과반이 없는 대상을 겨누면 전체를 WHITELIST_VIOLATION으로 거부한다."
+    test_refs:
+      - apps/desktop/src-tauri/src/ai/mod.rs
+      - apps/desktop/src-tauri/src/ai/schema.rs
+    notes: "스펙 7장 4항 정책을 '전체 거부'에서 '해당 항목만 스킵(과반 위반 시 전체 거부)'으로 바꿨다. 승인 전 미리보기가 최종 안전장치다."
+  - id: AC-587a9319
+    ears: ubiquitous
+    text: "The system shall 표 table_data의 rows·cols가 생략되면 matrix에서 유도하고, 글자 크기 10.5pt 같은 소수를 받는다 — 값 하나 때문에 응답 전체가 파싱 실패하지 않는다."
+    test_refs:
+      - apps/desktop/src-tauri/src/ai/mod.rs
+      - apps/desktop/src-tauri/src/ai/schema.rs
+  - id: AC-d29d54cb
+    ears: ubiquitous
+    text: "The system shall 시스템 프롬프트에서 모순(새 각주 '미지원' 문장, 모든 편집에 text 필수)을 없애고 새 문서 규칙(첫 제목은 sec[0].p[0] REPLACE, 나머지는 같은 ID에 INSERT_AFTER 순서대로, 없는 ID를 지어내지 않음)을 안내한다."
+    test_refs:
+      - apps/desktop/src-tauri/src/ai/mod.rs
+  - id: AC-0e6e3f29
+    ears: event
+    condition: "When 새로 넣는 문단·표·그림에 page_break가 참일 때"
+    text: "The system shall 그 문단에 '문단 앞에서 쪽 나눔'을 켜서 새 쪽에서 시작시킨다 — 쪽나누기용 빈 문단을 따로 만들지 않아 새 쪽 첫 줄이 비거나 diff 위치가 한 칸 어긋나지 않는다."
+    test_refs:
+      - apps/studio-host/src/core/ai-apply.test.ts
+      - apps/studio-host/src/core/ai-paste-html.test.ts
+    notes: "양식 복제(clone_table)는 예외 — 앵커 문단 끝에 쪽나누기를 넣어 표가 새 쪽 머리에서 시작하게 하고, 남는 빈 문단은 removeOrphanParasBeforePageBreaks가 정리한다(F-32a1a7d2 경로 유지)."
+  - id: AC-081e0b87
+    ears: event
+    condition: "When AI 편집이 본문에 그림·차트(type=image/chart)를 넣을 때"
+    text: "The system shall 그림을 자기 문단 안 글자처럼 취급(treatAsChar)으로 두고 그 문단을 가운데 정렬해 본문 흐름을 따르게 하며, 삽입이 실패하면 정렬만 바꾸지 않고 사유를 보고한다."
+    test_refs:
+      - apps/studio-host/src/core/ai-apply.test.ts
+    notes: "rhwp 0.8.7부터 본문 insertPicture는 쪽 기준 (0,0)에 떠 있는 개체로 넣는다 — 그대로 두면 생성한 차트·그림이 모두 첫 쪽 왼쪽 위에 겹친다."

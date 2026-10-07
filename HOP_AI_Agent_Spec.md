@@ -279,7 +279,7 @@ pub trait LlmProvider: Send + Sync {
 1. **스트리밍:** `hop-ai-stream-delta` 이벤트로 부분 응답을 Sidebar에 실시간 표시.
 2. **취소:** `ai_cancel_request` 호출 시 `CancellationToken`으로 진행 중 HTTP 요청/subprocess를 즉시 중단하고 미적용 상태로 정리.
 3. **타임아웃:** provider 응답 지연 시 `reqwest` 타임아웃 경과 후 `hop-ai-edit-failed`(`code: "TIMEOUT"`)로 종료하고 재시도 안내.
-4. **`target_id` 화이트리스트 검증:** Action Script의 모든 `target_id`를 2장 화이트리스트와 대조. 미존재 ID가 포함된 edit은 거부하고 해당 항목만 스킵하거나, 전체 거부 후 `hop-ai-edit-failed` 처리(정책 선택 — 기본은 **전체 거부**로 안전 우선).
+4. **`target_id` 화이트리스트 검증:** Action Script의 모든 `target_id`를 2장 화이트리스트와 대조. 미존재 ID가 포함된 edit은 **해당 항목만 스킵**하고 나머지를 미리보기로 보낸다(스킵 건수는 `message`에 안내). 단 편집의 과반이 미존재 ID면 모델이 문서를 잘못 본 것으로 보고 전체 거부 후 `hop-ai-edit-failed`(`WHITELIST_VIOLATION`) 처리한다. 형식이 틀린 개별 edit도 같은 방식으로 스킵한다. (2026-10 변경 — 이전 기본은 전체 거부였으나, 새 문서에서 아직 없는 ID 하나 때문에 생성 결과 전체를 잃는 문제가 반복됐고, 승인 전 미리보기 단계가 최종 안전장치 역할을 한다.)
 5. **트랜잭션 상태 머신 (studio-host 측):** `IDLE → REQUESTING → DIFF_PENDING → (FINALIZED | ROLLED_BACK)`. 각 전이 외의 입력은 무시하거나 명확히 거부한다. `REQUESTING` 중 취소는 `IDLE`로, `DIFF_PENDING` 중 새 요청은 자동 `ROLLED_BACK` 후 `REQUESTING`으로.
 
 ---

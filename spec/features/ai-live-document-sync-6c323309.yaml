@@ -1,0 +1,29 @@
+id: F-6c323309
+slug: ai-live-document-sync
+title: "AI가 저장하지 않은 화면의 문서(직전 AI 결과 포함)를 그대로 본다"
+status: in_progress
+modules:
+  - apps/desktop/src-tauri/src/ai/mod.rs
+  - apps/desktop/src-tauri/src/state.rs
+  - apps/desktop/src-tauri/src/lib.rs
+  - apps/studio-host/src/core/tauri-bridge.ts
+acceptance_criteria:
+  - id: AC-35e27d90
+    ears: event
+    condition: "When AI 사이드바가 문서 컨텍스트를 읽거나 편집을 요청할 때"
+    text: "The system shall 그 직전에 화면(WASM) 문서를 내보내 네이티브 세션 코어를 교체한다 — 저장 전 편집과 직전 AI 생성 결과가 컨텍스트·화이트리스트에 반영된다. 저장 상태(경로·revision·dirty)는 바꾸지 않는다."
+    test_refs:
+      - apps/desktop/src-tauri/src/ai/mod.rs
+      - apps/studio-host/src/core/tauri-bridge.test.ts
+    notes: |
+      ## Why
+      네이티브 코어는 열기·저장 때만 갱신된다. 새 문서에 AI가 보고서를 만든 뒤 "표 하나 더"를
+      요청하면 AI는 빈 문서를 보고 엉뚱한 위치를 겨눴다(감사 P0-1, F-86317c64 AC-f8890de9 notes에도
+      같은 한계 기록).
+  - id: AC-433fec3f
+    ears: unwanted
+    condition: "If 동기화가 실패하면(파일 쓰기·파싱 실패)"
+    text: "The system shall 경고만 남기고 마지막 저장본 기준으로 요청을 계속하며, 동기화용 임시 파일은 앱이 만든 경로(임시 폴더의 hop-ai-sync-*.hwp)만 읽고 읽은 뒤 지운다."
+    test_refs:
+      - apps/desktop/src-tauri/src/ai/mod.rs
+      - apps/studio-host/src/core/tauri-bridge.test.ts

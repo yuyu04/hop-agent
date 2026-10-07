@@ -390,7 +390,7 @@ mod tests {
 
     #[test]
     fn real_exported_table_is_detected_patched_and_reparses() {
-        use rhwp::DocumentCore;
+        use hop_rhwp_adapter::DocumentCore;
 
         // rhwp로 실제 표를 만들고 HWP로 내보낸다 (결함 있는 38바이트 raw_ctrl_data).
         let mut core = DocumentCore::new_empty();
@@ -418,7 +418,7 @@ mod tests {
     #[test]
     #[ignore]
     fn verify_merge_fill_writes_tmp_files() {
-        use rhwp::DocumentCore;
+        use hop_rhwp_adapter::DocumentCore;
 
         let build = |fill_covered: bool| -> Vec<u8> {
             let mut core = DocumentCore::new_empty();

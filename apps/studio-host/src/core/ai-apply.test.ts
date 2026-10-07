@@ -102,6 +102,7 @@ class FakeWasm implements WasmEditing {
     s: number,
     pp: number,
     co: number,
+    cellPathJson: string,
     data: Uint8Array,
     w: number,
     h: number,
@@ -111,7 +112,7 @@ class FakeWasm implements WasmEditing {
     desc?: string,
   ) {
     this.calls.push(
-      `insertPicture(${s},${pp},${co},len=${data.length},${w}x${h},nat=${nw}x${nh},${ext},"${desc ?? ''}")`,
+      `insertPicture(${s},${pp},${co},'${cellPathJson}',len=${data.length},${w}x${h},nat=${nw}x${nh},${ext},"${desc ?? ''}")`,
     );
     return { ok: true, paraIdx: pp, controlIdx: 0 };
   }
@@ -252,7 +253,7 @@ describe('applyActionScript', () => {
       'insertText(0,5,0,"새 절")',
       'applyCharFormat(0,5,0,3,{"fontSize":1000})',
       'applyParaFormat(0,5,{"alignment":"justify","lineSpacingType":"Percent","lineSpacing":180,"spacingAfter":600})',
-      'insertPageBreak(0,5,0)',
+      'applyParaFormat(0,5,{"pageBreakBefore":true})',
     ]);
   });
 
@@ -458,7 +459,8 @@ describe('applyActionScript', () => {
     expect(wasm.calls).toEqual([
       'getParagraphLength(0,4)',
       'splitParagraph(0,4,2)',
-      'insertPicture(0,5,0,len=3,42000x28000,nat=600x400,png,"그래프")',
+      `insertPicture(0,5,0,'',len=3,42000x28000,nat=600x400,png,"그래프")`,
+      'applyParaFormat(0,5,{"alignment":"center"})',
     ]);
   });
 
@@ -900,7 +902,7 @@ describe('applyActionScript', () => {
       'getTextRange(0,1,0,18)',
       'applyCharFormat(0,1,4,9,{"bold":true,"textColor":"#C00000"})',
     ]);
-    expect(result.changed).toEqual([{ sec: 0, para: 1 }]);
+    expect(result.changed.map(({ sec, para }) => ({ sec, para }))).toEqual([{ sec: 0, para: 1 }]);
   });
 
   it('format edit without format_target styles the whole paragraph (font size pt→HWPUNIT)', () => {
@@ -1538,5 +1540,350 @@ describe('applyActionScript', () => {
       const inserts = wasm.calls.filter((c) => c.startsWith('insertTextInCell('));
       expect(inserts).toHaveLength(1);
     });
+  });
+});
+
+/**
+ * F-bae302c6 — 새 문단·표·그림의 page_break는 쪽나누기용 빈 문단을 따로 만들지 않고 그 문단의
+ * '문단 앞에서 쪽 나눔'으로 처리한다(AC-0e6e3f29). 본문 그림은 글자처럼 취급·가운데 정렬로
+ * 흐름을 따르고, 삽입이 실패하면 정렬만 바꾸지 않고 사유를 보고한다(AC-081e0b87).
+ */
+class PictureWasm extends FakeWasm {
+  pictureOk = true;
+  insertPicture(...args: Parameters<FakeWasm['insertPicture']>) {
+    const placed = super.insertPicture(...args);
+    return this.pictureOk ? placed : { ok: false, paraIdx: -1, controlIdx: -1 };
+  }
+  setPictureProperties(s: number, p: number, ci: number, props: Record<string, unknown>) {
+    this.calls.push(`setPictureProperties(${s},${p},${ci},${JSON.stringify(props)})`);
+    return { ok: true };
+  }
+}
+
+const ONE_IMAGE = [
+  { bytes: new Uint8Array([1, 2, 3]), extension: 'png', naturalWidthPx: 600, naturalHeightPx: 400 },
+];
+
+const SMALL_TABLE = { rows: 2, cols: 2, matrix: [['구분', '금액'], ['총액', '10억']] };
+
+describe('F-bae302c6 AC-0e6e3f29: 새 표·그림의 page_break는 그 문단 앞 쪽 나눔으로 처리한다', () => {
+  it('표 INSERT_AFTER + page_break → 새 표 문단에 pageBreakBefore, 쪽나누기 빈 문단 없음', () => {
+    const wasm = new FakeWasm();
+    wasm.lengths['0.4'] = 2;
+    const result = applyActionScript(
+      wasm,
+      script([
+        {
+          command: 'INSERT_AFTER',
+          target_id: 'sec[0].p[4]',
+          payload: { type: 'table', page_break: true, table_data: SMALL_TABLE },
+        },
+      ]),
+    );
+
+    expect(result.applied).toBe(1);
+    expect(wasm.calls).toContain('createTable(0,5,0,2,2)');
+    expect(wasm.calls).toContain('applyParaFormat(0,5,{"pageBreakBefore":true})');
+    expect(wasm.calls.some((c) => c.startsWith('insertPageBreak('))).toBe(false);
+    // 문단 분할은 표가 들어갈 자리 하나뿐 — 쪽나누기용 빈 문단을 추가로 만들지 않는다.
+    expect(wasm.calls.filter((c) => c.startsWith('splitParagraph('))).toEqual(['splitParagraph(0,4,2)']);
+    expect(result.changed.map(({ sec, para }) => ({ sec, para }))).toEqual([{ sec: 0, para: 5 }]);
+  });
+
+  it('표 INSERT_BEFORE + page_break → 표가 들어간 문단(원래 자리)에 pageBreakBefore', () => {
+    const wasm = new FakeWasm();
+    applyActionScript(
+      wasm,
+      script([
+        {
+          command: 'INSERT_BEFORE',
+          target_id: 'sec[0].p[4]',
+          payload: { type: 'table', page_break: true, table_data: SMALL_TABLE },
+        },
+      ]),
+    );
+
+    expect(wasm.calls).toContain('createTable(0,4,0,2,2)');
+    expect(wasm.calls).toContain('applyParaFormat(0,4,{"pageBreakBefore":true})');
+    expect(wasm.calls.some((c) => c.startsWith('insertPageBreak('))).toBe(false);
+  });
+
+  it('그림 INSERT_AFTER + page_break → 그림 문단에 pageBreakBefore, 쪽나누기 빈 문단 없음', () => {
+    const wasm = new PictureWasm();
+    wasm.lengths['0.4'] = 2;
+    const result = applyActionScript(
+      wasm,
+      script([
+        {
+          command: 'INSERT_AFTER',
+          target_id: 'sec[0].p[4]',
+          payload: { type: 'image', image_index: 0, page_break: true },
+        },
+      ]),
+      ONE_IMAGE,
+    );
+
+    expect(result.applied).toBe(1);
+    expect(wasm.calls).toContain('applyParaFormat(0,5,{"pageBreakBefore":true})');
+    expect(wasm.calls.some((c) => c.startsWith('insertPageBreak('))).toBe(false);
+    expect(wasm.calls.filter((c) => c.startsWith('splitParagraph('))).toEqual(['splitParagraph(0,4,2)']);
+  });
+});
+
+describe('F-bae302c6 AC-081e0b87: 본문 그림은 글자처럼 취급·가운데 정렬하고, 삽입 실패는 보고한다', () => {
+  it('삽입한 그림을 그 문단 안 글자처럼 취급(treatAsChar)으로 두고 문단을 가운데 정렬한다', () => {
+    const wasm = new PictureWasm();
+    wasm.lengths['0.4'] = 2;
+    const result = applyActionScript(
+      wasm,
+      script([
+        { command: 'INSERT_AFTER', target_id: 'sec[0].p[4]', payload: { type: 'image', image_index: 0 } },
+      ]),
+      ONE_IMAGE,
+    );
+
+    expect(result.applied).toBe(1);
+    const picture = wasm.calls.findIndex((c) => c.startsWith('insertPicture('));
+    const treatAsChar = wasm.calls.indexOf('setPictureProperties(0,5,0,{"treatAsChar":true})');
+    const center = wasm.calls.indexOf('applyParaFormat(0,5,{"alignment":"center"})');
+    expect(picture).toBeGreaterThan(-1);
+    expect(treatAsChar).toBeGreaterThan(picture);
+    expect(center).toBeGreaterThan(picture);
+  });
+
+  it('insertPicture가 ok:false면 건너뜀으로 보고하고 정렬·배치 속성을 바꾸지 않는다', () => {
+    const wasm = new PictureWasm();
+    wasm.pictureOk = false;
+    wasm.lengths['0.4'] = 2;
+    const result = applyActionScript(
+      wasm,
+      script([
+        { command: 'INSERT_AFTER', target_id: 'sec[0].p[4]', payload: { type: 'image', image_index: 0 } },
+      ]),
+      ONE_IMAGE,
+    );
+
+    expect(result.applied).toBe(0);
+    expect(result.skipped).toHaveLength(1);
+    expect(result.skipped[0].targetId).toBe('sec[0].p[4]');
+    expect(result.skipped[0].reason).toContain('그림을 삽입하지 못했습니다');
+    expect(wasm.calls.some((c) => c.includes('"alignment":"center"'))).toBe(false);
+    expect(wasm.calls.some((c) => c.startsWith('setPictureProperties('))).toBe(false);
+    expect(result.changed).toEqual([]);
+  });
+});
+
+/** 표 생성·그림 삽입이 실패하는 엔진(분할 되돌리기 검증용). */
+class FailingInsertWasm extends PictureWasm {
+  constructor() {
+    super();
+    this.pictureOk = false;
+  }
+  createTable(sec: number, para: number, charOffset: number, rows: number, cols: number) {
+    super.createTable(sec, para, charOffset, rows, cols);
+    return { ok: false, paraIdx: -1, controlIdx: -1 };
+  }
+}
+
+describe('F-bae302c6 AC-081e0b87: 표·그림 삽입이 실패하면 분할로 만든 빈 문단을 되붙인다', () => {
+  it.each<{ label: string; command: 'INSERT_AFTER' | 'INSERT_BEFORE'; payload: ActionScript['edits'][number]['payload']; split: string; reason: string }>([
+    {
+      label: '표 INSERT_AFTER(createTable 실패)',
+      command: 'INSERT_AFTER',
+      payload: { type: 'table', page_break: true, table_data: SMALL_TABLE },
+      split: 'splitParagraph(0,4,2)',
+      reason: '표 생성에 실패',
+    },
+    {
+      label: '표 INSERT_BEFORE(createTable 실패)',
+      command: 'INSERT_BEFORE',
+      payload: { type: 'table', page_break: true, table_data: SMALL_TABLE },
+      split: 'splitParagraph(0,4,0)',
+      reason: '표 생성에 실패',
+    },
+    {
+      label: '그림 INSERT_AFTER(insertPicture ok:false)',
+      command: 'INSERT_AFTER',
+      payload: { type: 'image', image_index: 0, page_break: true },
+      split: 'splitParagraph(0,4,2)',
+      reason: '그림을 삽입하지 못했습니다',
+    },
+    {
+      label: '그림 INSERT_BEFORE(insertPicture ok:false)',
+      command: 'INSERT_BEFORE',
+      payload: { type: 'image', image_index: 0, page_break: true },
+      split: 'splitParagraph(0,4,0)',
+      reason: '그림을 삽입하지 못했습니다',
+    },
+    {
+      label: '그림 INSERT_AFTER(첨부 이미지 없음)',
+      command: 'INSERT_AFTER',
+      payload: { type: 'image', image_index: 3 },
+      split: 'splitParagraph(0,4,2)',
+      reason: '첨부 이미지',
+    },
+  ])('$label → mergeParagraph(0,5)로 분할을 되돌리고 건너뜀으로 보고한다', ({ command, payload, split, reason }) => {
+    const wasm = new FailingInsertWasm();
+    wasm.lengths['0.4'] = 2;
+    const result = applyActionScript(
+      wasm,
+      script([{ command, target_id: 'sec[0].p[4]', payload }]),
+      ONE_IMAGE,
+    );
+
+    expect(result.applied).toBe(0);
+    expect(result.skipped).toHaveLength(1);
+    expect(result.skipped[0].targetId).toBe('sec[0].p[4]');
+    expect(result.skipped[0].reason).toContain(reason);
+    expect(result.changed).toEqual([]);
+
+    // 분할 직후 그 경계(para+1)를 다시 붙인다 — 문단 수 순증가 0(빈 줄이 남지 않는다).
+    const splits = wasm.calls.filter((c) => c.startsWith('splitParagraph('));
+    const merges = wasm.calls.filter((c) => c.startsWith('mergeParagraph('));
+    expect(splits).toEqual([split]);
+    expect(merges).toEqual(['mergeParagraph(0,5)']);
+    expect(wasm.calls.indexOf('mergeParagraph(0,5)')).toBeGreaterThan(wasm.calls.indexOf(split));
+    // 실패한 개체 자리에 쪽 나눔·정렬을 입히지 않는다(되붙인 뒤 엉뚱한 문단이 바뀐다).
+    expect(wasm.calls.some((c) => c.includes('pageBreakBefore'))).toBe(false);
+    expect(wasm.calls.some((c) => c.includes('"alignment":"center"'))).toBe(false);
+  });
+
+  it('삽입이 성공하면 분할을 되돌리지 않는다', () => {
+    const wasm = new PictureWasm();
+    wasm.lengths['0.4'] = 2;
+    const result = applyActionScript(
+      wasm,
+      script([
+        { command: 'INSERT_AFTER', target_id: 'sec[0].p[4]', payload: { type: 'image', image_index: 0 } },
+        { command: 'INSERT_BEFORE', target_id: 'sec[0].p[1]', payload: { type: 'table', table_data: SMALL_TABLE } },
+      ]),
+      ONE_IMAGE,
+    );
+
+    expect(result.applied).toBe(2);
+    expect(wasm.calls.some((c) => c.startsWith('mergeParagraph('))).toBe(false);
+  });
+});
+/**
+ * F-21ca4efe AC-1e263f05: 미리 적용 결과의 각 변경 문단에 원래 편집 번호를 실어(applyActionScript changed[].editIndex),
+ * 개별 제외로 일부만 다시 적용해도 원래 편집과 짝이 맞게 한다.
+ *
+ * 계약: editIndex = applyActionScript에 "넘긴" script.edits에서의 위치. 사이드바는 거절분을 뺀
+ * 스크립트를 넘기므로, 받은 editIndex를 남긴 편집의 원래 번호 목록(kept)으로 되짚는다.
+ */
+describe('F-21ca4efe AC-1e263f05: changed[].editIndex = position in the applied script', () => {
+  const byPara = (a: { sec: number; para: number }, b: { sec: number; para: number }) =>
+    a.sec - b.sec || a.para - b.para;
+
+  it('AC-1e263f05: REPLACE + multi-line INSERT_AFTER + format edit report the exact final paragraphs and their edit positions', () => {
+    const wasm = new FakeWasm();
+    wasm.setParaText(0, 0, '첫 문단');
+    wasm.setParaText(0, 1, '둘째 문단');
+    wasm.setParaText(0, 2, '셋째 문단');
+    const result = applyActionScript(
+      wasm,
+      script([
+        { command: 'REPLACE', target_id: 'sec[0].p[0]', payload: { type: 'paragraph', text: '바뀐 첫 문단' } },
+        {
+          command: 'INSERT_AFTER',
+          target_id: 'sec[0].p[1]',
+          payload: { type: 'paragraph', text: '끼운 줄 하나\n끼운 줄 둘' },
+        },
+        { command: 'REPLACE', target_id: 'sec[0].p[2]', payload: { type: 'format', char_format: { bold: true } } },
+      ]),
+    );
+
+    expect(result.applied).toBe(3);
+    expect(result.skipped).toEqual([]);
+    // p1 뒤에 두 문단이 끼어들어 원래 p2(서식 편집)는 p4로 밀린다.
+    expect([...result.changed].sort(byPara)).toEqual([
+      { sec: 0, para: 0, editIndex: 0 },
+      { sec: 0, para: 2, editIndex: 1 },
+      { sec: 0, para: 3, editIndex: 1 },
+      { sec: 0, para: 4, editIndex: 2 },
+    ]);
+  });
+
+  it('AC-1e263f05: applying the filtered script (edit 1 of 3 rejected) reports positions in the filtered script, which map back through the kept indices', () => {
+    const original: ActionScript['edits'] = [
+      { command: 'REPLACE', target_id: 'sec[0].p[0]', payload: { type: 'paragraph', text: '가' } },
+      { command: 'REPLACE', target_id: 'sec[0].p[1]', payload: { type: 'paragraph', text: '나' } },
+      { command: 'REPLACE', target_id: 'sec[0].p[2]', payload: { type: 'paragraph', text: '다' } },
+    ];
+    const rejected = new Set([1]);
+    // 사이드바(filteredScript/keptEditIndices)와 같은 방식으로 거절분을 뺀다.
+    const kept = original.map((_, i) => i).filter((i) => !rejected.has(i));
+    const filtered = original.filter((_, i) => !rejected.has(i));
+
+    const wasm = new FakeWasm();
+    for (const p of [0, 1, 2]) wasm.setParaText(0, p, `원문${p}`);
+    const result = applyActionScript(wasm, script(filtered));
+
+    expect([...result.changed].sort(byPara)).toEqual([
+      { sec: 0, para: 0, editIndex: 0 },
+      { sec: 0, para: 2, editIndex: 1 },
+    ]);
+    // 받은 번호를 원래 편집 번호로 되짚으면 거절하지 않은 편집 0·2와 정확히 짝이 맞는다.
+    expect(
+      [...result.changed].sort(byPara).map((c) => ({ para: c.para, original: kept[c.editIndex!] })),
+    ).toEqual([
+      { para: 0, original: 0 },
+      { para: 2, original: 2 },
+    ]);
+    // 거절된 편집(p1)은 적용되지 않았다.
+    expect(wasm.calls.filter((c) => c.startsWith('insertText('))).toEqual([
+      'insertText(0,2,0,"다")',
+      'insertText(0,0,0,"가")',
+    ]);
+  });
+
+  it('AC-1e263f05: skipped edits keep the remaining edits on their own script positions', () => {
+    const wasm = new FakeWasm();
+    wasm.setParaText(0, 0, '하나');
+    wasm.setParaText(0, 3, '넷');
+    const result = applyActionScript(
+      wasm,
+      script([
+        { command: 'REPLACE', target_id: 'sec[0].p[0]', payload: { type: 'paragraph', text: '새 하나' } },
+        // 텍스트가 비어 건너뜀 — 번호를 당겨 쓰지 않는다.
+        { command: 'REPLACE', target_id: 'sec[0].p[1]', payload: { type: 'paragraph' } },
+        { command: 'INSERT_BEFORE', target_id: 'sec[0].p[3]', payload: { type: 'paragraph', text: '셋 반' } },
+      ]),
+    );
+    expect(result.skipped.map((s) => s.targetId)).toEqual(['sec[0].p[1]']);
+    expect([...result.changed].sort(byPara)).toEqual([
+      { sec: 0, para: 0, editIndex: 0 },
+      { sec: 0, para: 3, editIndex: 2 },
+    ]);
+  });
+
+  it('AC-1e263f05: document-wide replace_text hits carry that edit’s index (body hits only, no duplicates)', () => {
+    const wasm = new FakeWasm() as FakeWasm & Record<string, unknown>;
+    wasm.setParaText(0, 5, '다섯째');
+    wasm.searchAllText = () => [
+      { sec: 0, para: 1, charOffset: 0, length: 2 },
+      { sec: 0, para: 3, charOffset: 4, length: 2 },
+      { sec: 0, para: 3, charOffset: 9, length: 2 },
+      { sec: 0, para: 2, charOffset: 0, length: 2, cellContext: { parentPara: 2 } },
+    ];
+    wasm.replaceAll = () => ({ ok: true, count: 4 });
+    wasm.replaceOne = () => ({ ok: true });
+    const result = applyActionScript(
+      wasm,
+      script([
+        { command: 'REPLACE', target_id: 'sec[0].p[5]', payload: { type: 'paragraph', text: '새 다섯째' } },
+        {
+          command: 'REPLACE',
+          target_id: 'doc',
+          payload: { type: 'replace_text', replace_text: { query: '갑', new_text: '을' } },
+        },
+      ]),
+    );
+    expect(result.applied).toBe(2);
+    expect([...result.changed].sort(byPara)).toEqual([
+      { sec: 0, para: 1, editIndex: 1 },
+      { sec: 0, para: 3, editIndex: 1 },
+      { sec: 0, para: 5, editIndex: 0 },
+    ]);
   });
 });

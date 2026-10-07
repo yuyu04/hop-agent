@@ -72,7 +72,9 @@ import {
   type DocTheme,
 } from '@/core/doc-theme';
 import { clearInlineDiff, showInlineDiff, type InlineDiffEntry } from '@/ui/ai-inline-diff';
-import type { CursorRect, PageInfo } from '@/core/types';
+import { AI_PANEL_TOGGLE_EVENT } from '@/command/commands/ai';
+import { buildSkillCatalog, isAuthoringRequest } from '@/core/skill-select';
+import type { CursorRect, PageInfo } from '@/upstream/core';
 
 type AgentBridge = AiBridgeApi &
   WasmEditing & {
@@ -102,7 +104,11 @@ interface CanvasViewLike {
 
 export interface AgentSidebarDeps {
   bridge: AgentBridge;
-  eventBus: { emit(name: string, payload?: unknown): void };
+  eventBus: {
+    emit(name: string, payload?: unknown): void;
+    /** 있으면 view:ai-panel(툴바·메뉴·⌘J) 토글 이벤트를 구독한다. */
+    on?(name: string, handler: (...args: unknown[]) => void): () => void;
+  };
   getCanvasView(): CanvasViewLike | null;
   scrollContent: HTMLElement;
   scrollContainer: HTMLElement;
@@ -135,6 +141,17 @@ const PROVIDER_LABELS: Record<string, string> = {
   [AGY_CLI_PROVIDER]: 'agy CLI (로컬)',
   [CUSTOM_PROVIDER]: 'OpenAI 호환 (Groq 등)',
 };
+
+/** 모델 메뉴 제공자 칩의 표시 이름(키 라벨 등 기존 문구는 PROVIDER_LABELS를 그대로 쓴다). */
+function providerDisplayName(id: string): string {
+  const names: Record<string, string> = {
+    gemini: 'Gemini',
+    openai: 'OpenAI',
+    anthropic: 'Anthropic',
+    ollama: 'Ollama',
+  };
+  return names[id] ?? PROVIDER_LABELS[id] ?? id;
+}
 
 /** API 키가 필수인 provider(ollama는 불필요, openai-compat은 선택). 스펙 6장. */
 const KEY_PROVIDERS = new Set<string>(['openai', 'anthropic', 'gemini']);
@@ -186,6 +203,8 @@ interface ActiveTurn {
   acceptBtn: HTMLButtonElement;
   rejectBtn: HTMLButtonElement;
   statusEl: HTMLElement;
+  /** 이번 답변이 따른 글쓰기 지침 표시('지침: 공문 · AI 선택'). */
+  skillEl: HTMLElement;
 }
 
 /** 대화 하나(탭 + 스레드). 새 대화를 만들어도 기존이 지워지지 않는다. */
@@ -261,11 +280,39 @@ export class AgentSidebar {
   private formFillResolve: ((rawJson: string | null) => void) | null = null;
   private readonly modeEditBtn: HTMLButtonElement;
   private readonly modeAskBtn: HTMLButtonElement;
+  private readonly modeTrigger: HTMLButtonElement;
+  private readonly modeMenu: HTMLElement;
+  private readonly modelTrigger: HTMLButtonElement;
+  private readonly modelMenu: HTMLElement;
+  private readonly modelProviders: HTMLElement;
+  private readonly modelList: HTMLElement;
   private readonly quickActions: HTMLElement;
+  /** 입력창 맨 앞 '/'로 여는 빠른 작업 메뉴. */
+  private readonly slashMenu: HTMLElement;
+  /** '/' 메뉴에서 키보드로 고른 항목 위치(보이는 항목 기준). */
+  private slashIndex = 0;
+  /** 승인 대기 중 입력창 위에 고정되는 검토 바(모두 승인/거절). */
+  private readonly reviewBar: HTMLElement;
+  private readonly reviewLabel: HTMLElement;
+  private readonly reviewAcceptBtn: HTMLButtonElement;
+  private readonly reviewRejectBtn: HTMLButtonElement;
+  /** 빈 대화 화면(최근 대화 · 자주 쓰는 작업). */
+  private readonly welcome: HTMLElement;
+  /** '생각 중 · N초' 경과 표시 타이머. */
+  private thinkingTimer: ReturnType<typeof setInterval> | null = null;
   private readonly skillSelect: HTMLSelectElement;
   private readonly themeSelect: HTMLSelectElement;
+  /** 이번 요청에 지침을 실었는지, 사용자가 직접 고른 지침 이름(자동이면 null). */
+  private requestSkill: { offered: boolean; forced: string | null } = { offered: false, forced: null };
   /** 로드된 글쓰기 스킬 목록(문서 유형별 작성 지침). */
-  private skills: { id: string; name: string; description: string; triggers: string[]; body: string }[] = [];
+  private skills: {
+    id: string;
+    name: string;
+    description: string;
+    triggers: string[];
+    body: string;
+    mode?: string;
+  }[] = [];
   /** 로드된 디자인 테마 목록(간격·크기·색 수치). */
   private themes: DocTheme[] = [];
   /** 적용에 쓸 컴파일된 테마(선택 변경 시 갱신). */
@@ -293,6 +340,8 @@ export class AgentSidebar {
   private active: ActiveTurn | null = null;
   private unsubscribe: AiEventUnsubscribe | null = null;
   private copyHandler: ((event: KeyboardEvent) => void) | null = null;
+  /** view:ai-panel 명령(툴바·메뉴·⌘J) 구독 해제. */
+  private offTogglePanel: (() => void) | null = null;
   private requestId: string | null = null;
   /** 스트리밍 중 누적되는 Raw 응답(여기서 생성 본문 text를 실시간 추출해 보여준다). */
   private streamBuffer = '';
@@ -308,6 +357,10 @@ export class AgentSidebar {
   private rejectedEdits = new Set<number>();
   /** 사이드바 diff 행(개별 거절 시 시각 상태 갱신용, edit 인덱스와 1:1). */
   private diffRows: HTMLElement[] = [];
+  /** 문서 위 미니 ✓로 개별 승인(검토 끝)한 edit 인덱스 — 표시만 빠지고 적용은 유지된다. */
+  private resolvedEdits = new Set<number>();
+  /** 문서 위 검토 바가 가리키는 변경 위치(다시 그려도 이어 간다). */
+  private inlineFocus = 0;
 
   constructor(private readonly deps: AgentSidebarDeps) {
     this.session = new AiSessionMachine({ onRollback: () => this.revertToSnapshot() });
@@ -332,7 +385,19 @@ export class AgentSidebar {
     this.historyPanel = built.historyPanel;
     this.modeEditBtn = built.modeEditBtn;
     this.modeAskBtn = built.modeAskBtn;
+    this.modeTrigger = built.modeTrigger;
+    this.modeMenu = built.modeMenu;
+    this.modelTrigger = built.modelTrigger;
+    this.modelMenu = built.modelMenu;
+    this.modelProviders = built.modelProviders;
+    this.modelList = built.modelList;
     this.quickActions = built.quickActions;
+    this.slashMenu = built.slashMenu;
+    this.reviewBar = built.reviewBar;
+    this.reviewLabel = built.reviewLabel;
+    this.reviewAcceptBtn = built.reviewAcceptBtn;
+    this.reviewRejectBtn = built.reviewRejectBtn;
+    this.welcome = built.welcome;
     this.skillSelect = built.skillSelect;
     this.themeSelect = built.themeSelect;
     this.keyRow = built.keyRow;
@@ -359,6 +424,10 @@ export class AgentSidebar {
     this.providerSelect.addEventListener('change', () => void this.onProviderChange());
     this.modelSelect.addEventListener('change', () => this.updateModelVisibility());
     this.modelRefreshBtn.addEventListener('click', () => void this.refreshModels());
+    this.modelInput.addEventListener('input', () => this.updateModelTrigger());
+    this.modelInput.addEventListener('keydown', (event) => {
+      if ((event as KeyboardEvent).key === 'Enter') this.closePopovers();
+    });
     built.keySaveBtn.addEventListener('click', () => void this.saveKey());
     built.keylessBtn.addEventListener('click', () => void this.switchToLocalCli());
     this.keyClearBtn.addEventListener('click', () => void this.clearKey());
@@ -367,10 +436,33 @@ export class AgentSidebar {
     this.promptInput.addEventListener('keydown', (event) => this.onPromptKeydown(event as KeyboardEvent));
     this.modeEditBtn.addEventListener('click', () => this.setMode('edit'));
     this.modeAskBtn.addEventListener('click', () => this.setMode('ask'));
-    // 빠른 작업 칩 — data-action으로 위임 처리.
+    this.modeTrigger.addEventListener('click', () => this.togglePopover(this.modeMenu));
+    this.modelTrigger.addEventListener('click', () => {
+      if (this.modelMenu.classList.contains('hop-ai-hidden')) this.renderModelMenu();
+      this.togglePopover(this.modelMenu);
+    });
+    built.modelKeyBtn.addEventListener('click', () => {
+      this.closePopovers();
+      this.toggleSettings(true);
+    });
+    this.reviewAcceptBtn.addEventListener('click', () => this.accept());
+    this.reviewRejectBtn.addEventListener('click', () => this.reject());
+    // 빠른 작업 — data-action으로 위임 처리. 입력창의 '/명령' 글자는 지우고 실행한다.
     this.quickActions.addEventListener('click', (event) => {
       const target = (event.target as HTMLElement).closest('[data-action]') as HTMLElement | null;
-      if (target?.dataset.action) void this.runQuickAction(target.dataset.action);
+      if (!target?.dataset.action) return;
+      this.closeSlashMenu(true);
+      void this.runQuickAction(target.dataset.action);
+    });
+    this.promptInput.addEventListener('input', () => this.updateSlashMenu());
+    // 팝오버 밖을 누르면 닫는다(메뉴 안 클릭은 각 핸들러가 처리).
+    this.panel.addEventListener('mousedown', (event) => {
+      const target = event.target as HTMLElement | null;
+      // '/' 메뉴는 그 안·입력창·지침 표시를 누를 때 말고는 닫는다.
+      if (!target?.closest?.('.hop-ai-slash, .hop-ai-prompt, .hop-ai-skill-chip')) this.closeSlashMenu();
+      if (target?.closest?.('.hop-ai-pop, .hop-ai-dd, .hop-ai-settings-btn')) return;
+      this.closePopovers();
+      if (!this.menu.classList.contains('hop-ai-hidden')) this.toggleMenu(false);
     });
     this.panel.addEventListener('paste', (event) => void this.onPaste(event as ClipboardEvent));
     // 드래그&드롭으로 이미지·텍스트 문서 첨부.
@@ -379,18 +471,25 @@ export class AgentSidebar {
     this.panel.addEventListener('drop', (event) => void this.onDrop(event as DragEvent));
     // 패널 내부 키 입력(붙여넣기/전체선택 등)이 문서 전역 단축키 핸들러로
     // 전파돼 가로채이지 않도록 막는다. 버블 단계라 textarea의 Enter 처리는 유지된다.
-    this.panel.addEventListener('keydown', (event) => (event as KeyboardEvent).stopPropagation());
+    this.panel.addEventListener('keydown', (event) => {
+      this.onPanelKeydown(event as KeyboardEvent);
+      (event as KeyboardEvent).stopPropagation();
+    });
     // 패널 안 선택 텍스트(스트림/diff 등) 복사 — 에디터가 숨은 textarea에 포커스를
     // 잡고 있어 일반 Cmd/Ctrl+C가 패널 선택을 복사하지 못한다. 캡처 단계에서
     // 선택을 직접 클립보드에 써서, 패널 선택일 때만 가로채 처리한다.
     this.copyHandler = (event) => this.onGlobalCopyKey(event);
     document.addEventListener('keydown', this.copyHandler, true);
 
-    document.body.appendChild(built.toggleBtn);
+    // 둥근 떠 있는 AI 버튼은 두지 않는다 — 툴바 'AI 편집' 버튼·보기 메뉴·⌘J(view:ai-panel)가 연다.
     document.body.appendChild(this.panel);
+    document.body.classList.add('hop-ai-available');
+    this.offTogglePanel = this.deps.eventBus.on?.(AI_PANEL_TOGGLE_EVENT, () => this.toggle()) ?? null;
     this.keyRow.classList.add('hop-ai-hidden');
     this.customRow.classList.add('hop-ai-hidden');
     this.setRequesting(false);
+    this.updateReviewBar(false);
+    this.setMode('edit');
     this.populateModels(this.providerSelect.value);
     this.renderChips();
     this.newConversation(); // 첫 대화 생성(빈 상태 → 컴포저 상단)
@@ -413,7 +512,7 @@ export class AgentSidebar {
     }
     const prev = this.skillSelect.value;
     this.skillSelect.replaceChildren();
-    this.skillSelect.appendChild(option('auto', '스킬: 자동'));
+    this.skillSelect.appendChild(option('auto', '스킬: 자동(AI 선택)'));
     this.skillSelect.appendChild(option('none', '스킬: 없음'));
     for (const s of this.skills) this.skillSelect.appendChild(option(`id:${s.id}`, `스킬: ${s.name}`));
     this.skillSelect.value = prev || 'auto';
@@ -452,24 +551,55 @@ export class AgentSidebar {
   }
 
   /**
-   * 이번 요청에 적용할 스킬 본문을 고른다. 드롭다운이 특정 스킬이면 그것, '없음'이면 null,
-   * '자동'이면 프롬프트에 트리거 키워드가 가장 많이 맞는 스킬을 고른다.
+   * 이번 요청 앞에 붙일 글쓰기 지침. '자동'(기본)이면 모든 스킬을 '작성 지침 목록'으로 실어
+   * AI가 요청 내용과 문서 상태를 보고 의미로 골라 따르게 하고(F-fb6592e9), 직접 고른 스킬이면
+   * 그 지침 하나만, '없음'이면 싣지 않는다.
    */
-  private selectedSkillBody(prompt: string): { name: string; body: string } | null {
+  private skillPrefixFor(prompt: string): { prefix: string; offered: boolean; forced: string | null } {
     const v = this.skillSelect?.value ?? 'auto';
-    if (v === 'none') return null;
+    if (v === 'none' || !this.skills.length) return { prefix: '', offered: false, forced: null };
     if (v.startsWith('id:')) {
       const s = this.skills.find((x) => x.id === v.slice(3));
-      return s ? { name: s.name, body: s.body } : null;
+      if (!s) return { prefix: '', offered: false, forced: null };
+      return { prefix: `[작성 스킬: ${s.name}]\n${s.body}\n\n---\n\n`, offered: true, forced: s.name };
     }
-    const p = prompt.toLowerCase();
-    let best: { name: string; body: string; score: number } | null = null;
-    for (const s of this.skills) {
-      let score = 0;
-      for (const t of s.triggers) if (t && p.includes(t.toLowerCase())) score += 1;
-      if (score > 0 && (!best || score > best.score)) best = { name: s.name, body: s.body, score };
+    return { prefix: `${buildSkillCatalog(prompt, this.skills)}\n\n---\n\n`, offered: true, forced: null };
+  }
+
+  /** 답변에 '지침: 이름 · AI 선택/직접 선택'을 단다. 응답의 skill이 모르는 이름이면 달지 않는다. */
+  private renderSkillChip(turn: ActiveTurn, reported: string | undefined): void {
+    turn.skillEl.replaceChildren();
+    const { offered, forced } = this.requestSkill;
+    if (!offered) return;
+    const wanted = (forced ?? reported ?? '').trim();
+    if (!wanted) {
+      this.log('AI가 따른 지침: 없음');
+      return;
     }
-    return best ? { name: best.name, body: best.body } : null;
+    const squash = (t: string) => t.replace(/\s+/g, '');
+    const known = this.skills.find((s) => s.name === wanted) ?? this.skills.find((s) => squash(s.name) === squash(wanted));
+    if (!known) {
+      this.log(`AI가 알 수 없는 지침 이름을 보냄: ${wanted}`);
+      return;
+    }
+    this.log(`따른 지침: ${known.name}${forced ? '(직접 선택)' : '(AI 선택)'}`);
+    const chip = el('button', 'hop-ai-skill-chip') as HTMLButtonElement;
+    chip.type = 'button';
+    chip.title = '입력창의 / 메뉴에서 다른 지침을 고르거나 끌 수 있습니다';
+    chip.append(icon('sparkle'), textSpan('hop-ai-skill-chip-label', `지침: ${known.name} · ${forced ? '직접 선택' : 'AI 선택'}`));
+    chip.addEventListener('click', () => this.openSkillPicker());
+    turn.skillEl.appendChild(chip);
+  }
+
+  /** 입력창의 글은 그대로 두고 '/' 메뉴(스킬·테마 선택 포함)를 연다. */
+  private openSkillPicker(): void {
+    this.closePopovers();
+    for (const item of Array.from(this.slashItems())) item.classList.remove('hop-ai-hidden');
+    this.slashMenu.classList.remove('hop-ai-slash-filtered');
+    this.slashMenu.classList.remove('hop-ai-hidden');
+    this.slashIndex = 0;
+    this.highlightSlash();
+    this.skillSelect.focus?.();
   }
 
   private async subscribe(): Promise<void> {
@@ -581,10 +711,24 @@ export class AgentSidebar {
     // 패널은 fixed 오버레이(right:0, --hop-ai-width)라 열리면 문서 스크롤바를 가린다. 본문 영역
     // (#studio-root)을 패널 폭만큼 줄여 스크롤바가 패널 왼쪽에 보이게 한다.
     document.body.classList.toggle('hop-ai-open', show);
+    // 툴바·메뉴의 'AI 편집' 항목에 열림 상태를 반영한다.
+    for (const node of Array.from(document.querySelectorAll?.('[data-cmd="view:ai-panel"]') ?? [])) {
+      (node as HTMLElement).classList.toggle('active', show);
+      (node as HTMLElement).setAttribute('aria-pressed', String(show));
+    }
+    if (show) {
+      this.promptInput.focus?.();
+    } else {
+      this.closePopovers();
+      this.closeSlashMenu();
+    }
   }
 
   dispose(): void {
     this.unsubscribe?.();
+    this.offTogglePanel?.();
+    this.stopThinkingTimer();
+    document.body.classList.remove('hop-ai-available');
     if (this.copyHandler) document.removeEventListener('keydown', this.copyHandler, true);
     document.body.classList.remove('hop-ai-open');
     this.clearPreview();
@@ -670,8 +814,7 @@ export class AgentSidebar {
     this.historyPanel.replaceChildren();
     const head = el('div', 'hop-ai-history-head');
     head.textContent = '과거 대화';
-    const closeBtn = el('button', 'hop-ai-history-close') as HTMLButtonElement;
-    closeBtn.textContent = '×';
+    const closeBtn = iconButton('hop-ai-history-close', 'x', '닫기');
     closeBtn.addEventListener('click', () => this.toggleHistory(false));
     head.appendChild(closeBtn);
     this.historyPanel.appendChild(head);
@@ -697,9 +840,7 @@ export class AgentSidebar {
         this.openStoredConversation(conv);
         this.toggleHistory(false);
       });
-      const del = el('button', 'hop-ai-history-del') as HTMLButtonElement;
-      del.textContent = '🗑';
-      del.title = '삭제';
+      const del = iconButton('hop-ai-history-del', 'trash', '이 대화 삭제');
       del.addEventListener('click', (e) => {
         e.stopPropagation();
         deleteConversation(conv.id);
@@ -789,7 +930,68 @@ export class AgentSidebar {
 
   /** 빈 새 대화면 입력창을 상단에, 대화가 시작되면 하단에 둔다(Cursor식). */
   private updateComposerPosition(): void {
-    this.panel.classList.toggle('hop-ai-empty', !this.activeConv.hasMessages);
+    const empty = !this.activeConv.hasMessages;
+    this.panel.classList.toggle('hop-ai-empty', empty);
+    if (empty) this.renderWelcome();
+  }
+
+  /**
+   * 빈 대화 화면 — 자주 쓰는 작업(눌러서 시작)과 최근 대화. 작성형 작업은 지시 첫머리만
+   * 채워 두고 사용자가 주제를 이어 쓰게 한다(바로 보내지 않음).
+   */
+  private renderWelcome(): void {
+    this.welcome.replaceChildren();
+    const tasks: { icon: IconName; label: string; run: () => void }[] = [
+      { icon: 'file', label: '보고서 초안 쓰기', run: () => this.prefillPrompt('다음 주제로 보고서 초안을 써줘 — 제목, 개요, 본문(소제목별), 결론 순서로: ') },
+      { icon: 'table', label: '표로 정리하기', run: () => this.prefillPrompt('다음 내용을 표로 정리해줘(첫 행은 머리글): ') },
+      { icon: 'check', label: '문서 전체 교정', run: () => void this.runQuickAction('proofread') },
+      { icon: 'list', label: '문서 요약', run: () => void this.runQuickAction('summarize') },
+    ];
+    const taskList = el('div', 'hop-ai-welcome-list');
+    for (const task of tasks) {
+      const button = el('button', 'hop-ai-welcome-item hop-ai-pop-item') as HTMLButtonElement;
+      button.type = 'button';
+      button.append(icon(task.icon), textSpan('hop-ai-pop-label', task.label));
+      button.addEventListener('click', task.run);
+      taskList.appendChild(button);
+    }
+    this.welcome.append(popGroupLabel('자주 쓰는 작업'), taskList);
+
+    const recent = loadConversations().filter((c) => c.messages.length > 0).slice(0, 3);
+    if (recent.length) {
+      const recentList = el('div', 'hop-ai-welcome-list');
+      for (const conv of recent) {
+        const button = el('button', 'hop-ai-welcome-item hop-ai-pop-item') as HTMLButtonElement;
+        button.type = 'button';
+        button.append(
+          icon('chat'),
+          textSpan('hop-ai-pop-label', conv.title || '(제목 없음)'),
+          textSpan('hop-ai-pop-hint', relativeTime(conv.updatedAt)),
+        );
+        button.addEventListener('click', () => this.openStoredConversation(conv));
+        recentList.appendChild(button);
+      }
+      this.welcome.append(popGroupLabel('최근 대화'), recentList);
+    }
+    const hints = el('div', 'hop-ai-welcome-hints');
+    for (const [key, label] of [
+      ['Enter', '보내기'],
+      ['Shift+Enter', '줄바꿈'],
+      ['/', '빠른 작업'],
+      [modKey('J'), '패널 닫기'],
+    ]) {
+      const hint = el('span', 'hop-ai-welcome-hint');
+      hint.append(kbdSpan(key), textSpan('', label));
+      hints.appendChild(hint);
+    }
+    this.welcome.appendChild(hints);
+  }
+
+  /** 입력창에 지시 첫머리를 채우고 커서를 끝에 둔다. */
+  private prefillPrompt(text: string): void {
+    this.promptInput.value = text;
+    this.promptInput.focus?.();
+    this.promptInput.setSelectionRange?.(text.length, text.length);
   }
 
   /** 작업 모드 전환(편집/질문). 질문 모드는 문서를 수정하지 않고 답변만 한다. */
@@ -797,10 +999,185 @@ export class AgentSidebar {
     this.mode = mode;
     this.modeEditBtn.classList.toggle('hop-ai-mode-active', mode === 'edit');
     this.modeAskBtn.classList.toggle('hop-ai-mode-active', mode === 'ask');
-    this.promptInput.placeholder =
-      mode === 'ask'
-        ? '문서에 대해 물어보세요 (예: 이 문서 핵심만 요약해줘) — 편집하지 않습니다'
-        : '무엇을 바꿀까요?  (예: 표의 총 사업비를 10억으로)';
+    this.modeEditBtn.setAttribute('aria-checked', String(mode === 'edit'));
+    this.modeAskBtn.setAttribute('aria-checked', String(mode === 'ask'));
+    this.modeTrigger.replaceChildren(
+      icon(mode === 'ask' ? 'chat' : 'pencil'),
+      textSpan('hop-ai-dd-label', mode === 'ask' ? '질문' : '편집'),
+      icon('down'),
+    );
+    this.panel.dataset.mode = mode;
+    this.promptInput.placeholder = PROMPT_PLACEHOLDER[mode];
+    this.closePopovers();
+  }
+
+  // ── 팝오버(모드·모델) / '/' 메뉴 ───────────────────────────────
+
+  /** 입력창 아래 팝오버 하나를 연다/닫는다(다른 팝오버·'/' 메뉴는 닫는다). */
+  private togglePopover(menu: HTMLElement): void {
+    const show = menu.classList.contains('hop-ai-hidden');
+    this.closePopovers();
+    this.closeSlashMenu();
+    menu.classList.toggle('hop-ai-hidden', !show);
+    const trigger = menu === this.modeMenu ? this.modeTrigger : this.modelTrigger;
+    trigger.setAttribute('aria-expanded', String(show));
+    trigger.classList.toggle('hop-ai-dd-open', show);
+  }
+
+  private closePopovers(): void {
+    for (const [menu, trigger] of [
+      [this.modeMenu, this.modeTrigger],
+      [this.modelMenu, this.modelTrigger],
+    ] as const) {
+      menu.classList.add('hop-ai-hidden');
+      trigger.setAttribute('aria-expanded', 'false');
+      trigger.classList.remove('hop-ai-dd-open');
+    }
+  }
+
+  private isPopoverOpen(): boolean {
+    return (
+      !this.modeMenu.classList.contains('hop-ai-hidden') ||
+      !this.modelMenu.classList.contains('hop-ai-hidden')
+    );
+  }
+
+  /** 모델 팝오버 — 제공자 칩 + 모델 목록(현재 선택에 체크). 값은 숨은 select에 둔다. */
+  private renderModelMenu(): void {
+    const provider = this.providerSelect.value;
+    this.modelProviders.replaceChildren();
+    for (const id of PROVIDERS) {
+      const chip = el('button', 'hop-ai-provider-chip') as HTMLButtonElement;
+      chip.type = 'button';
+      chip.textContent = providerDisplayName(id);
+      chip.classList.toggle('hop-ai-provider-chip-active', id === provider);
+      chip.setAttribute('aria-pressed', String(id === provider));
+      chip.addEventListener('click', () => {
+        if (this.providerSelect.value === id) return;
+        this.providerSelect.value = id;
+        void this.onProviderChange();
+      });
+      this.modelProviders.appendChild(chip);
+    }
+    this.modelList.replaceChildren();
+    const current = this.modelSelect.value;
+    for (const opt of Array.from(this.modelSelect.children) as HTMLOptionElement[]) {
+      const value = opt.value;
+      const active = value === current;
+      const item = el('button', 'hop-ai-model-item hop-ai-pop-item') as HTMLButtonElement;
+      item.type = 'button';
+      item.setAttribute('role', 'option');
+      item.setAttribute('aria-selected', String(active));
+      item.classList.toggle('hop-ai-pop-item-active', active);
+      item.append(
+        textSpan('hop-ai-pop-label', opt.textContent || value),
+        active ? icon('check') : el('span', 'hop-ai-ic'),
+      );
+      item.addEventListener('click', () => {
+        this.modelSelect.value = value;
+        this.updateModelVisibility();
+        if (value === CUSTOM_MODEL) {
+          this.renderModelMenu();
+          this.modelInput.focus?.();
+          return;
+        }
+        this.closePopovers();
+      });
+      this.modelList.appendChild(item);
+    }
+  }
+
+  /** 입력창 아래 '모델명 ▾' 표시를 현재 선택으로 맞춘다. */
+  private updateModelTrigger(): void {
+    const provider = this.providerSelect.value;
+    const model = this.currentModel();
+    this.modelTrigger.replaceChildren(textSpan('hop-ai-dd-label', model), icon('down'));
+    this.modelTrigger.title = `모델: ${providerDisplayName(provider)} · ${model}`;
+  }
+
+  private slashItems(): HTMLElement[] {
+    return this.quickActions.querySelectorAll('.hop-ai-quick-chip') as unknown as HTMLElement[];
+  }
+
+  private visibleSlashItems(): HTMLElement[] {
+    return Array.from(this.slashItems()).filter((item) => !item.classList.contains('hop-ai-hidden'));
+  }
+
+  private isSlashOpen(): boolean {
+    return !this.slashMenu.classList.contains('hop-ai-hidden');
+  }
+
+  /** 입력창이 '/검색어' 한 단어일 때 빠른 작업 메뉴를 걸러 보여준다. */
+  private updateSlashMenu(): void {
+    const match = /^\/(\S*)$/.exec(this.promptInput.value);
+    if (!match) {
+      this.closeSlashMenu();
+      return;
+    }
+    const query = match[1];
+    for (const item of Array.from(this.slashItems())) {
+      const hit =
+        !query ||
+        (item.dataset.alias ?? '').startsWith(query) ||
+        (item.textContent ?? '').includes(query);
+      item.classList.toggle('hop-ai-hidden', !hit);
+    }
+    // 걸러 볼 때는 묶음 제목을 숨긴다(제목만 남는 빈 묶음 방지).
+    this.slashMenu.classList.toggle('hop-ai-slash-filtered', query.length > 0);
+    this.closePopovers();
+    this.slashMenu.classList.remove('hop-ai-hidden');
+    this.slashIndex = 0;
+    this.highlightSlash();
+  }
+
+  private highlightSlash(): void {
+    this.visibleSlashItems().forEach((item, i) => {
+      item.classList.toggle('hop-ai-pop-item-active', i === this.slashIndex);
+    });
+  }
+
+  /** '/' 메뉴를 닫는다. clearText면 입력창의 '/명령' 글자도 지운다. */
+  private closeSlashMenu(clearText = false): void {
+    this.slashMenu.classList.add('hop-ai-hidden');
+    if (clearText && /^\/\S*$/.test(this.promptInput.value)) this.promptInput.value = '';
+  }
+
+  /**
+   * 패널 안 단축키(커서식). 패널 keydown은 전역 단축키로 전파되지 않으므로 ⌘J도 여기서 받는다.
+   * ⌘⏎ 모두 승인 · ⌘⌫ 모두 거절(승인 대기 중) · Esc 메뉴 닫기 → 생성 중지.
+   */
+  private onPanelKeydown(event: KeyboardEvent): void {
+    if (event.defaultPrevented) return;
+    const mod = event.metaKey || event.ctrlKey;
+    if (mod && !event.altKey && !event.shiftKey && (event.key === 'j' || event.key === 'J' || event.code === 'KeyJ')) {
+      event.preventDefault();
+      this.toggle(false);
+      return;
+    }
+    if (mod && !event.altKey && !event.shiftKey && this.session.isPending && this.pendingScript) {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        this.accept();
+        return;
+      }
+      // 입력창에 쓰던 글이 있으면 ⌘⌫는 원래대로(줄 지우기) 둔다.
+      const typing = event.target === this.promptInput && this.promptInput.value.length > 0;
+      if (event.key === 'Backspace' && !typing) {
+        event.preventDefault();
+        this.reject();
+        return;
+      }
+    }
+    if (event.key === 'Escape') {
+      if (this.isSlashOpen()) this.closeSlashMenu();
+      else if (this.isPopoverOpen()) this.closePopovers();
+      else if (!this.menu.classList.contains('hop-ai-hidden')) this.toggleMenu(false);
+      else if (!this.settingsModal.classList.contains('hop-ai-hidden')) this.toggleSettings(false);
+      else if (!this.historyPanel.classList.contains('hop-ai-hidden')) this.toggleHistory(false);
+      else if (this.session.state === 'REQUESTING') void this.cancel();
+      else return;
+      event.preventDefault();
+    }
   }
 
   /** 빠른 작업 칩 — 프리셋 지시를 채워 바로 전송한다. 선택 영역이 있으면 그 부분이 대상. */
@@ -898,16 +1275,29 @@ export class AgentSidebar {
     }
     if (KEY_PROVIDERS.has(provider) && this.keyState.get(provider) === false) {
       this.toggleSettings(true);
-      this.setStatus('API 키를 먼저 저장하세요. (⚙ 옵션에서 입력)', 'warn');
+      this.setStatus('API 키를 먼저 저장하세요. (입력창 아래 모델 메뉴 → API 키·Agent 설정)', 'warn');
       return null;
     }
     const baseUrl = provider === CUSTOM_PROVIDER ? this.baseUrlInput.value.trim() : null;
     if (provider === CUSTOM_PROVIDER && !baseUrl) {
       this.toggleSettings(true);
-      this.setStatus('Base URL을 입력하세요 (⚙ 옵션, 예: https://api.groq.com/openai).', 'warn');
+      this.setStatus('Base URL을 입력하세요 (모델 메뉴 → API 키·Agent 설정, 예: https://api.groq.com/openai).', 'warn');
       return null;
     }
     return { docId, provider, baseUrl };
+  }
+
+  /** 첨부 문서의 백그라운드 텍스트 추출이 남아 있으면 끝날 때까지 기다린다. */
+  private async awaitAttachmentExtraction(): Promise<void> {
+    if (!this.extractTasks.length) return;
+    this.setStatus('첨부 문서 분석이 끝나면 전송합니다…');
+    // 기다리는 동안 새로 붙은 첨부의 추출도 놓치지 않도록, 목록을 비우고 받은 것만 기다리기를
+    // 남은 작업이 없을 때까지 반복한다(대기 중 push된 작업을 초기화로 날리지 않는다).
+    while (this.extractTasks.length) {
+      const pending = this.extractTasks;
+      this.extractTasks = [];
+      await Promise.all(pending);
+    }
   }
 
   private async send(): Promise<void> {
@@ -919,6 +1309,10 @@ export class AgentSidebar {
     // 자동 라우팅(F-4bdf23a4): 연구노트형 docx가 첨부돼 있으면 자연어 명령이어도 LLM 대신
     // 결정적 양식 변환 경로로 보낸다('양식 항목 추가' 칩을 몰라도 됨). 연구노트 구조가 아니면
     // runDocxFormFill이 false를 반환하고 아래 기존 LLM 편집 경로로 폴백한다(일반 편집 영향 없음).
+    // 첨부 문서가 아직 백그라운드 추출 중이면 끝날 때까지 기다린다 — 아래 연구노트
+    // 라우팅(runFormFill)도 추출 본문을 LLM에 넘기므로, 기다리지 않으면 PDF 내용 없이
+    // 지시문만 가서 모델이 항목을 지어낸다.
+    await this.awaitAttachmentExtraction();
     if (this.session.state !== 'REQUESTING') {
       const docxAtt = this.attachments.find((a) => a.path && /\.(docx|pdf)$/i.test(a.path));
       // 문서가 없으면 만들어서라도 이 경로를 탄다(F-86317c64 AC-119ff14f) — currentDocId()만
@@ -942,12 +1336,8 @@ export class AgentSidebar {
     if (!guard) return;
     const { docId, provider, baseUrl } = guard;
 
-    // 첨부 문서가 아직 백그라운드 추출 중이면, 끝난 뒤에 AI에 전송한다.
-    if (this.extractTasks.length) {
-      this.setStatus('첨부 문서 분석이 끝나면 전송합니다…');
-      await Promise.all(this.extractTasks);
-      this.extractTasks = [];
-    }
+    // 위에서 기다렸지만, 가드 대기 중 새로 붙은 첨부가 있을 수 있다.
+    await this.awaitAttachmentExtraction();
 
     // 미확정 Diff가 있으면 자동 롤백 후 진행(스펙 4장 동시성).
     const attachments = this.attachments;
@@ -1003,6 +1393,12 @@ export class AgentSidebar {
         return;
       }
     }
+    // 질문 모드는 문서를 고치지 못한다 — '작성해줘' 같은 요청이면 편집 모드로 바꿔 보낸다.
+    let modeNote = '';
+    if (this.mode === 'ask' && isAuthoringRequest(prompt)) {
+      this.setMode('edit');
+      modeNote = '작성 요청이라 편집 모드로 보냈습니다.';
+    }
     // 전송 시점의 모드를 고정(응답 처리에서 사용).
     this.requestMode = this.mode;
     // 본문에서 드래그한 선택 텍스트가 있으면 그 부분만 대상으로 삼게 한다(선택 영역 인식).
@@ -1017,11 +1413,14 @@ export class AgentSidebar {
     if (selectedText) this.log(`선택 영역 ${selectedText.length}자 포함`);
     this.log(`모드: ${this.requestMode === 'ask' ? '질문/요약' : '편집'}`);
     // 글쓰기 스킬 본문을 배경 지침으로 맨 앞에 주입(자동 선택 또는 수동 지정).
-    const skill = this.selectedSkillBody(prompt);
-    const skillPrefix = skill
-      ? `[작성 스킬: ${skill.name}]\n${skill.body}\n\n---\n\n`
-      : '';
-    if (skill) this.log(`스킬 적용: ${skill.name}`);
+    const skillPart =
+      this.requestMode === 'ask'
+        ? { prefix: '', offered: false, forced: null }
+        : this.skillPrefixFor(prompt);
+    this.requestSkill = { offered: skillPart.offered, forced: skillPart.forced };
+    const skillPrefix = skillPart.prefix;
+    if (skillPart.forced) this.log(`스킬 적용(직접 선택): ${skillPart.forced}`);
+    else if (skillPart.offered) this.log(`작성 지침 목록 ${this.skills.length}개 전달 — AI가 고름`);
     const effectivePrompt = `${skillPrefix}${askPrefix}${selPrefix}${docText ? `${docText}\n\n` : ''}${imageManifest}${prompt}`;
 
     // 삽입용 이미지 디코드(원본 픽셀 크기) — image_index가 이 배열을 가리킨다.
@@ -1043,7 +1442,10 @@ export class AgentSidebar {
     this.streamBuffer = '';
     this.session.startRequest();
     this.setRequesting(true);
-    this.setStatus('요청 중…');
+    // 진행 상태는 이 요청의 답변 버블에 적는다 — 컴포저 아래 공용 상태줄에 쓰면 응답이 와도
+    // 아무도 지우지 않아 '요청 중…'이 계속 남았다. 이전 안내(첨부 완료 등)도 함께 비운다.
+    this.setStatus(modeNote, 'info');
+    this.setActiveStatus('요청 중…');
     const model = this.currentModel();
     const cursorPath = this.currentCursorPath();
     try {
@@ -1255,6 +1657,8 @@ export class AgentSidebar {
       this.resolveProofread(script);
       return;
     }
+    // AI가 따른 글쓰기 지침을 답변에 표시한다(F-fb6592e9).
+    this.renderSkillChip(this.active, script.skill);
     // 동일한 편집(명령+대상+payload)이 중복되면 한 번만 적용한다(AI가 같은 작업을 두 번
     // 내보내는 경우 방지).
     const seenEdits = new Set<string>();
@@ -1306,6 +1710,8 @@ export class AgentSidebar {
     }
     this.pendingScript = script;
     this.rejectedEdits = new Set();
+    this.resolvedEdits = new Set();
+    this.inlineFocus = 0;
     if (this.active && script.message) this.active.msgEl.textContent = script.message;
     this.recordMessage('assistant', script.message?.trim() || `편집 ${script.edits.length}건을 제안했습니다.`);
     this.renderDiff(script);
@@ -1515,21 +1921,29 @@ export class AgentSidebar {
     if (!guard) return;
     const { docId, provider, baseUrl } = guard;
     if (this.session.isPending) this.session.cancel();
+    // 칩 버튼으로 바로 들어와도 첨부 본문이 준비된 뒤에 보낸다.
+    await this.awaitAttachmentExtraction();
+    // 이 요청이 첨부를 소비한다 — 남겨 두면 다음 메시지가 같은 PDF로 다시 라우팅된다.
+    const attachments = this.attachments;
 
     this.requestMode = 'form_fill';
     const userText = this.promptInput.value.trim() || '이 양식의 항목을 하나 더 추가해줘';
-    this.appendUserTurn(userText, []);
+    this.appendUserTurn(userText, attachments);
+    this.attachments = [];
+    this.renderChips();
     this.recordMessage('user', userText);
     this.active = this.appendAssistantTurn();
     this.promptInput.value = '';
     this.setRequesting(true);
     const model = this.currentModel();
+    /** 앱이 만든 양식이면 그 표 — 복제 뒤 제거할 대상(사용자 문서의 표는 건드리지 않는다). */
+    let createdForm: CreatedEntryForm | null = null;
+    /** 미리보기(승인/거절 대기)까지 갔는가. 아니면 앱이 만든 양식을 되돌린다. */
+    let previewReady = false;
     try {
       let context = await this.deps.bridge.aiGetDocumentContext(docId, false, null, true);
       this.context = context;
       let source = this.pickSourceFormTable(context);
-      /** 앱이 만든 양식이면 그 표 — 복제 뒤 제거할 대상(사용자 문서의 표는 건드리지 않는다). */
-      let createdForm: CreatedEntryForm | null = null;
       if (!source) {
         // 복제할 양식 표가 없으면 앱이 기본 연구노트 양식을 만들어 소스로 쓴다(F-403700d8).
         // AC-0d49695d의 'compose 폴백 금지'는 LLM에게 표 구조를 맡기지 말라는 뜻이고,
@@ -1543,6 +1957,11 @@ export class AgentSidebar {
           if (this.active) this.active.msgEl.textContent = reason;
           this.recordMessage('assistant', reason);
           this.setActiveStatus('양식 없음 — 추가하지 않았습니다.', 'warn');
+          return;
+        }
+        // 양식을 그리기 '전'에 스냅샷을 잡는다 — 거절·실패 시 앱이 만든 빈 양식까지 되돌린다.
+        if (!this.snapshotDocument()) {
+          this.setActiveStatus('이 환경에서는 양식 이어쓰기를 미리 적용할 수 없습니다.', 'warn');
           return;
         }
         try {
@@ -1562,6 +1981,9 @@ export class AgentSidebar {
           // 우리가 만든 표이니 좌표도 우리가 쥔다.
           source = created.table;
         } catch (error) {
+          // 표 생성이 중간(병합·라벨 단계)에 실패해도 반쯤 그린 표를 남기지 않는다 —
+          // createdForm이 아직 비어 있어 finally의 되돌리기가 동작하지 않으므로 여기서 되돌린다.
+          this.revertToSnapshot();
           const reason = `기본 연구노트 양식을 만들지 못했습니다: ${String(error)}`;
           if (this.active) this.active.msgEl.textContent = reason;
           this.recordMessage('assistant', reason);
@@ -1574,7 +1996,7 @@ export class AgentSidebar {
       this.setActiveStatus('항목 내용 생성 중…');
       // 첨부 문서의 추출 본문을 함께 넘긴다 — 지시문만 보내면 LLM이 PDF 내용을 못 봐서
       // 항목을 만들 수 없다(F-5e9c6033). 일반 전송 경로와 같은 형식으로 앞에 붙인다.
-      const docText = attachmentDocText(this.attachments);
+      const docText = attachmentDocText(attachments);
       // 라벨 없는 '본문 통칸'은 라벨 목록에 안 실려 LLM이 존재를 모른다 — 있으면 본문을
       // 명시적으로 요구한다. 없으면 요구하지 않는다(F-86317c64 AC-fcef045d).
       const bodyAsk = resolveBodyCell(source, new Set())
@@ -1624,7 +2046,8 @@ export class AgentSidebar {
         this.log(`라벨 해석 건너뜀 ${labelSkips.length}건: ${labelSkips.map((s) => `${s.label}(${s.reason})`).join(' / ')}`);
       }
 
-      if (!this.snapshotDocument()) {
+      // 앱이 양식을 만들었으면 그 전에 잡은 스냅샷을 그대로 쓴다(덮어쓰면 빈 양식이 남는다).
+      if (!createdForm && !this.snapshotDocument()) {
         this.setActiveStatus('이 환경에서는 양식 이어쓰기를 미리 적용할 수 없습니다.', 'warn');
         return;
       }
@@ -1655,6 +2078,11 @@ export class AgentSidebar {
       this.applied = result;
       this.pendingScript = script;
       this.rejectedEdits = new Set();
+      // 응답 수신 때 세션은 IDLE로 끝났다(onReady→complete). 승인/거절이 동작하려면
+      // DIFF_PENDING이어야 한다 — runDocxFormFill과 같은 전이(F-c63c3a91).
+      this.session.startRequest();
+      if (!this.session.onReady()) return;
+      previewReady = true;
       this.renderDiff(script);
       this.renderDecisionBar(script, result.changed);
       this.setPreviewEnabled(true);
@@ -1670,6 +2098,8 @@ export class AgentSidebar {
     } catch (error) {
       this.setActiveStatus(`양식 이어쓰기 실패: ${String(error)}`, 'error');
     } finally {
+      // 앱이 양식을 만들었는데 미리보기까지 못 갔으면(취소·항목 0개·오류) 빈 양식을 남기지 않는다.
+      if (createdForm && !previewReady) this.revertToSnapshot();
       this.setRequesting(false);
     }
   }
@@ -1752,6 +2182,12 @@ export class AgentSidebar {
           this.session.onFailed();
           return true;
         }
+        // 양식을 그리기 '전'에 스냅샷 — 거절하면 빈 양식이 아니라 원래 문서로 돌아간다.
+        if (!this.snapshotDocument()) {
+          this.setActiveStatus('이 환경에서는 양식 변환을 미리 적용할 수 없습니다.', 'warn');
+          this.session.onFailed();
+          return true;
+        }
         try {
           const created = createEntryFormTable(
             this.deps.bridge as unknown as WasmEditing,
@@ -1771,6 +2207,8 @@ export class AgentSidebar {
           tables = (context.document_metadata.form_tables ?? []) as FormSourceTable[];
           source = pickEntryFormTable(tables) ?? created.table;
         } catch (error) {
+          // 표 생성이 중간에 실패해도(병합·라벨 단계) 반쯤 그린 표를 남기지 않는다.
+          this.revertToSnapshot();
           const reason = `기본 연구노트 양식을 만들지 못했습니다: ${String(error)}`;
           if (this.active) this.active.msgEl.textContent = reason;
           this.recordMessage('assistant', reason);
@@ -1781,6 +2219,7 @@ export class AgentSidebar {
       }
       const anchor = lastBodyParagraphId(context);
       if (!anchor) {
+        if (createdForm) this.revertToSnapshot();
         const reason = '새 항목을 넣을 본문 문단을 찾지 못했습니다.';
         if (this.active) this.active.msgEl.textContent = reason;
         this.setActiveStatus(reason, 'warn');
@@ -1807,7 +2246,8 @@ export class AgentSidebar {
         this.log(`셀 매핑 건너뜀 ${skips.length}건: ${skips.map((s) => `${s.label}(${s.reason})`).join(' / ')}`);
       }
 
-      if (!this.snapshotDocument()) {
+      // 앱이 양식을 만들었으면 그 전에 잡은 스냅샷을 그대로 쓴다(덮어쓰면 빈 양식이 남는다).
+      if (!createdForm && !this.snapshotDocument()) {
         this.setActiveStatus('이 환경에서는 양식 변환을 미리 적용할 수 없습니다.', 'warn');
         this.session.onFailed();
         return true;
@@ -1908,7 +2348,14 @@ export class AgentSidebar {
       this.setActiveStatus(`항목 ${result.applied}개 미리 추가${note} — 승인 또는 거절하세요.`, tone);
       return true;
     } catch (error) {
-      this.session.onFailed();
+      // 실패하면 이 실행이 바꾼 문서(앱이 만든 양식·일부 복제)를 스냅샷 시점으로 되돌린다.
+      // 미리보기까지 갔다면 세션 취소가 롤백(스냅샷 복원)을 맡는다.
+      if (this.session.isPending) {
+        this.session.cancel();
+      } else {
+        if (this.snapshot) this.revertToSnapshot();
+        this.session.onFailed();
+      }
       this.setActiveStatus(`docx 일괄 변환 실패: ${String(error)}`, 'error');
       return true;
     } finally {
@@ -2015,7 +2462,7 @@ export class AgentSidebar {
     this.reflowAndRender();
     this.deps.bridge.markDocumentDirty?.();
     row.classList.add('hop-ai-issue-resolved');
-    applyBtn.textContent = '✓ 적용됨';
+    applyBtn.textContent = '적용됨';
     applyBtn.disabled = true;
     this.setActiveStatus('교정 1건을 적용했습니다.', 'ok');
   }
@@ -2054,9 +2501,7 @@ export class AgentSidebar {
     bubble.appendChild(body);
     // '수정' — Cursor식 인라인 편집: 말풍선이 입력창으로 바뀌고, 보내면 이 지점부터
     // 대화를 다시 시작한다(아래 메시지들은 제거).
-    const editBtn = el('button', 'hop-ai-msg-edit') as HTMLButtonElement;
-    editBtn.type = 'button';
-    editBtn.textContent = '✎ 수정';
+    const editBtn = iconButton('hop-ai-msg-edit', 'pencil', '수정');
     editBtn.title = '이 메시지를 고쳐 여기서부터 다시 보냅니다(아래 대화는 지워집니다)';
     editBtn.addEventListener('click', () => this.beginEditMessage(bubble, body, text));
     bubble.appendChild(editBtn);
@@ -2064,7 +2509,7 @@ export class AgentSidebar {
       const chips = el('div', 'hop-ai-msg-chips');
       for (const a of attachments) {
         const chip = el('span', 'hop-ai-chip');
-        chip.textContent = `${attachmentIcon(a.kind)} ${a.name}`;
+        chip.append(icon(a.kind === 'image' ? 'image' : 'file'), textSpan('hop-ai-chip-label', a.name));
         chips.appendChild(chip);
       }
       bubble.appendChild(chips);
@@ -2168,22 +2613,51 @@ export class AgentSidebar {
     decision.append(acceptBtn, rejectBtn);
     acceptBtn.addEventListener('click', () => this.accept());
     rejectBtn.addEventListener('click', () => this.reject());
-    bubble.append(streamEl, msgEl, bodyEl, decision, statusEl);
+    const skillEl = el('div', 'hop-ai-skill');
+    bubble.append(streamEl, skillEl, msgEl, bodyEl, decision, statusEl);
     this.thread.appendChild(bubble);
     this.scrollThreadToEnd();
-    const turn: ActiveTurn = { streamEl, msgEl, bodyEl, decisionEl: decision, acceptBtn, rejectBtn, statusEl };
+    const turn: ActiveTurn = {
+      streamEl,
+      msgEl,
+      bodyEl,
+      decisionEl: decision,
+      acceptBtn,
+      rejectBtn,
+      statusEl,
+      skillEl,
+    };
     this.setPreviewEnabledFor(turn, false);
     this.showThinking(turn);
     return turn;
   }
 
-  /** 정적 "작성 중…" 텍스트 대신 Claude식 점 3개 로딩 애니메이션을 표시한다. */
+  /** 응답 첫 글자가 오기 전까지 '생각 중 · N초'를 보여준다(점 애니메이션 + 경과 시간). */
   private showThinking(turn: ActiveTurn): void {
-    const dots = el('span', 'hop-ai-thinking');
-    dots.setAttribute('role', 'status');
-    dots.setAttribute('aria-label', 'AI가 생각 중입니다');
+    const wrap = el('span', 'hop-ai-thinking');
+    wrap.setAttribute('role', 'status');
+    wrap.setAttribute('aria-label', 'AI가 생각 중입니다');
+    const dots = el('span', 'hop-ai-thinking-dots');
     for (let i = 0; i < 3; i += 1) dots.appendChild(el('span', 'hop-ai-thinking-dot'));
-    turn.streamEl.replaceChildren(dots);
+    const label = textSpan('hop-ai-thinking-label', '생각 중');
+    wrap.append(dots, label);
+    turn.streamEl.replaceChildren(wrap);
+    this.stopThinkingTimer();
+    const started = Date.now();
+    this.thinkingTimer = setInterval(() => {
+      // 본문이 흐르기 시작했거나 응답이 끝나 표시가 사라졌으면 멈춘다.
+      if (!turn.streamEl.contains(wrap)) {
+        this.stopThinkingTimer();
+        return;
+      }
+      const sec = Math.floor((Date.now() - started) / 1000);
+      label.textContent = sec > 0 ? `생각 중 · ${sec}초` : '생각 중';
+    }, 1000);
+  }
+
+  private stopThinkingTimer(): void {
+    if (this.thinkingTimer !== null) clearInterval(this.thinkingTimer);
+    this.thinkingTimer = null;
   }
 
   private scrollThreadToEnd(): void {
@@ -2342,17 +2816,15 @@ export class AgentSidebar {
     this.chipsArea.classList.toggle('hop-ai-hidden', this.attachments.length === 0);
     for (const a of this.attachments) {
       const chip = el('span', 'hop-ai-chip');
+      chip.classList.toggle('hop-ai-chip-loading', !!a.loading);
       const label = el('span', 'hop-ai-chip-label');
-      label.textContent = a.loading
-        ? `⏳ ${a.name} (분석 중)`
-        : `${attachmentIcon(a.kind)} ${a.name}`;
-      const remove = el('button', 'hop-ai-chip-remove') as HTMLButtonElement;
-      remove.textContent = '×';
+      label.textContent = a.loading ? `${a.name} (분석 중)` : a.name;
+      const remove = iconButton('hop-ai-chip-remove', 'x', `${a.name} 첨부 빼기`);
       remove.addEventListener('click', () => {
         this.attachments = this.attachments.filter((x) => x.id !== a.id);
         this.renderChips();
       });
-      chip.append(label, remove);
+      chip.append(icon(a.kind === 'image' ? 'image' : 'file'), label, remove);
       this.chipsArea.appendChild(chip);
     }
   }
@@ -2360,6 +2832,34 @@ export class AgentSidebar {
   // ── 모델 / provider / 옵션 ───────────────────────────────────
 
   private onPromptKeydown(event: KeyboardEvent): void {
+    // 한글 조합 중 Enter는 글자 확정용이다 — 보내지 않는다.
+    if (event.isComposing) return;
+    if (this.isSlashOpen()) {
+      const items = this.visibleSlashItems();
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault();
+        if (items.length) {
+          const step = event.key === 'ArrowDown' ? 1 : -1;
+          this.slashIndex = (this.slashIndex + step + items.length) % items.length;
+          this.highlightSlash();
+        }
+        return;
+      }
+      if ((event.key === 'Enter' || event.key === 'Tab') && items.length) {
+        event.preventDefault();
+        const action = items[Math.min(this.slashIndex, items.length - 1)].dataset.action;
+        this.closeSlashMenu(true);
+        if (action) void this.runQuickAction(action);
+        return;
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        this.closeSlashMenu();
+        return;
+      }
+    }
+    // ⌘⏎ / Ctrl+⏎는 '모두 승인'(패널 단축키) — 여기서 보내지 않는다.
+    if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) return;
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
       void this.send();
@@ -2392,50 +2892,37 @@ export class AgentSidebar {
 
   private renderMenu(): void {
     this.menu.replaceChildren();
-    const head = el('div', 'hop-ai-menu-head');
-    head.textContent = '최근 대화';
-    this.menu.appendChild(head);
+    const item = (name: IconName, label: string, onClick: () => void, hint = ''): HTMLButtonElement => {
+      const button = el('button', 'hop-ai-menu-item hop-ai-pop-item') as HTMLButtonElement;
+      button.type = 'button';
+      button.append(icon(name), textSpan('hop-ai-pop-label', label));
+      if (hint) button.appendChild(textSpan('hop-ai-pop-hint', hint));
+      button.addEventListener('click', () => {
+        this.toggleMenu(false);
+        onClick();
+      });
+      return button;
+    };
+    this.menu.appendChild(popGroupLabel('열린 대화'));
     // 최신 대화가 위로 오도록 역순.
     for (const conv of [...this.conversations].reverse()) {
-      const item = el('button', 'hop-ai-menu-item') as HTMLButtonElement;
-      item.textContent = conv.tab.textContent || '새 대화';
-      if (conv === this.activeConv) item.classList.add('hop-ai-menu-item-active');
-      item.addEventListener('click', () => {
-        this.switchConversation(conv.id);
-        this.toggleMenu(false);
-      });
-      this.menu.appendChild(item);
+      const convItem = item('chat', conv.tab.textContent || '새 대화', () => this.switchConversation(conv.id));
+      if (conv === this.activeConv) convItem.classList.add('hop-ai-menu-item-active');
+      this.menu.appendChild(convItem);
     }
-    const divider = el('div', 'hop-ai-menu-divider');
-    this.menu.appendChild(divider);
-    const logItem = el('button', 'hop-ai-menu-item') as HTMLButtonElement;
-    logItem.textContent = '🛈 로그 보기';
-    logItem.addEventListener('click', () => {
-      this.toggleMenu(false);
-      this.openLogWindow();
-    });
-    this.menu.appendChild(logItem);
-    const skillItem = el('button', 'hop-ai-menu-item') as HTMLButtonElement;
-    skillItem.textContent = '✍ 스킬 폴더 열기';
-    skillItem.addEventListener('click', () => {
-      this.toggleMenu(false);
-      void this.deps.bridge.aiOpenSkillsDir?.().then(() => this.loadSkills());
-    });
-    this.menu.appendChild(skillItem);
-    const themeItem = el('button', 'hop-ai-menu-item') as HTMLButtonElement;
-    themeItem.textContent = '🎨 테마 폴더 열기';
-    themeItem.addEventListener('click', () => {
-      this.toggleMenu(false);
-      void this.deps.bridge.aiOpenThemesDir?.().then(() => this.loadThemes());
-    });
-    this.menu.appendChild(themeItem);
-    const settings = el('button', 'hop-ai-menu-item') as HTMLButtonElement;
-    settings.textContent = '⚙ Agent 설정';
-    settings.addEventListener('click', () => {
-      this.toggleMenu(false);
-      this.toggleSettings(true);
-    });
-    this.menu.appendChild(settings);
+    this.menu.appendChild(el('div', 'hop-ai-menu-divider hop-ai-pop-sep'));
+    this.menu.append(
+      item('history', '과거 대화', () => this.toggleHistory(true)),
+      item('terminal', '로그 보기', () => this.openLogWindow()),
+      item('folder', '스킬 폴더 열기', () => {
+        void this.deps.bridge.aiOpenSkillsDir?.().then(() => this.loadSkills());
+      }),
+      item('folder', '테마 폴더 열기', () => {
+        void this.deps.bridge.aiOpenThemesDir?.().then(() => this.loadThemes());
+      }),
+      // 테스트·사용자 모두 '마지막 항목 = Agent 설정'을 기대한다.
+      item('gear', 'Agent 설정', () => this.toggleSettings(true)),
+    );
   }
 
   private async onProviderChange(): Promise<void> {
@@ -2454,6 +2941,7 @@ export class AgentSidebar {
     this.modelSelect.value = models.includes(keep) ? keep : (models[0] ?? CUSTOM_MODEL);
     this.modelRefreshBtn.disabled = !supportsModelListing(provider);
     this.updateModelVisibility();
+    if (!this.modelMenu.classList.contains('hop-ai-hidden')) this.renderModelMenu();
   }
 
   /**
@@ -2491,6 +2979,7 @@ export class AgentSidebar {
 
   private updateModelVisibility(): void {
     this.modelInput.classList.toggle('hop-ai-hidden', this.modelSelect.value !== CUSTOM_MODEL);
+    this.updateModelTrigger();
   }
 
   private currentModel(): string {
@@ -2618,27 +3107,32 @@ export class AgentSidebar {
     // 변경 블록이 2건 이상이면 행마다 개별 포함(✓)/제외(✗) 토글을 단다(1건은 전체
     // 승인/거부 버튼과 중복이라 생략). 인덱스는 pendingScript.edits와 1:1이다.
     const perEdit = script.edits.length >= 2;
+    this.active.bodyEl.appendChild(renderDiffSummary(items));
     items.forEach((item, index) => {
       const row = renderDiffItem(item);
-      if (perEdit) row.appendChild(this.buildEditControls(index));
+      if (perEdit) row.querySelector('.hop-ai-diff-head')?.appendChild(this.buildEditControls(index));
       row.classList.toggle('hop-ai-diff-item-rejected', this.rejectedEdits.has(index));
+      // 변경이 1건이면 처음부터 전/후를 펼쳐 둔다(선택 영역 다듬기 등).
+      if (items.length === 1) row.classList.add('hop-ai-diff-open');
+      // 한 줄 요약을 누르면 자세히(전/후)를 펼치고 문서의 그 위치로 이동한다.
+      row.querySelector('.hop-ai-diff-head')?.addEventListener('click', (event) => {
+        if ((event.target as HTMLElement | null)?.closest?.('.hop-ai-diff-controls')) return;
+        row.classList.toggle('hop-ai-diff-open');
+        this.jumpToTarget(item.targetId);
+      });
       this.diffRows.push(row);
       this.active!.bodyEl.appendChild(row);
     });
   }
 
-  /** diff 행의 개별 포함(✓)/제외(✗) 컨트롤. */
+  /** diff 행의 개별 포함/제외 컨트롤. */
   private buildEditControls(index: number): HTMLElement {
     const wrap = el('div', 'hop-ai-diff-controls');
-    const keep = el('button', 'hop-ai-diff-keep') as HTMLButtonElement;
-    keep.textContent = '✓';
-    keep.title = '이 편집 포함';
-    keep.addEventListener('click', () => this.setEditRejected(index, false));
-    const drop = el('button', 'hop-ai-diff-drop') as HTMLButtonElement;
-    drop.textContent = '✗';
-    drop.title = '이 편집만 제외';
+    const drop = iconButton('hop-ai-diff-drop', 'x', '이 변경만 거절');
     drop.addEventListener('click', () => this.setEditRejected(index, true));
-    wrap.append(keep, drop);
+    const keep = iconButton('hop-ai-diff-keep', 'check', '이 변경 다시 포함');
+    keep.addEventListener('click', () => this.setEditRejected(index, false));
+    wrap.append(drop, keep);
     return wrap;
   }
 
@@ -2658,7 +3152,9 @@ export class AgentSidebar {
     if (this.rejectedEdits.has(index) === rejected) return;
     if (rejected) this.rejectedEdits.add(index);
     else this.rejectedEdits.delete(index);
+    this.resolvedEdits.delete(index);
     this.diffRows[index]?.classList.toggle('hop-ai-diff-item-rejected', rejected);
+    this.diffRows[index]?.classList.remove('hop-ai-diff-item-accepted');
 
     const filtered = this.filteredScript(script);
     if (this.snapshot) {
@@ -2668,7 +3164,7 @@ export class AgentSidebar {
         const result = applyActionScript(this.deps.bridge, filtered, this.pendingInsertImages, this.compiledTheme);
         this.reflowAndRender();
         this.applied = result;
-        this.renderDecisionBar(filtered, result.changed);
+        this.renderDecisionBar(filtered, result.changed, false);
       } catch (error) {
         // 재적용 도중 오류 — 부분 적용 상태로 남기지 않고 전체 롤백한다(AC-95b4b0).
         this.session.cancel();
@@ -2677,10 +3173,11 @@ export class AgentSidebar {
       }
     } else {
       clearInlineDiff(this.deps.scrollContent);
-      this.renderInlineDiff(filtered);
+      this.renderInlineDiff(filtered, false);
     }
     const total = script.edits.length;
     const remain = total - this.rejectedEdits.size;
+    this.updateReviewBar(true);
     this.log(`편집 ${index + 1} ${rejected ? '제외' : '복원'} → ${remain}/${total}건 적용 예정`);
     this.setActiveStatus(
       remain === 0
@@ -2695,15 +3192,18 @@ export class AgentSidebar {
    * 카드는 대상(문단/셀) 위치에 좁게, 줄 아래에 둬 원문을 가리지 않는다.
    * 반환: 페이지에 배치한 카드 수(0이면 호출 측이 버블 버튼으로 폴백).
    */
-  private renderInlineDiff(script: ActionScript): number {
+  private renderInlineDiff(script: ActionScript, scroll = true): number {
     const canvasView = this.deps.getCanvasView();
     if (!canvasView) return 0;
     const zoom = canvasView.getViewportManager().getZoom();
     const before = new Map<string, string>();
     for (const node of this.context?.content ?? []) before.set(node.id, node.text);
+    const kept = this.keptEditIndices();
 
     const entries: InlineDiffEntry[] = [];
-    for (const edit of script.edits) {
+    for (const [i, edit] of script.edits.entries()) {
+      const editIndex = kept[i] ?? i;
+      if (this.resolvedEdits.has(editIndex)) continue;
       const rect = this.targetRect(edit.target_id);
       if (!rect) continue;
       const page = this.deps.bridge.getPageInfo(rect.pageIndex);
@@ -2721,14 +3221,67 @@ export class AgentSidebar {
         maxWidth,
         before: isInsert ? undefined : before.get(edit.target_id),
         after: edit.command === 'DELETE' ? undefined : edit.payload.text,
+        editIndex,
+        miniLeft: pageLeft + pageWidth + 6,
       });
     }
+    return this.showInline(entries, scroll);
+  }
+
+  /** 문서 위 표시 + 검토 바(모두/개별 승인·거절, 이전/다음)를 그린다. */
+  private showInline(entries: InlineDiffEntry[], scroll: boolean): number {
     if (!entries.length) return 0;
     return showInlineDiff(
       { scrollContent: this.deps.scrollContent, scrollContainer: this.deps.scrollContainer },
       entries,
-      { onAccept: () => this.accept(), onReject: () => this.reject() },
+      {
+        onAccept: () => this.accept(),
+        onReject: () => this.reject(),
+        onAcceptOne: (index) => this.resolveEdit(index, 'accept'),
+        onRejectOne: (index) => this.resolveEdit(index, 'reject'),
+      },
+      { focusIndex: this.inlineFocus, scroll, onFocusChange: (index) => (this.inlineFocus = index) },
     );
+  }
+
+  /** 거절하지 않은 edit의 원래 인덱스들 — filteredScript의 i번째 편집 = 이 배열의 i번째. */
+  private keptEditIndices(): number[] {
+    const total = this.pendingScript?.edits.length ?? 0;
+    const kept: number[] = [];
+    for (let i = 0; i < total; i += 1) if (!this.rejectedEdits.has(i)) kept.push(i);
+    return kept;
+  }
+
+  /**
+   * 문서 위 미니 ✓/✗ — 변경 하나만 승인(표시만 걷고 적용 유지) 또는 거절(되돌림). 모든 변경을
+   * 결정하면 커서처럼 자동으로 마무리한다(하나라도 남기면 승인, 전부 거절이면 거절).
+   */
+  private resolveEdit(index: number, decision: 'accept' | 'reject'): void {
+    const script = this.pendingScript;
+    if (!script || !this.session.isPending) return;
+    const total = script.edits.length;
+    if (decision === 'reject') {
+      this.setEditRejected(index, true);
+    } else {
+      this.resolvedEdits.add(index);
+      this.diffRows[index]?.classList.add('hop-ai-diff-item-accepted');
+      this.log(`편집 ${index + 1} 개별 승인`);
+    }
+    if (this.rejectedEdits.size + this.resolvedEdits.size >= total) {
+      if (this.rejectedEdits.size >= total) this.reject();
+      else this.accept();
+      return;
+    }
+    if (decision === 'accept') this.redrawInline();
+  }
+
+  /** 현재 미리보기 상태로 문서 위 표시를 다시 그린다(스크롤 없이). */
+  private redrawInline(): void {
+    const script = this.pendingScript;
+    if (!script) return;
+    const filtered = this.filteredScript(script);
+    if (this.snapshot && this.applied) this.renderDecisionBar(filtered, this.applied.changed, false);
+    else this.renderInlineDiff(filtered, false);
   }
 
   /** 편집 대상(본문/표 셀/중첩 셀)의 페이지 커서 사각형. 실패 시 null. */
@@ -2752,54 +3305,129 @@ export class AgentSidebar {
   }
 
   /**
-   * 낙관적 적용 직후: 새/바뀐 본문 줄(정확한 최종 위치 changed[])에 초록 변경
-   * 표시줄, 사라진 기존 내용(REPLACE/DELETE)은 빨간 카드, 변경 위치에 승인/거절 바.
+   * 낙관적 적용 직후 문서 위 검토 표시(커서식): 새/바뀐 본문 문단(정확한 최종 위치 changed[])
+   * 전체를 초록으로 칠하고, 사라진 원문(REPLACE/DELETE)은 그 아래 빨간 취소선 카드로 보인다.
+   * 변경마다 페이지 오른쪽 바깥에 개별 ✓/✗, 문서 뷰 아래에 '변경 i / N' 검토 바를 둔다.
+   * 반환: 그린 표시 수(0이면 호출 측이 버블 버튼으로 폴백).
    */
-  private renderDecisionBar(script: ActionScript, changed: ChangedPara[]): number {
+  private renderDecisionBar(script: ActionScript, changed: ChangedPara[], scroll = true): number {
     const canvasView = this.deps.getCanvasView();
     if (!canvasView) return 0;
     const zoom = canvasView.getViewportManager().getZoom();
     const beforeById = new Map<string, string>();
     for (const node of this.context?.content ?? []) beforeById.set(node.id, node.text);
+    // applyActionScript에 넘긴 script(거절분 제외)의 i번째 = 원래 pendingScript의 kept[i]번째.
+    const kept = this.keptEditIndices();
 
-    const toEntry = (rect: CursorRect, opts: Partial<InlineDiffEntry>): InlineDiffEntry => {
-      const page = this.deps.bridge.getPageInfo(rect.pageIndex);
-      const pageTop = canvasView.getVirtualScroll().getPageOffset(rect.pageIndex);
+    const pageBox = (pageIndex: number) => {
+      const page = this.deps.bridge.getPageInfo(pageIndex);
+      const pageTop = canvasView.getVirtualScroll().getPageOffset(pageIndex);
       const pageWidth = page.width * zoom;
       const pageLeft = Math.max(0, (this.deps.scrollContent.clientWidth - pageWidth) / 2);
-      const left = pageLeft + rect.x * zoom;
+      const contentRight = pageLeft + (page.width - (page.marginRight ?? 0)) * zoom;
+      const pageRight = pageLeft + pageWidth;
       return {
-        top: pageTop + rect.y * zoom,
-        lineBottom: pageTop + (rect.y + rect.height) * zoom,
-        left,
-        maxWidth: Math.max(120, pageLeft + pageWidth - left - 4),
-        ...opts,
+        page,
+        pageTop,
+        pageLeft,
+        pageRight,
+        contentLeft: pageLeft + (page.marginLeft ?? 0) * zoom,
+        contentRight,
+        // 개별 ✗/✓(폭 ~48px) — 종이 오른쪽 여백에 들어가면 거기, 좁으면 종이 바깥.
+        miniLeft: pageRight - contentRight >= 56 ? contentRight + 8 : pageRight + 6,
       };
     };
 
     const entries: InlineDiffEntry[] = [];
-    // 초록 변경 표시줄 — 새/바뀐 본문 문단의 정확한 최종 위치.
-    for (const { sec, para } of changed) {
+    const marked = new Set<number>();
+    // 초록 칠 — 새/바뀐 본문 문단 전체(첫 줄 위 ~ 마지막 줄 아래).
+    for (const c of changed) {
+      const editIndex = c.editIndex !== undefined ? (kept[c.editIndex] ?? c.editIndex) : undefined;
+      if (editIndex !== undefined && this.resolvedEdits.has(editIndex)) continue;
       try {
-        entries.push(toEntry(this.deps.bridge.getCursorRect(sec, para, 0), { changeBar: true }));
+        const start = this.deps.bridge.getCursorRect(c.sec, c.para, 0);
+        let end = start;
+        const length = this.deps.bridge.getParagraphLength(c.sec, c.para);
+        if (length > 0) {
+          try {
+            end = this.deps.bridge.getCursorRect(c.sec, c.para, length);
+          } catch {
+            /* 끝 좌표 실패 — 첫 줄만 칠한다 */
+          }
+        }
+        const box = pageBox(start.pageIndex);
+        const top = box.pageTop + start.y * zoom;
+        const lineBottom = top + start.height * zoom;
+        const samePage = end.pageIndex === start.pageIndex;
+        const bottom = samePage
+          ? box.pageTop + (end.y + end.height) * zoom
+          : box.pageTop + (box.page.height - (box.page.marginBottom ?? 0)) * zoom;
+        // 칠은 본문 폭 + 왼쪽 여백 쪽으로 8px(초록 줄이 글자에 붙지 않게).
+        entries.push({
+          top,
+          lineBottom,
+          bottom,
+          left: box.contentLeft - 8,
+          maxWidth: box.contentRight - box.contentLeft + 8,
+          block: true,
+          editIndex,
+          miniLeft: box.miniLeft,
+        });
+        // 쪽을 넘긴 문단은 다음 쪽의 이어진 부분도 칠한다.
+        if (!samePage) {
+          const next = pageBox(end.pageIndex);
+          const nextTop = next.pageTop + (next.page.marginTop ?? 0) * zoom;
+          entries.push({
+            top: nextTop,
+            lineBottom: nextTop,
+            bottom: next.pageTop + (end.y + end.height) * zoom,
+            left: next.contentLeft - 8,
+            maxWidth: next.contentRight - next.contentLeft + 8,
+            block: true,
+            editIndex,
+          });
+        }
+        if (editIndex !== undefined) marked.add(editIndex);
       } catch {
         /* 좌표 실패는 무시 */
       }
     }
-    // 빨간 카드 — 사라진 기존 내용(REPLACE/DELETE).
-    for (const edit of script.edits) {
-      if (edit.command !== 'REPLACE' && edit.command !== 'DELETE') continue;
-      const old = beforeById.get(edit.target_id);
-      if (old === undefined) continue;
+    // 빨간 취소선 카드 — 사라진 기존 내용(REPLACE/DELETE). 표 셀처럼 changed[]에 안 잡히는
+    // 변경은 줄 왼쪽 초록 표시줄로 위치를 알린다.
+    script.edits.forEach((edit, i) => {
+      const editIndex = kept[i] ?? i;
+      if (this.resolvedEdits.has(editIndex)) return;
+      const formatOnly = edit.payload.text === undefined && FORMAT_ONLY_PAYLOADS.has(edit.payload.type ?? '');
+      const old =
+        (edit.command === 'REPLACE' || edit.command === 'DELETE') && !formatOnly
+          ? beforeById.get(edit.target_id)
+          : undefined;
+      const unmarked = !marked.has(editIndex);
+      if (old === undefined && !unmarked) return;
       const rect = this.targetRect(edit.target_id);
-      if (rect) entries.push(toEntry(rect, { before: old }));
-    }
-    if (!entries.length) return 0;
-    return showInlineDiff(
-      { scrollContent: this.deps.scrollContent, scrollContainer: this.deps.scrollContainer },
-      entries,
-      { onAccept: () => this.accept(), onReject: () => this.reject() },
-    );
+      if (!rect) return;
+      const box = pageBox(rect.pageIndex);
+      const left = box.pageLeft + rect.x * zoom;
+      const top = box.pageTop + rect.y * zoom;
+      const lineBottom = box.pageTop + (rect.y + rect.height) * zoom;
+      // 같은 변경의 초록 칠 아래에 원문 카드를 둔다(새 글을 가리지 않게).
+      const groupBottom = entries
+        .filter((e) => e.editIndex === editIndex && e.block)
+        .reduce((max, e) => Math.max(max, e.bottom ?? e.lineBottom), lineBottom);
+      entries.push({
+        top,
+        lineBottom,
+        bottom: groupBottom,
+        left,
+        maxWidth: Math.max(120, box.contentRight - left - 4),
+        before: old,
+        changeBar: unmarked && edit.command !== 'DELETE',
+        editIndex,
+        miniLeft: unmarked ? box.miniLeft : undefined,
+      });
+      marked.add(editIndex);
+    });
+    return this.showInline(entries, scroll);
   }
 
   /**
@@ -2907,6 +3535,8 @@ export class AgentSidebar {
   private clearPreview(): void {
     this.pendingScript = null;
     this.rejectedEdits = new Set();
+    this.resolvedEdits = new Set();
+    this.inlineFocus = 0;
     this.diffRows = [];
     clearInlineDiff(this.deps.scrollContent);
     // 변형 대안 버튼 정리.
@@ -2923,17 +3553,37 @@ export class AgentSidebar {
   }
 
   private setPreviewEnabledFor(turn: ActiveTurn, enabled: boolean): void {
-    // 제안이 대기 중이면(enabled=true) 버블 내 승인/거절을 항상 노출한다 —
-    // 페이지 위 인라인 바는 보조 표시일 뿐, 좌표를 못 잡으면 안 뜰 수 있으므로
-    // 버블 버튼을 유일하게 신뢰할 수 있는 승인/거절 수단으로 둔다.
+    // 제안이 대기 중이면(enabled=true) 승인/거절을 항상 노출한다 — 페이지 위 인라인 바는
+    // 보조 표시일 뿐, 좌표를 못 잡으면 안 뜰 수 있다. 화면에는 입력창 위 검토 바가
+    // 보이고(커서식), 버블 안 버튼은 같은 동작의 대체 수단으로 남긴다.
     turn.decisionEl.classList.toggle('hop-ai-hidden', !enabled);
     turn.acceptBtn.disabled = !enabled;
     turn.rejectBtn.disabled = !enabled;
+    if (enabled || turn === this.active || !this.active) this.updateReviewBar(enabled);
+  }
+
+  /** 입력창 위 검토 바(모두 승인/거절)를 승인 대기 상태에 맞춘다. */
+  private updateReviewBar(enabled: boolean): void {
+    const script = this.pendingScript;
+    const show = enabled && script !== null;
+    this.reviewBar.classList.toggle('hop-ai-hidden', !show);
+    this.panel.classList.toggle('hop-ai-reviewing', show);
+    this.reviewAcceptBtn.disabled = !show;
+    this.reviewRejectBtn.disabled = !show;
+    if (!show || !script) return;
+    const total = script.edits.length;
+    const remain = total - this.rejectedEdits.size;
+    this.reviewLabel.textContent =
+      remain === total ? `변경 ${total}건 검토 중` : `변경 ${remain}/${total}건 적용 예정`;
   }
 
   private setRequesting(active: boolean): void {
+    // 생성 중에는 보내기 자리에 중지 버튼을 둔다(커서식).
     this.sendBtn.disabled = active;
+    this.sendBtn.classList.toggle('hop-ai-hidden', active);
     this.cancelBtn.classList.toggle('hop-ai-hidden', !active);
+    this.panel.classList.toggle('hop-ai-requesting', active);
+    if (!active) this.stopThinkingTimer();
   }
 
   /** 디버그 로그 한 줄 추가(시간 + 메시지). 최근 300줄만 유지. 콘솔에도 남긴다. */
@@ -3124,11 +3774,71 @@ function describeEdit(command: string, targetId: string): string {
   return `${where} ${action}`;
 }
 
+/** 변경 종류 → 목록 아이콘. */
+function diffIcon(item: DiffItem): IconName {
+  switch (item.payloadType) {
+    case 'table':
+    case 'clone_table':
+    case 'table_edit':
+    case 'table_formula':
+      return 'table';
+    case 'image':
+      return 'image';
+    case 'chart':
+      return 'chart';
+    case 'format':
+    case 'para_format':
+    case 'page_setup':
+      return 'layout';
+    case 'page_number':
+      return 'hash';
+    case 'replace_text':
+      return 'replace';
+    default:
+      if (item.targetId.includes('.tbl[')) return 'table';
+      return 'text';
+  }
+}
+
+/** 변경 목록 머리: 'N개 변경 · 추가 a · 바꿈 b · 삭제 c'. */
+function renderDiffSummary(items: DiffItem[]): HTMLElement {
+  const count = (cmd: (c: DiffItem['command']) => boolean) => items.filter((i) => cmd(i.command)).length;
+  const added = count((c) => c === 'INSERT_AFTER' || c === 'INSERT_BEFORE');
+  const changed = count((c) => c === 'REPLACE');
+  const removed = count((c) => c === 'DELETE');
+  const summary = el('div', 'hop-ai-diff-summary');
+  summary.appendChild(textSpan('hop-ai-diff-summary-count', `변경 ${items.length}건`));
+  for (const [n, label, cls] of [
+    [added, '추가', 'hop-ai-diff-plus'],
+    [changed, '바꿈', 'hop-ai-diff-mod'],
+    [removed, '삭제', 'hop-ai-diff-minus'],
+  ] as const) {
+    if (n > 0) summary.appendChild(textSpan(cls, `${label} ${n}`));
+  }
+  return summary;
+}
+
+/** 변경 1건을 한 줄로: [아이콘] 어디·무엇 · 미리보기 … [+추가 −삭제]. 누르면 전/후가 펼쳐진다. */
 function renderDiffItem(item: DiffItem): HTMLElement {
-  const row = el('div', 'hop-ai-diff-item');
+  const kind =
+    item.command === 'DELETE' ? 'del' : item.command === 'REPLACE' ? 'mod' : 'add';
+  const row = el('div', `hop-ai-diff-item hop-ai-diff-kind-${kind}`);
   const head = el('div', 'hop-ai-diff-head');
-  head.textContent = describeEdit(item.command, item.targetId);
   head.title = `${item.command} · ${item.targetId}`;
+  const preview = (item.afterText ?? item.beforeText ?? '').replace(/\s+/g, ' ').trim();
+  const stat = el('span', 'hop-ai-diff-stat');
+  if (item.afterText !== undefined && !item.afterText.startsWith('[')) {
+    stat.appendChild(textSpan('hop-ai-diff-plus', `+${item.afterText.length}`));
+  }
+  if (item.beforeText) {
+    stat.appendChild(textSpan('hop-ai-diff-minus', `−${item.beforeText.length}`));
+  }
+  head.append(
+    icon(diffIcon(item)),
+    textSpan('hop-ai-diff-where', describeEdit(item.command, item.targetId)),
+    textSpan('hop-ai-diff-snippet', clip(preview, 80)),
+    stat,
+  );
   row.appendChild(head);
   if (item.beforeText !== undefined) {
     const before = el('div', 'hop-ai-diff-before');
@@ -3160,19 +3870,32 @@ interface PanelParts {
   promptInput: HTMLTextAreaElement;
   modeEditBtn: HTMLButtonElement;
   modeAskBtn: HTMLButtonElement;
+  modeTrigger: HTMLButtonElement;
+  modeMenu: HTMLElement;
   quickActions: HTMLElement;
+  slashMenu: HTMLElement;
   skillSelect: HTMLSelectElement;
   themeSelect: HTMLSelectElement;
   providerSelect: HTMLSelectElement;
   modelSelect: HTMLSelectElement;
   modelInput: HTMLInputElement;
   modelRefreshBtn: HTMLButtonElement;
+  modelTrigger: HTMLButtonElement;
+  modelMenu: HTMLElement;
+  modelProviders: HTMLElement;
+  modelList: HTMLElement;
+  modelKeyBtn: HTMLButtonElement;
   sendBtn: HTMLButtonElement;
   cancelBtn: HTMLButtonElement;
   statusArea: HTMLElement;
   chipsArea: HTMLElement;
   fileInput: HTMLInputElement;
   attachBtn: HTMLButtonElement;
+  reviewBar: HTMLElement;
+  reviewLabel: HTMLElement;
+  reviewAcceptBtn: HTMLButtonElement;
+  reviewRejectBtn: HTMLButtonElement;
+  welcome: HTMLElement;
   settingsPanel: HTMLElement;
   keyRow: HTMLElement;
   keyLabel: HTMLElement;
@@ -3188,49 +3911,55 @@ interface PanelParts {
   presetSelect: HTMLSelectElement;
 }
 
+/** 빠른 작업(입력창에서 /). alias는 '/간결'처럼 걸러 찾을 때 쓴다. */
+const QUICK_ACTIONS: { action: string; label: string; alias: string; icon: IconName; group: '선택' | '문서' }[] = [
+  { action: 'concise', label: '간결하게', alias: '간결', icon: 'text', group: '선택' },
+  { action: 'formal', label: '격식 있게', alias: '격식', icon: 'text', group: '선택' },
+  { action: 'expand', label: '길게', alias: '길게', icon: 'text', group: '선택' },
+  { action: 'grammar', label: '문법 교정', alias: '교정', icon: 'text', group: '선택' },
+  { action: 'variations', label: '변형 제안', alias: '변형', icon: 'text', group: '선택' },
+  { action: 'proofread', label: '전체 교정', alias: '전체교정', icon: 'file', group: '문서' },
+  { action: 'summarize', label: '요약', alias: '요약', icon: 'file', group: '문서' },
+  { action: 'form_fill', label: '양식 항목 추가', alias: '양식', icon: 'table', group: '문서' },
+];
+
 function buildPanel(): PanelParts {
+  // 문서 위 둥근 AI 버튼은 더 이상 붙이지 않는다(툴바 AI 버튼·⌘J로 연다). 호환용으로만 만든다.
   const toggleBtn = el('button', 'hop-ai-toggle') as HTMLButtonElement;
   toggleBtn.textContent = 'AI';
   toggleBtn.title = 'AI 편집 도우미';
 
   const panel = el('aside', 'hop-ai-panel');
+  panel.setAttribute('aria-label', 'AI 편집');
 
-  // 헤더: 제목 + 새 대화(+) + 설정(⚙) + 닫기(×)
+  // 헤더 한 줄: [대화 탭들 …] [새 대화] [기록] [메뉴] [닫기]
   const header = el('div', 'hop-ai-header');
   const title = el('span', 'hop-ai-title');
   title.textContent = 'AI 편집';
-  const newChatBtn = el('button', 'hop-ai-newchat') as HTMLButtonElement;
-  newChatBtn.textContent = '＋';
-  newChatBtn.title = '새 대화';
-  const historyBtn = el('button', 'hop-ai-history-btn') as HTMLButtonElement;
-  historyBtn.textContent = '🕘';
-  historyBtn.title = '과거 대화 기록';
-  const settingsBtn = el('button', 'hop-ai-settings-btn') as HTMLButtonElement;
-  settingsBtn.textContent = '⋯';
-  settingsBtn.title = '메뉴 (최근 대화 · 로그 · Agent 설정)';
-  const closeBtn = el('button', 'hop-ai-close') as HTMLButtonElement;
-  closeBtn.textContent = '×';
-  header.append(title, newChatBtn, historyBtn, settingsBtn, closeBtn);
+  const tabBar = el('div', 'hop-ai-tabbar');
+  tabBar.setAttribute('role', 'tablist');
+  const newChatBtn = iconButton('hop-ai-newchat', 'plus', '새 대화');
+  const historyBtn = iconButton('hop-ai-history-btn', 'history', '대화 기록');
+  const settingsBtn = iconButton('hop-ai-settings-btn', 'more', '메뉴 (대화 · 로그 · Agent 설정)');
+  const closeBtn = iconButton('hop-ai-close', 'x', `패널 닫기 (${modKey('J')})`);
+  header.append(title, tabBar, newChatBtn, historyBtn, settingsBtn, closeBtn);
 
-  // 과거 대화 기록 패널(영속 저장된 대화 목록). AI 패널 왼쪽에 드로어로 뜬다. 기본 숨김.
+  // 과거 대화 기록 드로어(패널 안 왼쪽). 기본 숨김.
   const historyPanel = el('div', 'hop-ai-history');
   historyPanel.classList.add('hop-ai-hidden');
 
-  // 디버그 로그 패널(기본 숨김) — 새 창을 못 열 때의 폴백 표시용. 메뉴의 '로그 보기'로 토글.
+  // 디버그 로그 패널(기본 숨김) — 새 창을 못 열 때의 폴백 표시용.
   const logPanel = el('div', 'hop-ai-log');
   logPanel.classList.add('hop-ai-hidden');
 
-  // "⋯" 드롭다운 메뉴(최근 대화 리스트 + Agent 설정). 기본 숨김.
-  const menu = el('div', 'hop-ai-menu');
+  // "⋯" 메뉴(최근 대화 + 로그·폴더·설정). 기본 숨김.
+  const menu = el('div', 'hop-ai-menu hop-ai-pop');
   menu.classList.add('hop-ai-hidden');
-
-  // 대화 탭 바(여러 대화를 보존하고 전환).
-  const tabBar = el('div', 'hop-ai-tabbar');
 
   // 대화 스레드들을 담는 래퍼(대화마다 thread 하나, 활성만 표시).
   const threadsWrap = el('div', 'hop-ai-threads');
 
-  // 옵션 패널(⚙)
+  // ── Agent 설정 모달 ──
   // 키 줄 — 어느 provider의 키인지 라벨로 밝히고, 좁은 모달에서 잘리지 않게
   // [라벨] / [입력] / [동작 묶음] 세 덩어리로 나눈다(F-9dbe7a25).
   const keyLabel = el('span', 'hop-ai-key-label');
@@ -3248,13 +3977,13 @@ function buildPanel(): PanelParts {
   const keylessText = el('span', 'hop-ai-keyless-text');
   keylessText.textContent =
     '구독 플랜(팀·Pro)이 있으면 키 없이 쓸 수 있습니다 — 터미널에 로그인된 Claude Code를 그대로 사용합니다.';
-  const keylessBtn = btn('hop-ai-keyless-switch', 'Claude Code (로컬 CLI)로 전환');
+  const keylessBtn = btn('hop-ai-keyless-switch hop-ai-btn', 'Claude Code (로컬 CLI)로 전환');
   const keylessHint = el('div', 'hop-ai-keyless-hint');
   keylessHint.append(keylessText, keylessBtn);
   keylessHint.classList.add('hop-ai-hidden');
 
   const presetSelect = document.createElement('select');
-  presetSelect.className = 'hop-ai-preset';
+  presetSelect.className = 'hop-ai-preset hop-ai-select';
   for (const [value, label] of [
     ['', '프리셋'],
     ['groq', 'Groq'],
@@ -3278,66 +4007,28 @@ function buildPanel(): PanelParts {
   const settingsPanel = el('div', 'hop-ai-settings');
   settingsPanel.append(customRow, keyRow, keylessHint, sensitiveRow);
 
-  // 설정 모달(별도 창처럼) — 'Agent 설정'에서 열린다. 기본 숨김.
   const settingsModal = el('div', 'hop-ai-modal');
   settingsModal.classList.add('hop-ai-hidden');
   const settingsCard = el('div', 'hop-ai-modal-card');
   const settingsHeader = el('div', 'hop-ai-modal-header');
   const settingsTitle = el('span', 'hop-ai-modal-title');
   settingsTitle.textContent = 'Agent 설정';
-  const settingsClose = el('button', 'hop-ai-modal-close') as HTMLButtonElement;
-  settingsClose.textContent = '×';
+  const settingsClose = iconButton('hop-ai-modal-close', 'x', '닫기');
   settingsHeader.append(settingsTitle, settingsClose);
   settingsCard.append(settingsHeader, settingsPanel);
   settingsModal.appendChild(settingsCard);
 
-  // 컴포저(하단 입력)
+  // ── 입력 카드 ──
   const chipsArea = el('div', 'hop-ai-chips');
-
-  // 모드 토글(편집/질문) + 빠른 작업 칩.
-  const modeEditBtn = btn('hop-ai-mode-btn hop-ai-mode-active', '편집');
-  modeEditBtn.title = '문서를 편집합니다';
-  const modeAskBtn = btn('hop-ai-mode-btn', '질문');
-  modeAskBtn.title = '편집하지 않고 질문·요약에 답합니다';
-  const modeToggle = el('div', 'hop-ai-mode-toggle');
-  modeToggle.append(modeEditBtn, modeAskBtn);
-
-  const quickActions = el('div', 'hop-ai-quick');
-  const QUICK_ACTIONS: { action: string; label: string }[] = [
-    { action: 'concise', label: '간결하게' },
-    { action: 'formal', label: '격식있게' },
-    { action: 'expand', label: '길게' },
-    { action: 'grammar', label: '문법 교정' },
-    { action: 'proofread', label: '전체 교정' },
-    { action: 'form_fill', label: '양식 항목 추가' },
-    { action: 'variations', label: '변형 제안' },
-    { action: 'summarize', label: '요약' },
-  ];
-  for (const q of QUICK_ACTIONS) {
-    const chip = btn('hop-ai-quick-chip', q.label);
-    chip.dataset.action = q.action;
-    quickActions.appendChild(chip);
-  }
-  const quickbar = el('div', 'hop-ai-quickbar');
-  // 글쓰기 스킬 선택(자동/없음/<스킬들>). 런타임에 옵션 채움.
-  const skillSelect = document.createElement('select');
-  skillSelect.className = 'hop-ai-skill-select';
-  skillSelect.title = '글쓰기 스킬 — 문서 유형별 작성 지침';
-  skillSelect.appendChild(option('auto', '스킬: 자동'));
-
-  // 디자인 테마(간격·크기·색 수치) 선택. 런타임에 옵션 채움.
-  const themeSelect = document.createElement('select');
-  themeSelect.className = 'hop-ai-theme-select';
-  themeSelect.title = '디자인 테마 — 생성 문서의 간격·글자 크기·색 (themes/*.json)';
-
-  // 모드 전환은 시안에서 입력 카드 '하단 바'에 있다(빠른작업 줄이 아니라).
-  // 여기서는 스킬·테마 선택과 빠른작업 칩만 카드 위쪽 줄에 둔다.
-  quickbar.append(skillSelect, themeSelect, quickActions);
+  // 컨텍스트 줄 — 첨부 칩. 칩이 0건이면 줄째 숨는다(CSS :has).
+  const contextRow = el('div', 'hop-ai-context-row');
+  contextRow.append(chipsArea);
 
   const promptInput = document.createElement('textarea');
   promptInput.className = 'hop-ai-prompt';
-  promptInput.rows = 3;
-  promptInput.placeholder = '무엇을 바꿀까요?  (예: 표의 총 사업비를 10억으로)';
+  promptInput.rows = 2;
+  promptInput.placeholder = PROMPT_PLACEHOLDER.edit;
+  promptInput.setAttribute('aria-label', 'AI에게 보낼 지시');
 
   // 이미지·문서 공용 파일 입력(웹/테스트 폴백용). 네이티브 런타임에서는
   // pickFilesViaDialog가 경로 기반으로 첨부하므로 이 입력은 폴백 경로에서만 쓰인다.
@@ -3345,58 +4036,119 @@ function buildPanel(): PanelParts {
   fileInput.accept = 'image/*,.pdf,.hwp,.hwpx,.docx,.txt,.md,.markdown,.csv,.json,.html,.htm,.xml';
   fileInput.multiple = true;
 
-  // 시안의 '컨텍스트 추가' 점선 알약. 첨부 칩과 같은 줄에 놓인다.
-  const attachBtn = btn('hop-ai-attach', '＋ 컨텍스트 추가');
-  attachBtn.title = '이미지·문서 첨부';
-  const composerLeft = el('div', 'hop-ai-composer-left');
-  composerLeft.append(modeToggle);
+  // 모드(편집/질문) — 입력창 아래 드롭다운.
+  const modeEditBtn = menuItemButton('hop-ai-mode-btn hop-ai-mode-active', 'pencil', '편집', '문서를 고칩니다');
+  const modeAskBtn = menuItemButton('hop-ai-mode-btn', 'chat', '질문', '편집하지 않고 질문·요약에 답합니다');
+  const modeMenu = el('div', 'hop-ai-pop hop-ai-mode-menu hop-ai-hidden');
+  modeMenu.setAttribute('role', 'menu');
+  modeMenu.append(modeEditBtn, modeAskBtn);
+  const modeTrigger = el('button', 'hop-ai-mode-trigger hop-ai-dd') as HTMLButtonElement;
+  modeTrigger.type = 'button';
+  modeTrigger.title = '모드 — 편집 또는 질문';
 
+  // 모델 선택 — 입력창 아래 '모델명 ▾' 하나. 실제 값은 숨은 select들이 들고 있다
+  // (기존 provider/model 변경 경로·저장 동작을 그대로 쓴다).
   const providerSelect = document.createElement('select');
   providerSelect.className = 'hop-ai-provider';
   for (const id of PROVIDERS) providerSelect.appendChild(option(id, PROVIDER_LABELS[id] ?? id));
   const modelSelect = document.createElement('select');
   modelSelect.className = 'hop-ai-model-select';
   const modelInput = inputEl('hop-ai-model', 'text', '모델 ID 직접 입력');
-  const modelRefreshBtn = btn('hop-ai-model-refresh', '⟳');
+  const modelRefreshBtn = el('button', 'hop-ai-model-refresh hop-ai-pop-item') as HTMLButtonElement;
+  modelRefreshBtn.type = 'button';
   modelRefreshBtn.title = '지원 모델 목록 새로 고침 (provider에서 조회)';
-  const sendBtn = btn('hop-ai-send', '↑');
-  sendBtn.title = '전송 (Enter)';
-  const cancelBtn = btn('hop-ai-cancel', '취소');
-  const composerRight = el('div', 'hop-ai-composer-right');
-  composerRight.append(providerSelect, modelSelect, modelInput, modelRefreshBtn, cancelBtn, sendBtn);
+  modelRefreshBtn.append(icon('refresh'), textSpan('hop-ai-pop-label', '모델 목록 새로 고침'));
+  const modelKeyBtn = el('button', 'hop-ai-model-key hop-ai-pop-item') as HTMLButtonElement;
+  modelKeyBtn.type = 'button';
+  modelKeyBtn.append(icon('gear'), textSpan('hop-ai-pop-label', 'API 키·Agent 설정…'));
+  const modelProviders = el('div', 'hop-ai-model-providers');
+  const modelList = el('div', 'hop-ai-model-list');
+  modelList.setAttribute('role', 'listbox');
+  const hiddenSelects = el('div', 'hop-ai-sr-only');
+  hiddenSelects.append(providerSelect, modelSelect);
+  const modelMenu = el('div', 'hop-ai-pop hop-ai-model-menu hop-ai-hidden');
+  modelMenu.append(
+    popGroupLabel('제공자'),
+    modelProviders,
+    popGroupLabel('모델'),
+    modelList,
+    modelInput,
+    el('div', 'hop-ai-pop-sep'),
+    modelRefreshBtn,
+    modelKeyBtn,
+    hiddenSelects,
+  );
+  const modelTrigger = el('button', 'hop-ai-model-trigger hop-ai-dd') as HTMLButtonElement;
+  modelTrigger.type = 'button';
+  modelTrigger.title = '모델 선택';
 
+  // 빠른 작업 — 입력창 맨 앞에서 '/'. 항목은 data-action 위임 클릭으로 실행된다.
+  const quickActions = el('div', 'hop-ai-quick');
+  quickActions.setAttribute('role', 'listbox');
+  let lastGroup = '';
+  for (const q of QUICK_ACTIONS) {
+    if (q.group !== lastGroup) {
+      quickActions.appendChild(popGroupLabel(q.group === '선택' ? '선택한 부분 고치기' : '문서 전체'));
+      lastGroup = q.group;
+    }
+    const item = el('button', 'hop-ai-quick-chip hop-ai-pop-item') as HTMLButtonElement;
+    item.type = 'button';
+    item.dataset.action = q.action;
+    item.dataset.alias = q.alias;
+    item.append(icon(q.icon), textSpan('hop-ai-pop-label', q.label), textSpan('hop-ai-pop-hint', `/${q.alias}`));
+    quickActions.appendChild(item);
+  }
+  // 글쓰기 스킬·디자인 테마 — 자주 바꾸지 않으므로 / 메뉴 아래쪽에 둔다. 런타임에 옵션 채움.
+  const skillSelect = document.createElement('select');
+  skillSelect.className = 'hop-ai-skill-select hop-ai-select';
+  skillSelect.title = '글쓰기 스킬 — 평소엔 자동(AI가 요청에 맞는 지침을 고름). 특정 지침을 강제하거나 끌 때만 바꾸세요.';
+  skillSelect.appendChild(option('auto', '스킬: 자동(AI 선택)'));
+  const themeSelect = document.createElement('select');
+  themeSelect.className = 'hop-ai-theme-select hop-ai-select';
+  themeSelect.title = '디자인 테마 — 생성 문서의 간격·글자 크기·색 (themes/*.json)';
+  const slashFoot = el('div', 'hop-ai-slash-foot');
+  slashFoot.append(skillSelect, themeSelect);
+  const slashMenu = el('div', 'hop-ai-pop hop-ai-slash hop-ai-hidden');
+  slashMenu.append(quickActions, el('div', 'hop-ai-pop-sep'), slashFoot);
+
+  const attachBtn = iconButton('hop-ai-attach', 'clip', '파일 첨부 (이미지·PDF·HWP·DOCX)');
+  const sendBtn = iconButton('hop-ai-send', 'arrowUp', '보내기 (Enter)');
+  const cancelBtn = iconButton('hop-ai-cancel', 'stop', '생성 중지 (Esc)');
+
+  const composerLeft = el('div', 'hop-ai-composer-left');
+  composerLeft.append(modeTrigger, modelTrigger);
+  const composerRight = el('div', 'hop-ai-composer-right');
+  composerRight.append(attachBtn, cancelBtn, sendBtn);
   const composerBar = el('div', 'hop-ai-composer-bar');
   composerBar.append(composerLeft, composerRight);
 
-  const statusArea = el('div', 'hop-ai-status');
-
-  // 시안 구조: [빠른작업 칩 줄] → [입력 카드: 컨텍스트 줄 · 텍스트영역 · 하단 바] →
-  // [상태] → [키 힌트].
-  //
-  // 첨부 버튼은 chipsArea 안에 넣으면 안 된다 — renderChips가 replaceChildren()으로
-  // 비우고 첨부가 0건이면 hop-ai-hidden을 걸기 때문에 버튼이 사라진다. 별도 줄에
-  // 나란히 둬서 칩이 없어도 '컨텍스트 추가'는 항상 보이게 한다.
-  const contextRow = el('div', 'hop-ai-context-row');
-  contextRow.append(attachBtn, chipsArea);
-
   const composerCard = el('div', 'hop-ai-composer-card');
-  composerCard.append(contextRow, promptInput, composerBar);
+  composerCard.append(contextRow, promptInput, composerBar, slashMenu, modeMenu, modelMenu);
 
-  // 실제 키 동작만 적는다 — Enter 전송 / Shift+Enter 줄바꿈(onPromptKeydown).
-  const hints = el('div', 'hop-ai-hints');
-  for (const text of ['⏎ 보내기', '⇧⏎ 줄바꿈']) {
-    const span = el('span', 'hop-ai-hint');
-    span.textContent = text;
-    hints.appendChild(span);
-  }
+  // 검토 바 — 승인 대기 동안 입력창 바로 위에 고정(커서식 'Accept all').
+  const reviewLabel = el('span', 'hop-ai-review-label');
+  const reviewRejectBtn = el('button', 'hop-ai-review-reject hop-ai-btn') as HTMLButtonElement;
+  reviewRejectBtn.type = 'button';
+  reviewRejectBtn.append(textSpan('', '모두 거절'), kbdSpan(modKey('⌫')));
+  const reviewAcceptBtn = el('button', 'hop-ai-review-accept hop-ai-btn hop-ai-btn-primary') as HTMLButtonElement;
+  reviewAcceptBtn.type = 'button';
+  reviewAcceptBtn.append(textSpan('', '모두 승인'), kbdSpan(modKey('⏎')));
+  const reviewBar = el('div', 'hop-ai-review hop-ai-hidden');
+  reviewBar.setAttribute('role', 'toolbar');
+  reviewBar.setAttribute('aria-label', 'AI 변경 검토');
+  reviewBar.append(reviewLabel, el('span', 'hop-ai-flex'), reviewRejectBtn, reviewAcceptBtn);
+
+  const statusArea = el('div', 'hop-ai-status');
+  // 빈 대화 화면(최근 대화·자주 쓰는 작업). 대화가 시작되면 CSS로 숨는다.
+  const welcome = el('div', 'hop-ai-welcome');
 
   const composer = el('div', 'hop-ai-composer');
-  composer.append(quickbar, composerCard, statusArea, hints, fileInput);
+  composer.append(reviewBar, composerCard, statusArea, welcome, fileInput);
 
   // 컴포저는 본문 영역에 두고, 빈 대화면 상단/대화 시작 시 하단으로 CSS order로 이동.
   const body = el('div', 'hop-ai-body');
   body.append(threadsWrap, composer);
-  panel.append(header, menu, logPanel, historyPanel, tabBar, body, settingsModal);
+  panel.append(header, menu, logPanel, historyPanel, body, settingsModal);
 
   return {
     panel,
@@ -3415,19 +4167,32 @@ function buildPanel(): PanelParts {
     promptInput,
     modeEditBtn,
     modeAskBtn,
+    modeTrigger,
+    modeMenu,
     quickActions,
+    slashMenu,
     skillSelect,
     themeSelect,
     providerSelect,
     modelSelect,
     modelInput,
     modelRefreshBtn,
+    modelTrigger,
+    modelMenu,
+    modelProviders,
+    modelList,
+    modelKeyBtn,
     sendBtn,
     cancelBtn,
     statusArea,
     chipsArea,
     fileInput,
     attachBtn,
+    reviewBar,
+    reviewLabel,
+    reviewAcceptBtn,
+    reviewRejectBtn,
+    welcome,
     settingsPanel,
     keyRow,
     keyLabel,
@@ -3442,6 +4207,115 @@ function buildPanel(): PanelParts {
     baseUrlInput,
     presetSelect,
   };
+}
+
+/** 글 내용은 그대로 두고 모양만 바꾸는 편집 — 원문을 '사라진 글'로 보이지 않는다. */
+const FORMAT_ONLY_PAYLOADS = new Set<string>(['format', 'para_format', 'page_setup', 'page_number']);
+
+/** 입력창 안내 문구(모드별). */
+const PROMPT_PLACEHOLDER = {
+  edit: '무엇을 쓰거나 고칠까요?  / 빠른 작업',
+  ask: '문서에 대해 물어보세요 — 편집하지 않습니다',
+};
+
+/**
+ * 패널에 쓰는 선 아이콘(24px 그리드, 1.7 선). 앱에 내장된 정적 SVG라 네트워크·폰트
+ * 의존이 없다. 이모지·글자 기호(🕘 ＋ ⋯ ✓ ✗ ⟳)를 대신한다.
+ */
+const ICONS = {
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  history: '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/>',
+  more: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
+  x: '<path d="M18 6 6 18M6 6l12 12"/>',
+  down: '<path d="m6 9 6 6 6-6"/>',
+  right: '<path d="m9 6 6 6-6 6"/>',
+  check: '<path d="M20 6 9 17l-5-5"/>',
+  clip: '<path d="m21.4 11-8.5 8.5a5.5 5.5 0 0 1-7.8-7.8l9.2-9.2a3.7 3.7 0 0 1 5.2 5.2l-9.2 9.2a1.8 1.8 0 0 1-2.6-2.6l8.5-8.5"/>',
+  arrowUp: '<path d="M12 19V5M5 12l7-7 7 7"/>',
+  stop: '<rect x="7" y="7" width="10" height="10" rx="1.5"/>',
+  pencil: '<path d="M17 3a2.8 2.8 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>',
+  chat: '<path d="M21 11.5a8.4 8.4 0 0 1-12.4 7.4L3 21l2.1-5.6A8.4 8.4 0 1 1 21 11.5Z"/>',
+  file: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/>',
+  table: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18"/>',
+  heading: '<path d="M6 4v16M18 4v16M6 12h12"/>',
+  text: '<path d="M4 6h16M4 12h16M4 18h10"/>',
+  hash: '<path d="M4 9h16M4 15h16M10 3 8 21M16 3l-2 18"/>',
+  image: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/>',
+  chart: '<path d="M3 3v18h18"/><path d="M8 17v-6M13 17V7M18 17v-3"/>',
+  replace: '<path d="M4 7h11l-3-3M20 17H9l3 3"/>',
+  layout: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/>',
+  refresh: '<path d="M21 12a9 9 0 0 1-15.5 6.3L3 16"/><path d="M3 12A9 9 0 0 1 18.5 5.7L21 8"/><path d="M21 3v5h-5M3 21v-5h5"/>',
+  gear: '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/>',
+  folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/>',
+  list: '<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',
+  trash: '<path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/>',
+  terminal: '<path d="m4 17 6-6-6-6M12 19h8"/>',
+  cpu: '<rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/>',
+  sparkle: '<path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5 18 18M6 18l2.5-2.5M15.5 8.5 18 6"/>',
+} as const;
+type IconName = keyof typeof ICONS;
+
+/** 선 아이콘 하나(장식용 — 의미는 버튼의 title/aria-label이 전한다). */
+function icon(name: IconName): HTMLElement {
+  const span = el('span', `hop-ai-ic hop-ai-ic-${name}`);
+  span.setAttribute('aria-hidden', 'true');
+  span.innerHTML =
+    '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" ' +
+    `stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${ICONS[name]}</svg>`;
+  return span;
+}
+
+/** 아이콘만 있는 버튼 — 이름은 title·aria-label로 준다. */
+function iconButton(className: string, name: IconName, label: string): HTMLButtonElement {
+  const button = el('button', className) as HTMLButtonElement;
+  button.type = 'button';
+  button.title = label;
+  button.setAttribute('aria-label', label);
+  button.appendChild(icon(name));
+  return button;
+}
+
+/** 팝오버 메뉴 항목 버튼(아이콘 + 이름 + 설명). */
+function menuItemButton(className: string, name: IconName, label: string, desc: string): HTMLButtonElement {
+  const button = el('button', `${className} hop-ai-pop-item`) as HTMLButtonElement;
+  button.type = 'button';
+  button.title = desc;
+  button.append(icon(name), textSpan('hop-ai-pop-label', label), textSpan('hop-ai-pop-desc', desc));
+  return button;
+}
+
+function textSpan(className: string, text: string): HTMLElement {
+  const span = el('span', className);
+  span.textContent = text;
+  return span;
+}
+
+function kbdSpan(text: string): HTMLElement {
+  const kbd = el('kbd', 'hop-ai-kbd');
+  kbd.textContent = text;
+  return kbd;
+}
+
+function popGroupLabel(text: string): HTMLElement {
+  const label = el('div', 'hop-ai-pop-group');
+  label.textContent = text;
+  return label;
+}
+
+/** '방금 · N분 전 · N시간 전 · M/D' 형식의 짧은 시각. */
+function relativeTime(ts: number): string {
+  const diff = Date.now() - ts;
+  if (diff < 60_000) return '방금';
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}분 전`;
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}시간 전`;
+  const d = new Date(ts);
+  return `${d.getMonth() + 1}/${d.getDate()}`;
+}
+
+/** 단축키 표기 — macOS는 ⌘, 그 밖은 Ctrl+. */
+function modKey(key: string): string {
+  const mac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/i.test(navigator.platform ?? '');
+  return mac ? `⌘${key}` : `Ctrl+${key}`;
 }
 
 function el(tag: string, className: string): HTMLElement {
@@ -3479,12 +4353,6 @@ function uid(): string {
 function isTextLike(file: File): boolean {
   if (file.type.startsWith('text/')) return true;
   return /\.(txt|md|markdown|csv|json|html?|xml)$/i.test(file.name);
-}
-
-function attachmentIcon(kind: Attachment['kind']): string {
-  if (kind === 'image') return '🖼';
-  if (kind === 'file') return '📄';
-  return '📎';
 }
 
 /**

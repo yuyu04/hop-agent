@@ -14,6 +14,7 @@ import type { CommandDef, CommandServices, EditorContext, EditorEditMode } from 
 import type { DocumentDirtyState, EventBus, WasmBridge } from '@/upstream/core';
 import { editCommands } from '@/command/commands/edit';
 import { fileCommands } from '@/command/commands/file';
+import { aiCommands } from '@/command/commands/ai';
 import { assertUniqueCommandIds } from '../command/replace-upstream-commands';
 
 interface CommandRuntimeDependencies {
@@ -45,6 +46,7 @@ const commandContributions: readonly CommandDef[][] = [
   tableCommands,
   pageCommands,
   toolCommands,
+  aiCommands,
 ];
 
 assertUniqueCommandIds(commandContributions);
@@ -104,6 +106,9 @@ export function createCommandRuntime(dependencies: CommandRuntimeDependencies): 
     getInputHandler,
     getViewportManager: () => getCanvasView()?.getViewportManager() ?? null,
     gotoPage: (globalPage) => getCanvasView()?.gotoPage(globalPage) ?? false,
+    refreshDocumentStatus: () => {
+      setStatusMessage(`${wasm.fileName} — ${wasm.pageCount}페이지`);
+    },
     setEditMode,
   };
   const dispatcher = new CommandDispatcher(registry, services, eventBus);

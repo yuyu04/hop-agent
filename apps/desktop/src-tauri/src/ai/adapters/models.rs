@@ -152,7 +152,9 @@ fn normalized_base(base_url: Option<&str>) -> Option<String> {
 }
 
 async fn get_json(req: reqwest::RequestBuilder) -> Result<Value, String> {
+    // 목록 조회는 짧은 응답이라 전체 상한을 따로 둔다(공용 클라이언트는 스트리밍용이라 없음).
     let res = req
+        .timeout(std::time::Duration::from_secs(30))
         .send()
         .await
         .map_err(|e| format!("모델 목록 요청 실패: {}", e))?;

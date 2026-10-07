@@ -1,0 +1,57 @@
+id: F-73cbb137
+slug: ai-provider-current-models
+title: "최신 모델(Claude 5.5·GPT-6·Gemini 3.8)에서도 AI 편집 요청이 거부·잘림·글자깨짐 없이 끝까지 온다"
+status: in_progress
+modules:
+  - apps/desktop/src-tauri/src/ai/adapters/anthropic.rs
+  - apps/desktop/src-tauri/src/ai/adapters/gemini.rs
+  - apps/desktop/src-tauri/src/ai/adapters/openai.rs
+  - apps/desktop/src-tauri/src/ai/adapters/sse.rs
+  - apps/desktop/src-tauri/src/ai/adapters/mod.rs
+  - apps/desktop/src-tauri/src/ai/adapters/models.rs
+acceptance_criteria:
+  - id: AC-3cf97593
+    ears: event
+    condition: "When 강제 도구 호출을 거부하는 Claude 모델(Opus 5.5·Sonnet 5.5·Fable 5.1 이후)로 편집을 요청할 때"
+    text: "The system shall tool_choice를 auto로 보내고 시스템 프롬프트로 emit_action_script 호출을 지시하며, 도구 호출 없이 텍스트로 답하면 한 번 더 요청한다 — 구세대(Opus 5·Sonnet 5·4.x·3.x)는 기존처럼 강제 호출을 유지한다."
+    test_refs:
+      - apps/desktop/src-tauri/src/ai/adapters/anthropic.rs
+    notes: |
+      ## Why
+      2026-10-07 모델 목록 갱신 요청. 현행 기본 모델(claude-opus-5-5)은 tool_choice {type:"tool"}을
+      400("tool_choice: type tool and any are not supported for this model")으로 거부한다 —
+      목록에만 추가하면 모든 요청이 실패한다.
+  - id: AC-82aeb866
+    ears: ubiquitous
+    text: "The system shall 출력 토큰 한도를 thinking 토큰까지 감안해 잡고(Anthropic 32K·Gemini 32K), 한도에서 잘리거나(max_tokens·MAX_TOKENS — 도구 호출 전 thinking·텍스트 단계에서 잘린 경우 포함) 안전 정책으로 거절·차단되면(refusal·SAFETY·promptFeedback.blockReason) 잘린 JSON을 파싱하거나 재요청하지 않고 원인을 알리는 오류로 끝낸다."
+    test_refs:
+      - apps/desktop/src-tauri/src/ai/adapters/anthropic.rs
+      - apps/desktop/src-tauri/src/ai/adapters/gemini.rs
+    notes: "최신 모델은 thinking이 항상 켜져 있고 thinking 토큰이 max_tokens에 포함된다. 8192는 긴 문서 생성에서 JSON 중간에 잘렸다."
+  - id: AC-a4eb17f0
+    ears: event
+    condition: "When 안전 분류기를 쓰는 Claude 모델(Opus 5.5·Opus 5·Sonnet 5.5·Fable 5.1)로 요청할 때"
+    text: "The system shall 서버측 refusal fallback(fallbacks:\"default\")을 켜고, 스트림 중간에 다른 모델이 이어받으면 마지막 tool_use 블록의 입력만 결과로 쓴다 — 계정이 그 beta를 거부(400)하면 fallback 없이 다시 보낸다."
+    test_refs:
+      - apps/desktop/src-tauri/src/ai/adapters/anthropic.rs
+  - id: AC-03706ea6
+    ears: ubiquitous
+    text: "The system shall Gemini에 앱의 실제 출력 스키마(편집 스키마·양식 채우기 스키마)를 Gemini 응답 스키마 부분집합으로 변환해 보낸다 — 표·서식·찾아바꾸기·양식 채우기 응답을 Gemini도 만들 수 있다."
+    test_refs:
+      - apps/desktop/src-tauri/src/ai/adapters/gemini.rs
+    notes: "예전 gemini.rs는 편집 4종·문단 텍스트만 담은 간소 스키마를 하드코딩해 Gemini가 확장 명령과 form-fill 응답을 낼 수 없었다(감사 P0-4)."
+  - id: AC-afc4b99e
+    ears: ubiquitous
+    text: "The system shall OpenAI json_schema를 strict:false로 보내고(Action Script는 strict 규칙을 만족하지 않아 400), 스키마를 받지 않는 json_object 모드(ollama·호환 게이트웨이)는 스키마를 시스템 프롬프트에 싣는다."
+    test_refs:
+      - apps/desktop/src-tauri/src/ai/adapters/openai.rs
+  - id: AC-6d1ab20b
+    ears: ubiquitous
+    text: "The system shall 스트리밍 응답을 바이트 단위로 모아 완성된 줄만 디코딩해, 네트워크 청크 경계에 걸린 한글이 깨지지(�) 않게 한다."
+    test_refs:
+      - apps/desktop/src-tauri/src/ai/adapters/sse.rs
+  - id: AC-078633ca
+    ears: ubiquitous
+    text: "The system shall 스트리밍 요청에 전체 소요 시간 상한을 두지 않고 무응답(읽기) 타임아웃만 둔다 — 몇 분 걸리는 긴 문서 생성이 60초에서 끊기지 않는다. 모델 목록 조회는 짧은 전체 상한을 따로 둔다."
+    test_refs:
+      - apps/desktop/src-tauri/src/ai/adapters/mod.rs

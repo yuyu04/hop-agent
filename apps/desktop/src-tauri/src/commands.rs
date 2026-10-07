@@ -376,7 +376,7 @@ pub fn read_local_font(path: String) -> Result<Vec<u8>, String> {
     crate::font_catalog::read_desktop_local_font(Path::new(&path))
 }
 
-fn allow_frontend_fs_file(app: &AppHandle, path: &Path) -> Result<(), String> {
+pub(crate) fn allow_frontend_fs_file(app: &AppHandle, path: &Path) -> Result<(), String> {
     let scope = app.fs_scope();
     scope
         .allow_file(path)

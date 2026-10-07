@@ -19,7 +19,7 @@ acceptance_criteria:
     ears: ubiquitous
     text: "The system shall 내장 기본 모델 목록에 현행 세대 모델을 담고 provider별 기본 선택값도 그 세대로 둔다 — 조회 전(첫 실행·오프라인)에도 낡은 모델이 기본으로 선택되지 않는다."
     test_refs: ["apps/studio-host/src/core/model-catalog.test.ts", "apps/studio-host/src/ui/agent-sidebar.test.ts"]
-    notes: "anthropic 기본값은 claude-opus-5(구: claude-3-5-haiku-latest). 값싼 실행이 필요하면 목록에서 claude-haiku-4-5를 고를 수 있다."
+    notes: "anthropic 기본값은 claude-opus-5-5(2026-10-07 갱신, 이전 claude-opus-5 ← claude-3-5-haiku-latest). openai 기본값 gpt-6.1-sol, gemini 기본값 gemini-3.8-flash(gemini-flash-latest 별칭은 아직 3.5 Flash를 가리켜 기본값에서 내림), ollama 기본값 qwen3.8:27b. 각 provider 공식 모델 문서 기준. 값싼 실행이 필요하면 목록에서 claude-haiku-4-5 등을 고를 수 있다."
   - id: AC-84ccb5d7
     ears: unwanted
     condition: "If 키가 없거나 조회가 실패하면(오프라인·401·엔드포인트 없음)"
@@ -29,6 +29,6 @@ acceptance_criteria:
   - id: AC-6ef889ef
     ears: unwanted
     condition: "If provider가 로컬 CLI 위임(claude-cli·agy-cli)이면"
-    text: "The system shall 모델 목록 조회를 시도하지 않고 CLI가 받는 별칭 목록(default·opus·sonnet·haiku)을 유지한다 — CLI는 모델 목록 API가 없고 별칭만 받는다."
+    text: "The system shall 모델 목록 조회를 시도하지 않고 CLI가 받는 별칭 목록(claude-cli: default·opus·sonnet·fable·haiku·opusplan)을 유지한다 — CLI는 모델 목록 API가 없고 별칭만 받는다."
     test_refs: ["apps/studio-host/src/core/model-catalog.test.ts", "apps/studio-host/src/ui/agent-sidebar.test.ts", "apps/desktop/src-tauri/src/ai/adapters/models.rs"]
     notes: "CLI 위임은 키가 없고 구독/OAuth로 동작한다. 조회를 시도하면 무조건 실패 메시지가 떠서 UX가 나빠진다."

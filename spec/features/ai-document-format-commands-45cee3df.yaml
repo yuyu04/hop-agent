@@ -1,0 +1,55 @@
+id: F-45cee3df
+slug: ai-document-format-commands
+title: "AI가 문단 번호·정렬·줄간격, 쪽 방향·여백, 자동 쪽 번호, 글꼴·형광펜까지 직접 지정한다"
+status: in_progress
+modules:
+  - apps/desktop/src-tauri/src/ai/schema.rs
+  - apps/desktop/src-tauri/src/ai/mod.rs
+  - apps/studio-host/src/core/ai-apply.ts
+  - apps/studio-host/src/core/ai-bridge.ts
+  - apps/studio-host/src/core/doc-theme.ts
+acceptance_criteria:
+  - id: AC-bce2505c
+    ears: event
+    condition: "When 편집이 payload.para_format을 지정할 때(type=para_format REPLACE 또는 텍스트 INSERT/REPLACE에 동봉)"
+    text: "The system shall 그 본문 문단(또는 최상위 표 셀 문단)에 정렬·줄간격·들여쓰기·여백·문단 간격·다음 문단과 함께를 적용하고 텍스트는 바꾸지 않는다."
+    test_refs:
+      - apps/studio-host/src/core/ai-doc-format-commands.test.ts
+  - id: AC-1f969f1d
+    ears: event
+    condition: "When para_format.list가 number·bullet·outline·none일 때"
+    text: "The system shall 문서에 기본 문단 번호/글머리표 정의를 보장하고 그 ID와 수준을 문단에 건다(한글 문단 번호 — 문단을 넣고 빼도 번호가 다시 매겨진다). none이면 번호를 해제한다."
+    test_refs:
+      - apps/studio-host/src/core/ai-doc-format-commands.test.ts
+    notes: "공문서 '1. → 가. → 1)' 위계를 텍스트로 타이핑하면 문단 추가·삭제 때 번호가 어긋났다(감사 누락 명령 1)."
+  - id: AC-0cb85336
+    ears: event
+    condition: "When 편집이 target_id=\"doc\", payload.type=page_setup일 때"
+    text: "The system shall 모든 구역의 용지 크기(A4·A3·B5·Letter)·방향·여백(mm)을 지정한 값만 바꾼다."
+    test_refs:
+      - apps/studio-host/src/core/ai-doc-format-commands.test.ts
+  - id: AC-b1ddd59b
+    ears: event
+    condition: "When 편집이 target_id=\"doc\", payload.type=page_number일 때"
+    text: "The system shall 모든 구역의 꼬리말(또는 머리말)에 자동 쪽 번호 필드를 지정 정렬로 넣는다(plain=1, dash=- 1 -, total=1 / 총쪽수) — 고정 숫자를 쓰지 않는다."
+    test_refs:
+      - apps/studio-host/src/core/ai-doc-format-commands.test.ts
+  - id: AC-9fb77b9d
+    ears: event
+    condition: "When 부분 서식(format) char_format이 font_family·highlight_color·superscript·subscript를 지정할 때"
+    text: "The system shall 글꼴을 문서에 등록해 그 글꼴 ID를, 형광펜은 음영색을, 위/아래 첨자를 그 범위에 적용한다."
+    test_refs:
+      - apps/studio-host/src/core/ai-doc-format-commands.test.ts
+  - id: AC-e0560800
+    ears: ubiquitous
+    text: "The system shall 출력 스키마(type enum·para_format·page_setup·page_number·char_format 확장)와 시스템 프롬프트에 새 명령을 노출하고, target_id=\"doc\"은 찾아 바꾸기·쪽 설정·쪽 번호 payload일 때만 화이트리스트를 통과시킨다."
+    test_refs:
+      - apps/desktop/src-tauri/src/ai/schema.rs
+      - apps/desktop/src-tauri/src/ai/mod.rs
+  - id: AC-5408079a
+    ears: unwanted
+    condition: "If 텍스트 없는 서식 전용 편집(page_setup·page_number·para_format)이 허용되지 않은 대상(문단 ID에 쪽 설정, 누름틀·머리말·각주에 문단 서식, REPLACE가 아닌 문단 서식 등)을 겨누면"
+    text: "The system shall 그 편집을 적용하지 않고 사유와 함께 건너뛴다 — 빈 텍스트로 대상 내용을 지우지 않는다."
+    test_refs:
+      - apps/studio-host/src/core/ai-doc-format-commands.test.ts
+    notes: "2026-10-07 독립 리뷰 BLOCK: page_setup을 sec[0].p[1]에 보내면 deleteText로 그 문단이 지워지고 applied로 보고됐다."

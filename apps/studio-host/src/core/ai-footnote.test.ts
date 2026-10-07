@@ -123,7 +123,7 @@ describe('F-3e2d0f9a AC-001 — 본문 문단에 각주를 새로 단다', () =>
   it('각주를 단 문단을 changed로 보고한다', () => {
     const { wasm } = makeWasm();
     const result = applyActionScript(wasm, script(addFootnote({ text: '출처' })));
-    expect(result.changed).toEqual([{ sec: 0, para: 4 }]);
+    expect(result.changed.map(({ sec, para }) => ({ sec, para }))).toEqual([{ sec: 0, para: 4 }]);
   });
 });
 

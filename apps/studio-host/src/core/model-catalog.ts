@@ -15,19 +15,64 @@ export const CUSTOM_MODEL = '__custom__';
 /**
  * provider별 내장 모델 목록(첫 항목이 기본 선택).
  *
- * anthropic 목록은 번들된 Claude API 레퍼런스(2026-06 기준) 기반이다. openai·gemini·
- * ollama는 세대 교체가 잦아 "새로 고침"으로 실제 목록을 받는 것이 정답이고, 여기 값은
- * 조회 전 폴백이다. gemini는 자체 갱신되는 `-latest` 별칭을 기본값으로 둔다.
+ * 2026-10-07 각 provider 공식 모델 문서 기준(anthropic: Claude API 레퍼런스, openai:
+ * developers.openai.com/api/docs/models/all, gemini: ai.google.dev/gemini-api/docs/models,
+ * ollama: ollama.com/library 태그, openai-compat 예시는 Groq 모델 문서). 세대 교체가 잦아
+ * "새로 고침"으로 실제 목록을 받는 것이 정답이고, 여기 값은 조회 전 폴백이다.
+ *
+ * - anthropic: Opus 5.5가 기본. Sonnet 5.5·Fable 5.1은 강제 도구 호출을 거부하지만
+ *   어댑터가 세대별로 맞춰 보낸다(anthropic.rs). 직전 세대도 남겨 둔다.
+ * - openai: GPT-6 세대 + 퇴역 예정 gpt-5(2026-12 제거)의 대체인 gpt-5.6 Sol/Terra/Luna.
+ * - gemini: `gemini-flash-latest` 별칭은 아직 3.5 Flash를 가리켜 현행 기본값으로 쓰지
+ *   않는다. 2.5 계열은 신규 계정에서 호출할 수 없어 뺐다.
  */
 export const BUILTIN_MODELS: Record<string, readonly string[]> = {
-  anthropic: ['claude-opus-5', 'claude-sonnet-5', 'claude-haiku-4-5', 'claude-opus-4-8'],
-  openai: ['gpt-5-mini', 'gpt-5', 'gpt-4.1', 'gpt-4o', 'gpt-4o-mini'],
-  gemini: ['gemini-flash-latest', 'gemini-pro-latest', 'gemini-2.5-flash', 'gemini-2.5-pro'],
-  ollama: ['llama3.2', 'llama3.1', 'qwen3', 'gemma3', 'mistral'],
-  // CLI 위임은 모델 ID가 아니라 CLI가 아는 별칭만 받는다.
-  'claude-cli': ['default', 'sonnet', 'opus', 'haiku'],
+  anthropic: [
+    'claude-opus-5-5',
+    'claude-sonnet-5-5',
+    'claude-fable-5-1',
+    'claude-haiku-4-5',
+    'claude-opus-5',
+    'claude-sonnet-5',
+    'claude-opus-4-8',
+  ],
+  openai: [
+    'gpt-6.1-sol',
+    'gpt-6-sol',
+    'gpt-6-luna',
+    'gpt-6-astra',
+    'gpt-5.6-sol',
+    'gpt-5.6-terra',
+    'gpt-5.6-luna',
+  ],
+  gemini: [
+    'gemini-3.8-flash',
+    'gemini-3.1-pro-preview',
+    'gemini-3.7-flash',
+    'gemini-3.5-flash-lite',
+    'gemini-flash-latest',
+    'gemini-pro-latest',
+  ],
+  ollama: [
+    'qwen3.8:27b',
+    'gemma4:12b',
+    'qwen3.6:27b',
+    'gpt-oss:20b',
+    'qwen3.5:9b',
+    'mistral-small3.2:24b',
+    'llama3.1:8b',
+  ],
+  // CLI 위임은 모델 ID가 아니라 CLI가 아는 별칭만 받는다(claude: code.claude.com model-config).
+  'claude-cli': ['default', 'opus', 'sonnet', 'fable', 'haiku', 'opusplan'],
+  // agy가 받는 모델 이름은 계정마다 달라(`agy models`) 기본값만 둔다 — 직접 입력 가능.
   'agy-cli': ['default'],
-  'openai-compat': ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'],
+  'openai-compat': [
+    'openai/gpt-oss-120b',
+    'openai/gpt-oss-20b',
+    'qwen/qwen3.8-27b',
+    'llama-3.3-70b-versatile',
+    'llama-3.1-8b-instant',
+  ],
 };
 
 /** 모델 목록 API가 없는 provider — 별칭만 받으므로 조회를 시도하지 않는다. */

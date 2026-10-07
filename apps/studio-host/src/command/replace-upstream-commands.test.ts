@@ -11,6 +11,7 @@ import {
 } from '@/upstream/commands';
 import { editCommands } from './commands/edit';
 import { fileCommands } from './commands/file';
+import { aiCommands } from './commands/ai';
 import { assertUniqueCommandIds, replaceUpstreamCommands } from './replace-upstream-commands';
 import { defaultShortcuts } from './shortcut-map';
 
@@ -24,6 +25,7 @@ const productionCommandGroups = [
   tableCommands,
   pageCommands,
   toolCommands,
+  aiCommands,
 ] as const;
 const productionCommandIds = new Set(productionCommandGroups.flat().map(({ id }) => id));
 

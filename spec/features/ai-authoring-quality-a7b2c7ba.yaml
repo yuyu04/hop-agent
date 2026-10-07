@@ -1,0 +1,85 @@
+id: F-a7b2c7ba
+slug: ai-authoring-quality
+title: "AI가 새 문서를 쓸 때 긴 문서도 끝까지 오고, 문서 유형에 맞는 지침·분량·한국 문서 관례로 쓴다"
+status: in_progress
+modules:
+  - apps/studio-host/src/core/skill-select.ts
+  - apps/studio-host/src/ui/agent-sidebar.ts
+  - apps/studio-host/src/core/ai-apply.ts
+  - apps/studio-host/src/core/doc-theme.ts
+  - apps/desktop/src-tauri/src/ai/mod.rs
+  - apps/desktop/src-tauri/src/ai/schema.rs
+  - apps/desktop/src-tauri/src/ai/skills.rs
+  - apps/desktop/src-tauri/src/ai/skills_default/gongmun.md
+  - apps/desktop/src-tauri/src/ai/skills_default/hwp_edit.md
+  - apps/desktop/src-tauri/src/ai/themes_default/default.json
+  - apps/desktop/src-tauri/src/ai/adapters/anthropic.rs
+  - apps/desktop/src-tauri/src/ai/adapters/gemini.rs
+  - apps/desktop/src-tauri/src/ai/adapters/cli.rs
+acceptance_criteria:
+  - id: AC-8790cc2f
+    ears: event
+    condition: "When 스킬이 '자동'이고 사용자가 지시를 보낼 때"
+    text: "The system shall 낱말 기준 추천 스킬(자동 모드 작성 지침 목록 첫머리의 '낱말 기준 추천', 최종 선택은 AI — F-fb6592e9)을 맞은 트리거의 글자 수 합으로 고른다 — 한 글자 트리거(표·셀·행·열 등)는 낱말 첫머리에서만 맞고(목표·진행·발표에는 안 맞음), 작성 요청(작성·써줘·만들어·초안)에는 편집 전용 스킬(mode: edit, 기본 '한글 문서 편집')을 고르지 않으며, 동점은 파일 순서가 아니라 가장 긴 맞은 트리거로 가린다."
+    test_refs:
+      - apps/studio-host/src/core/skill-select.test.ts
+    notes: |
+      ## Why
+      2026-10-08 실측(작성 E2E): '스마트공장 구축 사업계획서 작성해줘'가 동점으로 '문서 문체'를,
+      '사업계획서를 표와 문단으로 정리해서 작성해줘'가 "새 문서를 쓰지 말라"는 '한글 문서 편집'을 골랐다.
+  - id: AC-8e9f717d
+    ears: ubiquitous
+    text: "The system shall 기본 스킬에 '공문'을 두어 공문·기안문 작성 요청에 자동 선택되게 하고, 그 지침은 수신·(경유)·제목·본문(1.→가.→1)→가) 항목 체계)·붙임·'끝.'·발신명의 순서, 요청하지 않은 붙임을 만들지 않기, 1~2쪽 분량을 담는다."
+    test_refs:
+      - apps/desktop/src-tauri/src/ai/skills.rs
+  - id: AC-5fdd07ba
+    ears: ubiquitous
+    text: "The system shall 시스템 프롬프트에서 '충분히 길게' 규칙을 사업계획서·보고서·제안서류에만 적용하고, 쪽 예산(쪽당 본문 약 1,300자)으로 'N쪽' 요청 분량을 맞추며 쪽을 채우려고 쪽 나눔·빈 문단을 넣지 말게 하고, 공문·안내문·회의록 같은 짧은 문서는 1~2쪽으로, 표 제목(caption)은 표 위·그림·차트 설명은 아래에, 내용이 있는 문서에 위치 지시 없이 쓸 때는 커서 문단 뒤(커서가 없으면 마지막 본문 문단 뒤)에, 한 번에 다 쓰기 어려운 긴 문서는 완결된 절까지만 쓰고 message에 이어 쓸 절을 적게 한다."
+    test_refs:
+      - apps/desktop/src-tauri/src/ai/mod.rs
+  - id: AC-ee075a19
+    ears: event
+    condition: "When 응답이 출력 한도(Anthropic max_tokens·Gemini MAX_TOKENS)에 걸리거나 CLI가 시간 초과로 끊길 때"
+    text: "The system shall 이미 받은 응답에 완결된 편집이 하나 이상 있으면 그 편집들만 살려 미리보기로 보내고 message에 '출력 한도로 N건까지만 받았다 — 이어서 써 달라고 하면 계속한다'를 붙이며, 완결된 편집이 없으면 지금처럼 원인을 알리는 오류로 끝낸다."
+    test_refs:
+      - apps/desktop/src-tauri/src/ai/schema.rs
+      - apps/desktop/src-tauri/src/ai/adapters/anthropic.rs
+      - apps/desktop/src-tauri/src/ai/adapters/gemini.rs
+  - id: AC-ac66fc16
+    ears: ubiquitous
+    text: "The system shall Anthropic 출력 한도를 모델에 맞춘다 — Claude 5.x(Opus·Sonnet·Fable)와 Opus/Sonnet 4.6 이후는 64,000토큰, 그 밖(Haiku 4.5 등)은 32,000토큰."
+    test_refs:
+      - apps/desktop/src-tauri/src/ai/adapters/anthropic.rs
+  - id: AC-ddb1ecc5
+    ears: state
+    condition: "While claude CLI로 요청을 처리하는 동안"
+    text: "The system shall stream-json(부분 메시지 포함)으로 실행해 생성 중인 텍스트를 실시간으로 흘려보내고, stdout·stderr를 실행 중에 계속 읽어 출력이 파이프 버퍼(64KB)보다 커도 멈추지 않으며, 응답 대기 상한은 1,200초로 둔다. CLI 프롬프트의 출력 스키마는 들여쓰기 없이 한 줄로 보낸다."
+    test_refs:
+      - apps/desktop/src-tauri/src/ai/adapters/cli.rs
+    notes: |
+      ## Why
+      stdout을 프로세스 종료 뒤에만 읽어, 64KB를 넘는 긴 문서 응답은 CLI가 쓰기에서 막혀 600초 뒤
+      TIMEOUT으로 전부 버려졌다. 진행 표시도 공백 한 번뿐이라 1~6분 동안 아무것도 보이지 않았다.
+  - id: AC-afcb29ff
+    ears: event
+    condition: "When AI가 새 표를 본문에 INSERT 할 때"
+    text: "The system shall 표 뒤에 빈 문단을 남기지 않고(표 생성이 덧붙인 빈 문단을 걷어 냄), 미리 적용 결과 changed[]의 위치가 실제 문단과 어긋나지 않게 한다."
+    test_refs:
+      - apps/studio-host/src/core/ai-apply-table-trail.test.ts
+  - id: AC-17ba1d6f
+    ears: event
+    condition: "When para_format.list가 번호·글머리표·개요 수준 1 이상이고 margin_left_pt를 따로 주지 않았을 때"
+    text: "The system shall 수준마다 왼쪽 여백(수준×15pt)을 둬 하위 항목(가., 1) 등)이 상위 항목보다 들여써지게 한다."
+    test_refs:
+      - apps/studio-host/src/core/ai-doc-format-commands.test.ts
+  - id: AC-f2a7b136
+    ears: ubiquitous
+    text: "The system shall 기본 테마의 문서 제목·장 제목·소제목(title·heading·subheading)에 '다음 문단과 함께'(keepWithNext)를 켜 쪽 끝에 제목만 홀로 남지 않게 하고, 테마 파일에서 keepWithNext로 바꿀 수 있게 한다."
+    test_refs:
+      - apps/studio-host/src/core/doc-theme.test.ts
+  - id: AC-19a5d929
+    ears: event
+    condition: "When 질문 모드에서 작성 요청(작성·써줘·만들어·초안)을 보낼 때"
+    text: "The system shall 편집 모드로 바꿔 보내고 상태줄에 '작성 요청이라 편집 모드로 보냈다'고 알린다(질문 모드는 문서를 고치지 못해 빈 답만 나오던 문제)."
+    test_refs:
+      - apps/studio-host/src/ui/agent-sidebar-authoring.test.ts

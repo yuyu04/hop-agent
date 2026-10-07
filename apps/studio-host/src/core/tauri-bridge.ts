@@ -351,12 +351,33 @@ export class TauriBridge extends WasmBridge implements DesktopBridgeApi, AiBridg
     return canClose;
   }
 
+  /**
+   * 화면(WASM)에서 편집 중인 문서를 네이티브 세션 코어로 넘긴다.
+   *
+   * AI 컨텍스트·화이트리스트는 네이티브 코어에서 만들어지는데, 그 코어는 열기·저장 때만
+   * 갱신된다. 요청 직전에 맞추지 않으면 저장 전 편집(직전 AI 생성 결과 포함)을 AI가 모른다.
+   * 실패해도 요청은 막지 않는다 — 낡은 컨텍스트가 요청 실패보다 낫다.
+   */
+  private async syncNativeDocumentForAi(docId: string): Promise<void> {
+    if (docId !== this.docId) return;
+    let stagedPath: string | null = null;
+    try {
+      stagedPath = await this.invoke<string>('ai_prepare_document_sync');
+      await this.writeCurrentHwpToPath(stagedPath);
+      await this.invoke<void>('ai_sync_document', { docId, stagedPath });
+    } catch (error) {
+      console.warn('[TauriBridge] AI 문서 동기화 실패 — 마지막 저장본 기준으로 진행:', error);
+      if (stagedPath) await remove(stagedPath).catch(() => undefined);
+    }
+  }
+
   async aiGetDocumentContext(
     docId: string,
     currentSelectionOnly: boolean,
     cursorPath?: string | null,
     fullDocument?: boolean,
   ): Promise<DocumentContext> {
+    await this.syncNativeDocumentForAi(docId);
     return this.invoke<DocumentContext>('ai_get_document_context', {
       docId,
       currentSelectionOnly,
@@ -378,6 +399,7 @@ export class TauriBridge extends WasmBridge implements DesktopBridgeApi, AiBridg
     targetIds?: string[] | null,
     formFillLabels?: string[] | null,
   ): Promise<string> {
+    await this.syncNativeDocumentForAi(docId);
     return this.invoke<string>('ai_request_edit', {
       docId,
       userPrompt,

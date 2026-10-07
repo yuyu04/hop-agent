@@ -46,7 +46,8 @@ describe('createCommandRuntime', () => {
       isEditable: true,
     });
     expect(runtime.services.gotoPage(4)).toBe(true);
-    expect(registeredGroups).toHaveLength(8);
+    // upstream 8개 묶음 + HOP AI 패널 명령(view:ai-panel).
+    expect(registeredGroups).toHaveLength(9);
   });
 
   it('synchronizes form mode with the input handler, DOM, status, and events', () => {

@@ -113,6 +113,67 @@ struct AiEditFailed {
     code: String,
 }
 
+/// AI 동기화용 임시 파일 이름 접두사. 프론트가 넘긴 경로가 우리가 만든 것인지 확인한다.
+const AI_SYNC_PREFIX: &str = "hop-ai-sync-";
+
+/// 프론트(WASM) 문서를 네이티브 세션에 넘길 임시 파일 경로를 만든다.
+///
+/// 문서 바이트는 IPC JSON으로 보내기엔 커서(수 MB), 저장과 같은 방식으로 파일을 거친다.
+#[tauri::command]
+pub fn ai_prepare_document_sync(app: AppHandle) -> Result<String, String> {
+    let path = std::env::temp_dir().join(format!("{}{}.hwp", AI_SYNC_PREFIX, Uuid::new_v4()));
+    crate::commands::allow_frontend_fs_file(&app, &path)?;
+    Ok(path.to_string_lossy().to_string())
+}
+
+/// 프론트가 내보낸 현재 문서로 네이티브 세션 코어를 바꾼다(컨텍스트·화이트리스트의 원천).
+///
+/// 이게 없으면 AI는 마지막으로 열거나 저장한 시점의 문서를 본다 — 저장 전 새 문서에서
+/// "표 하나 더"를 요청하면 방금 만든 내용을 모른 채 엉뚱한 위치를 겨눈다.
+#[tauri::command]
+pub fn ai_sync_document(
+    doc_id: String,
+    staged_path: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let path = std::path::PathBuf::from(&staged_path);
+    let bytes = read_ai_sync_file(&path)?;
+    sync_session_core(&state.sessions, &doc_id, &bytes)
+}
+
+fn read_ai_sync_file(path: &std::path::Path) -> Result<Vec<u8>, String> {
+    let ours = path.parent() == Some(std::env::temp_dir().as_path())
+        && path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with(AI_SYNC_PREFIX) && name.ends_with(".hwp"));
+    if !ours {
+        return Err("AI 동기화 경로가 올바르지 않습니다".to_string());
+    }
+    let bytes = std::fs::read(path).map_err(|e| format!("AI 동기화 파일을 읽지 못했습니다: {}", e));
+    let _ = std::fs::remove_file(path);
+    bytes
+}
+
+/// 바이트를 편집 가능 코어로 파싱해(잠금 밖에서) 세션 코어를 교체한다.
+pub(crate) fn sync_session_core(
+    sessions: &Mutex<crate::state::DocumentSessionManager>,
+    doc_id: &str,
+    bytes: &[u8],
+) -> Result<(), String> {
+    let core = crate::state::editable_core_from_bytes(
+        bytes,
+        "AI 동기화: 문서 파싱 실패",
+        "AI 동기화: 편집 가능 문서 변환 실패",
+    )?;
+    sessions
+        .lock()
+        .map_err(|_| "문서 세션 잠금 실패".to_string())?
+        .session_mut(doc_id)?
+        .replace_core_from_frontend(core);
+    Ok(())
+}
+
 /// 현재 문서를 직렬화해 LLM 피딩용 컨텍스트를 반환한다(스펙 2장).
 ///
 /// `current_selection_only`(Sliding Window)는 후속 PR에서 적용한다.
@@ -350,6 +411,7 @@ pub async fn ai_fetch_image(url: String) -> Result<String, String> {
              (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
         )
         .header(reqwest::header::ACCEPT, "image/avif,image/webp,image/*,*/*")
+        .timeout(std::time::Duration::from_secs(60))
         .send()
         .await
         .map_err(|e| format!("이미지 다운로드 실패: {}", e))?;
@@ -516,34 +578,69 @@ fn emit_validated(
     raw: &str,
     whitelist: &std::collections::HashSet<String>,
 ) {
-    let script = match schema::parse_action_script(raw) {
-        Ok(script) => script,
-        Err(message) => {
-            emit_failed(app, request_id, message, "PARSE_ERROR");
-            return;
+    match validate_edit_response(raw, whitelist) {
+        Ok(script) => {
+            // 원문(raw)은 설명 문장에 둘러싸였을 수 있으므로, 파싱된 스크립트를 다시
+            // 정규 JSON으로 직렬화해 보낸다. 프론트의 단순 JSON.parse가 항상 통과한다.
+            let canonical = serde_json::to_string(&script).unwrap_or_else(|_| raw.to_string());
+            let _ = app.emit(
+                "hop-ai-edit-ready",
+                AiEditReady {
+                    request_id: request_id.to_string(),
+                    action_script_json: canonical,
+                },
+            );
         }
-    };
-
-    let violations = schema::collect_violations(&script, whitelist);
-    if violations.is_empty() {
-        // 원문(raw)은 설명 문장에 둘러싸였을 수 있으므로, 파싱된 스크립트를 다시
-        // 정규 JSON으로 직렬화해 보낸다. 프론트의 단순 JSON.parse가 항상 통과한다.
-        let canonical = serde_json::to_string(&script).unwrap_or_else(|_| raw.to_string());
-        let _ = app.emit(
-            "hop-ai-edit-ready",
-            AiEditReady {
-                request_id: request_id.to_string(),
-                action_script_json: canonical,
-            },
-        );
-    } else {
-        emit_failed(
-            app,
-            request_id,
-            format!("문서에 존재하지 않는 대상입니다: {}", violations.join(", ")),
-            "WHITELIST_VIOLATION",
-        );
+        Err((message, code)) => emit_failed(app, request_id, message, code),
     }
+}
+
+/// 편집 응답을 편집 단위로 검증한다(스펙 7장 4항 — '해당 항목만 스킵' 정책).
+///
+/// 형식이 틀린 편집과 화이트리스트 밖 대상을 겨눈 편집은 그것만 버리고 나머지를
+/// 미리보기로 보낸다 — 새 문서에서 아직 없는 ID를 하나 겨눴다고 100개 편집을 전부 잃지
+/// 않게. 버린 건수는 message 끝에 안내한다. 다만 편집 대부분(과반)이 존재하지 않는 대상을
+/// 겨눴다면 모델이 문서를 잘못 본 것이므로 안전하게 전체를 거부한다. 승인 전 미리보기
+/// 단계가 있어 사용자가 최종 확인한다.
+fn validate_edit_response(
+    raw: &str,
+    whitelist: &std::collections::HashSet<String>,
+) -> Result<schema::ActionScript, (String, &'static str)> {
+    // 끝이 잘린 응답(OpenAI 호환·Ollama의 길이 한도, CLI 시간 초과 등)이면 완결된 편집만 건져 쓴다.
+    let parsed = match schema::parse_action_script_lenient(raw) {
+        Ok(parsed) => parsed,
+        Err(message) => match schema::salvage_truncated_script(raw) {
+            Some(salvaged) => schema::parse_action_script_lenient(&salvaged).map_err(|m| (m, "PARSE_ERROR"))?,
+            None => return Err((message, "PARSE_ERROR")),
+        },
+    };
+    let mut script = parsed.script;
+    let total = script.edits.len();
+    let removed = schema::drop_violations(&mut script, whitelist);
+    if !removed.is_empty() && removed.len() * 2 > total {
+        return Err((
+            format!("문서에 존재하지 않는 대상입니다: {}", removed.join(", ")),
+            "WHITELIST_VIOLATION",
+        ));
+    }
+    if total == 0 && !parsed.dropped.is_empty() {
+        return Err((
+            format!("편집 형식을 해석하지 못했습니다: {}", parsed.dropped.join(" / ")),
+            "PARSE_ERROR",
+        ));
+    }
+    let skipped = parsed.dropped.len() + removed.len();
+    if skipped > 0 {
+        let note = format!(
+            "(응답 중 {}건은 형식 오류이거나 문서에 없는 대상이라 건너뛰었습니다.)",
+            skipped
+        );
+        script.message = Some(match script.message.take() {
+            Some(message) if !message.trim().is_empty() => format!("{} {}", message.trim(), note),
+            _ => note,
+        });
+    }
+    Ok(script)
 }
 
 /// 양식 이어쓰기 응답을 검증해 `hop-ai-edit-ready`로 보낸다(F-ae778890). action_script와
@@ -594,10 +691,16 @@ fn select_provider(
 fn system_prompt() -> String {
     "당신은 한글(HWP) 문서를 편집하는 보조자입니다. \
      반드시 제공된 JSON Schema를 만족하는 Action Script JSON만 출력하세요. \
-     각 편집의 target_id는 입력 문서 컨텍스트에 존재하는 ID여야 합니다. \
-     REPLACE·INSERT_BEFORE·INSERT_AFTER 명령은 payload.text에 새 문단의 전체 \
-     텍스트를 반드시 채워야 합니다. text가 비어 있으면 안 됩니다. 내용을 비우려는 \
-     경우에만 DELETE를 쓰세요. \
+     각 편집의 target_id는 입력 문서 컨텍스트에 존재하는 ID여야 합니다 — 아직 없는 \
+     ID(예: 방금 INSERT 할 문단의 다음 번호)를 지어내지 마세요. 그런 편집은 버려집니다. \
+     payload.type이 없는 일반 문단 REPLACE·INSERT_BEFORE·INSERT_AFTER는 payload.text에 \
+     새 문단의 전체 텍스트를 반드시 채워야 합니다(빈 text 금지). 표·차트·서식·찾아바꾸기 \
+     같은 payload.type 편집은 아래 각 절의 필드를 채우세요. 내용을 비우려는 경우에만 \
+     DELETE를 쓰세요. \
+     [새 문서·빈 문서] 컨텍스트의 본문이 빈 문단 하나뿐이면(새 문서) 첫 제목은 그 문단 \
+     ID(보통 sec[0].p[0])에 REPLACE 하고, 나머지 모든 문단·표·차트는 '같은 ID'에 \
+     INSERT_AFTER로 쓰고 싶은 순서대로 나열하세요 — 같은 ID의 INSERT_AFTER는 입력 \
+     순서대로 뒤에 붙습니다. 빈 첫 문단을 남겨 두지 마세요. \
      표 셀은 `sec[s].p[p].tbl[c].cell[k].p[i]` 형식의 ID로 제공됩니다. 표 안의 값을 \
      바꿀 때는 그 셀 ID로 REPLACE, 셀 안에 내용을 새로 추가할 때는 그 셀 ID로 \
      INSERT_BEFORE/INSERT_AFTER를 쓰세요. \
@@ -612,17 +715,38 @@ fn system_prompt() -> String {
      문서가 표로만 차 있으면 가장 큰(마지막) `.tbl` 없는 `sec[s].p[p]`를 골라 그 뒤에 \
      INSERT_AFTER 하세요. 각 문단은 별도 edit으로 INSERT_AFTER 하고, 새 페이지에서 \
      시작해야 하면 payload.page_break를 true로 설정하세요. \
-     [분량] 사업계획서·보고서·제안서처럼 '문서를 작성/작성해줘'라는 요청이면 충분히 \
-     풍부하고 길게 쓰세요 — 각 절(개요·배경·필요성·목표·내용·추진체계·일정·기대효과 등)을 \
+     [작성 지침] 요청 앞에 '[작성 지침 목록]'이 있으면, 요청 내용과 문서 상태(빈 새 문서에 \
+     쓰는지, 있는 문서를 고치는지)에 가장 맞는 지침 하나를 의미로 골라 그 지침대로 쓰세요 — \
+     낱말이 겹치는지가 아니라 사용자가 만들려는 문서의 종류로 판단합니다(예: 관계기관에 \
+     보내는 알림·요청 문서는 공문). '편집 전용' 지침은 새로 쓰는 요청에 쓰지 마세요. \
+     따른 지침의 이름(### 제목 그대로)을 응답의 skill에 적고, 따른 것이 없으면 빈 문자열로 \
+     두세요. '[작성 스킬: 이름]'으로 지침 하나만 주어지면 그 지침을 따르고 skill에 그 이름을 \
+     적으세요. \
+     [위치] 내용이 있는 문서에 새 글을 쓰라는데 위치 지시가 없으면, 컨텍스트의 \
+     current_cursor_path 문단 뒤에 INSERT_AFTER 하세요. 커서가 없으면 마지막 본문 문단 \
+     (`.tbl` 없는 `sec[s].p[p]` 중 가장 뒤) 뒤에 쓰세요. \
+     [분량] 사업계획서·보고서·제안서·계획서처럼 긴 문서를 '작성해줘'라는 요청이면 충분히 \
+     풍부하게 쓰세요 — 각 절(개요·배경·필요성·목표·내용·추진체계·일정·기대효과 등)을 \
      한 문단으로 끝내지 말고, 도입 문단 + 2~4개의 상세 문단(구체적 수치·예시·근거·세부 \
-     항목)으로 전개하세요. 가능한 한 많은 절과 문단을 별도 edit으로 INSERT_AFTER 하여 \
-     실제 제출 가능한 수준의 분량으로 작성하세요(요약하지 말고 끝까지 구체적으로). 표·그림이 \
-     내용을 보강하면 함께 넣으세요. 단, 사용자가 '간단히/짧게'라고 하면 짧게 쓰세요. \
+     항목)으로 전개해 실제 제출 가능한 수준으로 쓰세요(요약하지 말고 구체적으로). 표·그림이 \
+     내용을 보강하면 함께 넣으세요. 이 '길게' 규칙은 그런 긴 문서에만 적용합니다 — \
+     공문·안내문·회의록·초대장·메모 같은 짧은 문서는 1~2쪽 안에서 끝내고, 요청하지 않은 \
+     붙임·부록·표를 지어내지 마세요. 사용자가 '간단히/짧게'라고 하면 짧게 쓰세요. \
+     쪽 예산: 기본 글꼴에서 한 쪽은 본문 약 1,300자입니다. 'N쪽'을 요청하면 본문 글자 수를 \
+     N×1,300자 안팎으로 맞추고(표는 행 수만큼 쪽을 차지), 쪽을 채우려고 page_break나 \
+     빈 문단을 넣지 마세요 — page_break는 표지 다음·큰 장의 시작처럼 꼭 필요한 곳에만. \
+     한 번의 응답 분량에는 한도가 있습니다. 약 10쪽을 넘는 문서는 앞에서부터 절을 \
+     끝까지 완결해 쓰고, 다 쓰지 못하겠으면 마지막으로 쓴 절을 매듭지은 뒤 message에 \
+     '이어서 쓸 절: …'을 적으세요(사용자가 '이어서 써줘'라고 하면 그 뒤를 이어 씁니다). \
      [디자인] 결과가 보기 좋도록 문단마다 역할(payload.style)을 지정하세요: 문서·절 제목은 \
-     title, 큰 제목은 heading, 소제목은 subheading, 일반 설명은 body, 그림/표 아래 설명은 \
-     caption, 인용문은 quote. 한 문장만 강조하려면 그 문장을 별도 문단으로 INSERT 하고 \
+     title, 큰 제목은 heading, 소제목은 subheading, 일반 설명은 body, 인용문은 quote. \
+     표 제목은 한국 문서 관례대로 표 '위'에 둡니다 — 표를 INSERT 하기 바로 앞에 \
+     '<표 1> 추진 일정'처럼 style=caption 문단을 넣으세요. 그림·차트 설명은 그 '아래'에 \
+     '[그림 1] …' 형식의 caption 문단으로 둡니다. 한 문장만 강조하려면 그 문장을 별도 문단으로 INSERT 하고 \
      style=emphasis. 글꼴 크기·정렬·줄간격은 앱이 일관되게 입히므로, 당신은 역할만 정확히 \
-     고르면 됩니다(긴 글을 한 문단에 몰지 말고 제목/소제목/본문으로 구조화하세요). \
+     고르면 됩니다(긴 글을 한 문단에 몰지 말고 제목/소제목/본문으로 구조화하세요). 단, \
+     사용자가 정렬·줄간격·들여쓰기·번호 매기기를 명시적으로 요구하면 아래 [문단 서식·번호 \
+     매기기]의 payload.para_format을 쓰세요. \
      style을 생략한 INSERT 문단은 body로 처리됩니다. 문단 사이 간격은 style이 자동으로 \
      만들어 주므로, 간격을 띄우려고 '빈 문단'을 INSERT 하지 마세요(빈 줄 금지). \
      표의 머리글 행은 앱이 자동으로 굵게+연한 배경+가운데로 꾸미므로 머리글 칸에 별도 \
@@ -663,9 +787,9 @@ fn system_prompt() -> String {
      ID로 제공됩니다(a: 0=양쪽, 1=짝수 쪽, 2=홀수 쪽). 내용을 바꾸려면 그 ID로 REPLACE \
      하세요. text가 빈 placeholder가 보이면 그 문서에 아직 머리말/꼬리말이 없다는 뜻이고, \
      거기에 REPLACE 하면 새로 만들어져 모든 해당 페이지에 표시됩니다(예: '페이지 머리말에 \
-     회사명 넣어줘'). 줄을 추가하려면 INSERT_AFTER. 각주는 `sec[s].p[p].fn[c].p[i]` ID로 \
-     제공되며 REPLACE(내용 수정)·DELETE(비우기)만 가능합니다 — 새 각주 추가는 지원하지 \
-     않습니다. \
+     회사명 넣어줘'). 줄을 추가하려면 INSERT_AFTER. 기존 각주는 `sec[s].p[p].fn[c].p[i]` \
+     ID로 제공됩니다 — 내용 수정은 그 ID로 REPLACE, 새 각주 달기·떼기는 아래 \
+     [각주 달기/떼기]를 따르세요. \
      [누름틀 템플릿] 컨텍스트에 `field[<번호>:<이름>]` ID가 보이면 이 문서는 사람이 \
      미리 디자인한 양식 템플릿입니다 — 최우선으로 누름틀만 REPLACE로 채우고, 본문 \
      문단 추가·표 생성 같은 구조 변경은 사용자가 명시적으로 요구할 때만 하세요. \
@@ -679,7 +803,26 @@ fn system_prompt() -> String {
      payload.text는 필요 없습니다. format_target은 그 문단에서 한 번만 나와야 합니다 — \
      여러 번 나오면 주변 단어를 포함해 더 길게 잡으세요. 사용자가 선택한 텍스트의 서식을 \
      바꿔 달라고 하면 그 선택 텍스트를 format_target으로 쓰세요(다시 쓰지 말 것). \
-     본문 문단만 지원합니다(표 셀 내부 부분 서식은 아직 불가). \
+     본문 문단만 지원합니다(표 셀 내부 부분 서식은 아직 불가). char_format에는 \
+     font_family(글꼴 이름, 예 \"맑은 고딕\"), highlight_color(형광펜 #RRGGBB), \
+     superscript/subscript도 쓸 수 있습니다. \
+     [문단 서식·번호 매기기] 텍스트는 그대로 두고 문단 모양만 바꾸려면 command=REPLACE, \
+     payload.type=\"para_format\", payload.para_format={alignment, line_spacing_percent, \
+     indent_pt, margin_left_pt, spacing_before_pt, spacing_after_pt, keep_with_next, list}를 \
+     쓰세요(본문 문단 또는 표 셀 문단 ID, 바꿀 속성만). 새 문단을 INSERT/REPLACE 할 때도 \
+     같은 para_format을 함께 넣으면 그 문단에 바로 적용됩니다. 공문서·보고서처럼 \
+     '1. → 가. → 1) → 가)' 위계 번호가 필요하면 번호를 text에 직접 타이핑하지 말고 \
+     para_format.list={kind:\"number\", level:0~6}(0=1수준 '1.', 1=2수준 '가.' …)로 \
+     매기세요 — 문단을 넣고 빼도 번호가 자동으로 다시 매겨집니다. 글머리표는 \
+     {kind:\"bullet\", bullet_char:\"●\"}, 번호 해제는 {kind:\"none\"}. 사용자가 요구하지 \
+     않은 정렬·간격은 지정하지 마세요(style이 정합니다). \
+     [쪽 설정·쪽 번호] 용지 방향·크기·여백을 바꾸려면 command=REPLACE, target_id=\"doc\", \
+     payload.type=\"page_setup\", payload.page_setup={orientation(portrait/landscape), \
+     paper(A4/A3/B5/Letter), margins_mm{top,bottom,left,right}}. 쪽 번호를 넣으려면 \
+     target_id=\"doc\", payload.type=\"page_number\", payload.page_number={position \
+     (footer/header), align(center/left/right), format(plain/dash/total)} — 꼬리말에 '1'을 \
+     직접 쓰면 모든 쪽이 1이 되므로 반드시 이 편집을 쓰세요. 그 위치의 기존 머리말/꼬리말 \
+     내용은 쪽 번호로 대체됩니다. \
      [찾아 바꾸기 — 문단마다 나열하지 말 것] 같은 문자열을 문서 여러 곳에서 바꿔야 하면 \
      (예: '2025년'을 전부 '2026년'으로, 회사명 일괄 변경) 문단마다 REPLACE 편집을 만들지 \
      마세요. command=REPLACE, target_id=\"doc\"(문서 전체를 뜻하는 고정값), \
@@ -820,6 +963,105 @@ mod tests {
     use super::*;
 
     #[test]
+    fn sync_session_core_replaces_stale_native_core_with_frontend_bytes() {
+        let mut manager = crate::state::DocumentSessionManager::default();
+        let opened = manager.create_document().unwrap();
+        // 화면(프론트) 쪽 문서: 새 문서에 본문을 쓴 상태.
+        let mut frontend = hop_rhwp_adapter::DocumentCore::new_empty();
+        frontend.create_blank_document_native().unwrap();
+        frontend.insert_text_native(0, 0, 0, "AI가 방금 만든 제목").unwrap();
+        let bytes = frontend.export_hwp_native().unwrap();
+        let sessions = Mutex::new(manager);
+
+        sync_session_core(&sessions, &opened.doc_id, &bytes).unwrap();
+
+        let mut guard = sessions.lock().unwrap();
+        let session = guard.session_mut(&opened.doc_id).unwrap();
+        let revision_before = opened.revision;
+        assert_eq!(session.revision, revision_before, "저장 상태는 건드리지 않는다");
+        let core = session.ensure_core_loaded().unwrap();
+        let text = core.get_text_range_native(0, 0, 0, 20).unwrap();
+        assert!(text.contains("AI가 방금 만든 제목"), "{text}");
+    }
+
+    #[test]
+    fn sync_session_core_rejects_unknown_document() {
+        let sessions = Mutex::new(crate::state::DocumentSessionManager::default());
+        let mut core = hop_rhwp_adapter::DocumentCore::new_empty();
+        core.create_blank_document_native().unwrap();
+        let bytes = core.export_hwp_native().unwrap();
+        assert!(sync_session_core(&sessions, "missing", &bytes).is_err());
+    }
+
+    fn whitelist(ids: &[&str]) -> std::collections::HashSet<String> {
+        ids.iter().map(|id| id.to_string()).collect()
+    }
+
+    #[test]
+    fn one_hallucinated_target_skips_only_that_edit() {
+        let raw = r#"{"edits":[
+            {"command":"REPLACE","target_id":"sec[0].p[0]","payload":{"text":"제목"}},
+            {"command":"INSERT_AFTER","target_id":"sec[0].p[0]","payload":{"text":"본문 1"}},
+            {"command":"INSERT_AFTER","target_id":"sec[0].p[1]","payload":{"text":"본문 2"}}
+        ],"message":"작성했습니다."}"#;
+        let script = validate_edit_response(raw, &whitelist(&["sec[0].p[0]"])).unwrap();
+        assert_eq!(script.edits.len(), 2);
+        assert!(script.message.unwrap().contains("1건은"));
+    }
+
+    #[test]
+    fn mostly_hallucinated_targets_reject_the_whole_script() {
+        let raw = r#"{"edits":[
+            {"command":"REPLACE","target_id":"sec[0].p[0]","payload":{"text":"a"}},
+            {"command":"REPLACE","target_id":"sec[0].p[7]","payload":{"text":"b"}},
+            {"command":"REPLACE","target_id":"sec[0].p[8]","payload":{"text":"c"}}
+        ]}"#;
+        let (message, code) = validate_edit_response(raw, &whitelist(&["sec[0].p[0]"])).unwrap_err();
+        assert_eq!(code, "WHITELIST_VIOLATION");
+        assert!(message.contains("sec[0].p[7]"));
+    }
+
+    #[test]
+    fn malformed_edit_is_dropped_not_the_whole_response() {
+        // chart values에 문자열("10억") — 예전에는 응답 전체가 PARSE_ERROR였다.
+        let raw = r#"{"edits":[
+            {"command":"INSERT_AFTER","target_id":"sec[0].p[0]","payload":{"text":"본문"}},
+            {"command":"INSERT_AFTER","target_id":"sec[0].p[0]","payload":{"type":"chart",
+             "chart_data":{"kind":"bar","labels":["a"],"series":[{"name":"s","values":["10억"]}]}}}
+        ]}"#;
+        let script = validate_edit_response(raw, &whitelist(&["sec[0].p[0]"])).unwrap();
+        assert_eq!(script.edits.len(), 1);
+        assert!(script.message.unwrap().contains("건너뛰었습니다"));
+    }
+
+    #[test]
+    fn table_dimensions_are_derived_from_matrix_and_fractional_font_size_parses() {
+        let raw = r#"{"edits":[
+            {"command":"INSERT_AFTER","target_id":"sec[0].p[0]","payload":{"type":"table",
+             "table_data":{"matrix":[["a","b","c"],["1","2"]]}}},
+            {"command":"REPLACE","target_id":"sec[0].p[0]","payload":{"type":"format",
+             "char_format":{"font_size_pt":10.5}}}
+        ]}"#;
+        let script = validate_edit_response(raw, &whitelist(&["sec[0].p[0]"])).unwrap();
+        let table = script.edits[0].payload.table_data.as_ref().unwrap();
+        assert_eq!((table.rows, table.cols), (2, 3));
+        let format = script.edits[1].payload.char_format.as_ref().unwrap();
+        assert_eq!(format.font_size_pt, Some(10.5));
+        assert!(script.message.is_none(), "건너뛴 것이 없으면 안내를 붙이지 않는다");
+    }
+
+    #[test]
+    fn ai_sync_file_must_be_our_temp_file() {
+        assert!(read_ai_sync_file(std::path::Path::new("/etc/passwd")).is_err());
+        let foreign = std::env::temp_dir().join("other.hwp");
+        assert!(read_ai_sync_file(&foreign).is_err());
+        let ours = std::env::temp_dir().join(format!("{}test-{}.hwp", AI_SYNC_PREFIX, Uuid::new_v4()));
+        std::fs::write(&ours, b"bytes").unwrap();
+        assert_eq!(read_ai_sync_file(&ours).unwrap(), b"bytes".to_vec());
+        assert!(!ours.exists(), "읽은 뒤 임시 파일을 지운다");
+    }
+
+    #[test]
     fn form_fill_prompt_forbids_tables_and_lists_labels() {
         let prompt = form_fill_system_prompt(&[
             "제목".to_string(),
@@ -913,8 +1155,10 @@ mod tests {
         assert!(prompt.contains("header[a]") || prompt.contains("header"));
         assert!(prompt.contains("placeholder"));
         assert!(prompt.contains("fn[c]"));
-        // 각주는 내용 수정/비우기만 — 새 각주 추가는 미지원임을 명시.
-        assert!(prompt.contains("새 각주 추가는 지원하지"));
+        // 기존 각주는 REPLACE로 고치고, 새 각주는 [각주 달기/떼기] 절로 안내한다 —
+        // 예전의 "새 각주 추가는 지원하지 않습니다"는 각주 달기 기능 이후 모순이었다.
+        assert!(!prompt.contains("새 각주 추가는 지원하지"));
+        assert!(prompt.contains("[각주 달기/떼기]를 따르세요"));
     }
 
     #[test]
@@ -945,4 +1189,276 @@ mod tests {
         assert!(prompt.contains("구조를 인식할 수 없다"));
     }
 
+    // ── F-45cee3df AC-e0560800: 새 서식 명령을 시스템 프롬프트에 노출 ──
+
+    #[test]
+    fn f45cee3df_ac_e0560800_system_prompt_guides_paragraph_formatting_and_numbering() {
+        let prompt = system_prompt();
+        assert!(prompt.contains("[문단 서식·번호 매기기]"));
+        assert!(prompt.contains("payload.type=\"para_format\""));
+        assert!(prompt.contains("para_format.list={kind:\"number\""));
+        // 번호를 텍스트로 타이핑하지 말라는 지시가 핵심이다(감사 누락 명령 1).
+        assert!(prompt.contains("번호를 text에 직접 타이핑하지 말고"));
+        assert!(prompt.contains("{kind:\"none\"}"));
+    }
+
+    #[test]
+    fn f45cee3df_ac_e0560800_system_prompt_guides_page_setup_and_page_numbers() {
+        let prompt = system_prompt();
+        assert!(prompt.contains("[쪽 설정·쪽 번호]"));
+        assert!(prompt.contains("payload.type=\"page_setup\""));
+        assert!(prompt.contains("payload.type=\"page_number\""));
+        assert!(prompt.contains("target_id=\"doc\""));
+        // 꼬리말에 '1'을 직접 쓰지 말고 자동 쪽 번호를 쓰라는 이유까지 안내한다.
+        assert!(prompt.contains("모든 쪽이 1이 되므로"));
+        // 부분 서식 절에 새 char_format 속성도 안내된다.
+        assert!(prompt.contains("font_family"));
+        assert!(prompt.contains("highlight_color"));
+    }
+
+    #[test]
+    fn f45cee3df_ac_e0560800_doc_page_edits_survive_validation() {
+        // 전체 문서 컨텍스트의 화이트리스트에는 "doc"이 들어 있다 — 쪽 설정·쪽 번호는 통과,
+        // "doc"을 겨눈 일반 텍스트 편집은 그것만 버려진다.
+        let raw = r#"{"edits":[
+            {"command":"REPLACE","target_id":"doc","payload":{"type":"page_setup","page_setup":{"orientation":"landscape"}}},
+            {"command":"REPLACE","target_id":"doc","payload":{"type":"page_number","page_number":{"align":"center"}}},
+            {"command":"REPLACE","target_id":"doc","payload":{"text":"전부 이걸로"}}
+        ]}"#;
+        let script = validate_edit_response(raw, &whitelist(&["doc", "sec[0].p[0]"])).unwrap();
+        let kinds: Vec<Option<&str>> = script.edits.iter().map(|e| e.payload.kind.as_deref()).collect();
+        assert_eq!(kinds, vec![Some("page_setup"), Some("page_number")]);
+        assert!(script.message.unwrap().contains("1건은"));
+    }
+
+    #[test]
+    fn f45cee3df_ac_e0560800_type_only_page_number_survives_validation() {
+        let raw = r#"{"edits":[
+            {"command":"REPLACE","target_id":"doc","payload":{"type":"page_number"}}
+        ],"message":"쪽 번호를 넣었습니다."}"#;
+        let script = validate_edit_response(raw, &whitelist(&["doc", "sec[0].p[0]"])).unwrap();
+        assert_eq!(script.edits.len(), 1);
+        assert_eq!(script.edits[0].payload.kind.as_deref(), Some("page_number"));
+        assert_eq!(script.message.as_deref(), Some("쪽 번호를 넣었습니다."), "건너뛴 것이 없다");
+    }
+
+    // ── F-bae302c6 AC-d29d54cb: 시스템 프롬프트의 모순 제거와 새 문서 규칙 ──
+
+    #[test]
+    fn fbae302c6_ac_d29d54cb_system_prompt_has_the_new_document_rule() {
+        let prompt = system_prompt();
+        assert!(prompt.contains("[새 문서·빈 문서]"));
+        // 첫 제목은 빈 첫 문단에 REPLACE, 나머지는 같은 ID에 INSERT_AFTER로 순서대로.
+        assert!(prompt.contains("첫 제목은 그 문단"));
+        assert!(prompt.contains("sec[0].p[0]"));
+        assert!(prompt.contains("'같은 ID'에"));
+        assert!(prompt.contains("같은 ID의 INSERT_AFTER는 입력 순서대로 뒤에 붙습니다"));
+        assert!(prompt.contains("빈 첫 문단을 남겨 두지 마세요"));
+        // 아직 없는 ID(방금 INSERT 할 문단의 다음 번호 등)를 지어내지 말라는 지시.
+        assert!(prompt.contains("아직 없는 ID("));
+        assert!(prompt.contains("를 지어내지 마세요"));
+    }
+
+    #[test]
+    fn fbae302c6_ac_d29d54cb_text_is_required_only_for_untyped_paragraph_edits() {
+        let prompt = system_prompt();
+        assert!(prompt.contains(
+            "payload.type이 없는 일반 문단 REPLACE·INSERT_BEFORE·INSERT_AFTER는 payload.text에"
+        ));
+        assert!(prompt.contains("payload.type 편집은 아래 각 절의 필드를 채우세요"));
+        // 예전의 "모든 REPLACE·INSERT는 text 필수" 문장은 서식·표 편집 지시와 모순이었다.
+        assert!(!prompt.contains("REPLACE·INSERT_BEFORE·INSERT_AFTER 명령은 payload.text에"));
+        assert!(!prompt.contains("text가 비어 있으면 안 됩니다"));
+    }
+
+    // ── F-a7b2c7ba AC-5fdd07ba: 문서 유형별 분량·쪽 예산·캡션 위치·쓰기 위치·긴 문서 분할 ──
+
+    /// 프롬프트에서 `start` 표지부터 `end` 표지 직전까지(해당 절 본문).
+    fn prompt_section(prompt: &str, start: &str, end: &str) -> String {
+        let from = prompt.find(start).unwrap_or_else(|| panic!("{start} 절이 없다"));
+        let rest = &prompt[from..];
+        let to = rest.find(end).unwrap_or_else(|| panic!("{start} 뒤에 {end} 절이 없다"));
+        rest[..to].to_string()
+    }
+
+    fn position(haystack: &str, needle: &str) -> usize {
+        haystack
+            .find(needle)
+            .unwrap_or_else(|| panic!("'{needle}' 문구가 없다:\n{haystack}"))
+    }
+
+    #[test]
+    fn f_a7b2c7ba_ac_5fdd07ba_long_form_rule_applies_only_to_business_plans_reports_proposals() {
+        let prompt = system_prompt();
+        let volume = prompt_section(&prompt, "[분량]", "[디자인]");
+        // '충분히 길게' 규칙의 대상이 긴 문서 유형으로 한정된다.
+        let rich = position(&volume, "사업계획서·보고서·제안서·계획서처럼 긴 문서를 '작성해줘'라는 요청이면 충분히 풍부하게 쓰세요");
+        let scope = position(&volume, "이 '길게' 규칙은 그런 긴 문서에만 적용합니다");
+        assert!(rich < scope, "범위 한정 문장은 '길게' 규칙 뒤에 와야 한다");
+        // 예전의 무조건 '길게·많이' 지시는 사라졌다.
+        assert!(!prompt.contains("풍부하고 길게 쓰세요"));
+        assert!(!prompt.contains("가능한 한 많은 절과 문단"));
+    }
+
+    #[test]
+    fn f_a7b2c7ba_ac_5fdd07ba_short_documents_stay_within_two_pages_without_invented_attachments() {
+        let volume = prompt_section(&system_prompt(), "[분량]", "[디자인]");
+        let short = position(&volume, "공문·안내문·회의록");
+        let pages = position(&volume, "짧은 문서는 1~2쪽 안에서 끝내고");
+        let no_attach = position(&volume, "요청하지 않은 붙임·부록·표를 지어내지 마세요");
+        assert!(short < pages && pages < no_attach);
+    }
+
+    #[test]
+    fn f_a7b2c7ba_ac_5fdd07ba_page_budget_is_1300_chars_per_page_without_padding() {
+        let volume = prompt_section(&system_prompt(), "[분량]", "[디자인]");
+        assert!(volume.contains("한 쪽은 본문 약 1,300자입니다"), "{volume}");
+        assert!(volume.contains("'N쪽'을 요청하면 본문 글자 수를 N×1,300자 안팎으로 맞추고"), "{volume}");
+        // 쪽을 채우려는 쪽 나눔·빈 문단 금지.
+        assert!(volume.contains("쪽을 채우려고 page_break나 빈 문단을 넣지 마세요"), "{volume}");
+    }
+
+    #[test]
+    fn f_a7b2c7ba_ac_5fdd07ba_table_caption_above_figure_caption_below() {
+        let prompt = system_prompt();
+        let design = prompt_section(&prompt, "[디자인]", "[차트]");
+        let table_caption = position(&design, "표 제목은 한국 문서 관례대로 표 '위'에 둡니다");
+        let example = position(&design, "표를 INSERT 하기 바로 앞에 '<표 1> 추진 일정'처럼 style=caption 문단을 넣으세요");
+        let figure = position(&design, "그림·차트 설명은 그 '아래'에 '[그림 1] …' 형식의 caption 문단으로 둡니다");
+        assert!(table_caption < example && example < figure);
+        // 예전의 '그림/표 아래 설명은 caption'(표 캡션을 아래로 보내던 모순 문장)은 없다.
+        assert!(!prompt.contains("그림/표 아래 설명은"));
+        assert!(!prompt.contains("표 아래 설명"));
+    }
+
+    #[test]
+    fn f_a7b2c7ba_ac_5fdd07ba_unplaced_writing_goes_after_cursor_else_last_body_paragraph() {
+        let placement = prompt_section(&system_prompt(), "[위치]", "[분량]");
+        let condition = position(&placement, "내용이 있는 문서에 새 글을 쓰라는데 위치 지시가 없으면");
+        let cursor = position(&placement, "current_cursor_path 문단 뒤에 INSERT_AFTER 하세요");
+        let fallback = position(&placement, "커서가 없으면 마지막 본문 문단");
+        assert!(condition < cursor && cursor < fallback);
+        assert!(placement.contains("`.tbl` 없는 `sec[s].p[p]` 중 가장 뒤) 뒤에 쓰세요"), "{placement}");
+    }
+
+    #[test]
+    fn f_a7b2c7ba_ac_5fdd07ba_very_long_documents_finish_whole_sections_and_name_the_next_one() {
+        let volume = prompt_section(&system_prompt(), "[분량]", "[디자인]");
+        let complete = position(&volume, "앞에서부터 절을 끝까지 완결해 쓰고");
+        let next = position(&volume, "message에 '이어서 쓸 절: …'을 적으세요");
+        assert!(complete < next);
+        assert!(volume.contains("마지막으로 쓴 절을 매듭지은 뒤"), "{volume}");
+    }
+
+    // ── F-a7b2c7ba AC-ee075a19: 잘린 응답은 PARSE_ERROR 대신 완결된 편집만 살린다 ──
+
+    #[test]
+    fn f_a7b2c7ba_ac_ee075a19_truncated_response_is_salvaged_not_a_parse_error() {
+        let raw = r#"{"message":"보고서를 작성했습니다.","edits":[
+            {"command":"REPLACE","target_id":"sec[0].p[0]","payload":{"text":"결과 보고서","style":"title"}},
+            {"command":"INSERT_AFTER","target_id":"sec[0].p[0]","payload":{"text":"1. 개요","style":"heading"}},
+            {"command":"INSERT_AFTER","target_id":"sec[0].p[0]","payload":{"text":"본문이 쓰이다 끊"#;
+        let script = validate_edit_response(raw, &whitelist(&["sec[0].p[0]"]))
+            .expect("완결된 편집 2건이 있으면 미리보기로 보내야 한다");
+        let texts: Vec<_> = script.edits.iter().map(|e| e.payload.text.clone().unwrap_or_default()).collect();
+        assert_eq!(texts, vec!["결과 보고서", "1. 개요"]);
+        let message = script.message.unwrap_or_default();
+        assert!(message.starts_with("보고서를 작성했습니다."), "{message}");
+        assert!(message.contains("출력 한도"), "{message}");
+        assert!(message.contains("앞의 2건"), "{message}");
+        assert!(message.contains("이어서 써줘"), "{message}");
+    }
+
+    #[test]
+    fn f_a7b2c7ba_ac_ee075a19_truncated_response_without_a_complete_edit_is_still_a_parse_error() {
+        let raw = r#"{"message":"작성 중","edits":[{"command":"REPLACE","target_id":"sec[0].p[0]","payload":{"te"#;
+        let (_, code) = validate_edit_response(raw, &whitelist(&["sec[0].p[0]"])).unwrap_err();
+        assert_eq!(code, "PARSE_ERROR");
+    }
+
+    // ── F-fb6592e9 AC-ae417d5d: 시스템 프롬프트가 지침 선택·skill 기입을 시키고, 검증을 거친
+    //    스크립트(프런트로 보내는 정규 JSON)에 skill이 남는다 ──
+
+    /// `[작성 지침]` 문단만(다음 `[…]` 절 앞까지) 떼어 본다 — 다른 절의 같은 낱말에 속지 않게.
+    fn authoring_guideline_rule(prompt: &str) -> &str {
+        let head = "[작성 지침]";
+        let start = prompt.find(head).expect("시스템 프롬프트에 [작성 지침] 절이 있어야 한다");
+        let rest = &prompt[start + head.len()..];
+        let end = rest.find(" [").unwrap_or(rest.len());
+        &rest[..end]
+    }
+
+    #[test]
+    fn f_fb6592e9_ac_ae417d5d_system_prompt_has_the_guideline_choice_rule() {
+        let prompt = system_prompt();
+        let rule = authoring_guideline_rule(&prompt);
+        // 목록이 있을 때 하나를 의미로 고른다(낱말 일치가 아니라 만들려는 문서 종류로).
+        assert!(rule.contains("'[작성 지침 목록]'이 있으면"), "{rule}");
+        assert!(rule.contains("지침 하나를 의미로 골라"), "{rule}");
+        assert!(rule.contains("낱말이 겹치는지가 아니라"), "{rule}");
+        // 편집 전용 지침은 새로 쓰는 요청에 쓰지 않는다.
+        assert!(rule.contains("'편집 전용' 지침은 새로 쓰는 요청에 쓰지 마세요"), "{rule}");
+        // 따른 지침 이름을 skill에, 없으면 빈 문자열.
+        assert!(rule.contains("응답의 skill에 적고"), "{rule}");
+        assert!(rule.contains("따른 것이 없으면 빈 문자열"), "{rule}");
+        // 직접 고른 스킬 하나만 주어진 경우.
+        assert!(rule.contains("'[작성 스킬: 이름]'으로 지침 하나만 주어지면"), "{rule}");
+        assert!(rule.contains("skill에 그 이름을"), "{rule}");
+    }
+
+    #[test]
+    fn f_fb6592e9_ac_ae417d5d_validated_script_json_carries_skill_to_the_frontend() {
+        let raw = r#"{"message":"공문을 작성했습니다.","skill":"공문","edits":[
+            {"command":"REPLACE","target_id":"sec[0].p[0]","payload":{"text":"협조 요청"}}
+        ]}"#;
+        let script = validate_edit_response(raw, &whitelist(&["sec[0].p[0]"])).unwrap();
+        assert_eq!(script.skill.as_deref(), Some("공문"));
+        // emit_validated가 hop-ai-edit-ready로 보내는 것과 같은 직렬화.
+        let json = serde_json::to_string(&script).unwrap();
+        assert!(json.contains(r#""skill":"공문""#), "{json}");
+    }
+
+    #[test]
+    fn f_fb6592e9_ac_ae417d5d_skill_survives_dropping_a_whitelist_violation() {
+        // 편집 3건 중 1건이 없는 대상 → 그것만 버리고(과반 아님) 나머지와 skill은 보낸다.
+        let raw = r#"{"skill":"보고서","edits":[
+            {"command":"REPLACE","target_id":"sec[0].p[0]","payload":{"text":"제목"}},
+            {"command":"INSERT_AFTER","target_id":"sec[0].p[0]","payload":{"text":"본문"}},
+            {"command":"INSERT_AFTER","target_id":"sec[0].p[9]","payload":{"text":"없는 대상"}}
+        ]}"#;
+        let script = validate_edit_response(raw, &whitelist(&["sec[0].p[0]"])).unwrap();
+        assert_eq!(script.edits.len(), 2);
+        assert_eq!(script.skill.as_deref(), Some("보고서"));
+        let json = serde_json::to_string(&script).unwrap();
+        assert!(json.contains(r#""skill":"보고서""#), "{json}");
+    }
+
+    #[test]
+    fn f_fb6592e9_ac_ae417d5d_skill_survives_truncation_salvage() {
+        let raw = r#"{"skill":"사업계획서","message":"작성 중","edits":[
+            {"command":"REPLACE","target_id":"sec[0].p[0]","payload":{"text":"사업계획서","style":"title"}},
+            {"command":"INSERT_AFTER","target_id":"sec[0].p[0]","payload":{"text":"본문이 쓰이다 끊"#;
+        let script = validate_edit_response(raw, &whitelist(&["sec[0].p[0]"]))
+            .expect("완결된 편집 1건이 있으면 살린다");
+        assert_eq!(script.edits.len(), 1);
+        assert_eq!(script.skill.as_deref(), Some("사업계획서"));
+        let json = serde_json::to_string(&script).unwrap();
+        assert!(json.contains(r#""skill":"사업계획서""#), "{json}");
+    }
+
+    #[test]
+    fn f_fb6592e9_ac_ae417d5d_skill_survives_a_prose_wrapped_cli_response() {
+        let raw = "다음과 같이 작성했습니다.\n{\"skill\":\"공문\",\"edits\":[{\"command\":\"REPLACE\",\"target_id\":\"sec[0].p[0]\",\"payload\":{\"text\":\"협조 요청\"}}]}\n이상입니다.";
+        let script = validate_edit_response(raw, &whitelist(&["sec[0].p[0]"])).unwrap();
+        assert_eq!(script.skill.as_deref(), Some("공문"));
+    }
+
+    #[test]
+    fn f_fb6592e9_ac_ae417d5d_response_without_skill_emits_no_skill_key() {
+        let raw = r#"{"edits":[{"command":"REPLACE","target_id":"sec[0].p[0]","payload":{"text":"x"}}]}"#;
+        let script = validate_edit_response(raw, &whitelist(&["sec[0].p[0]"])).unwrap();
+        assert_eq!(script.skill, None);
+        let json = serde_json::to_string(&script).unwrap();
+        assert!(!json.contains("skill"), "{json}");
+    }
 }

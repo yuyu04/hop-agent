@@ -1,0 +1,76 @@
+id: F-15098e10
+slug: ai-panel-cursor-layout
+title: "AI 패널이 커서 채팅처럼 보이고 동작한다 — 앱 테마 색, 입력 카드 하나, 한 줄 변경 목록, 고정 검토 바"
+status: in_progress
+modules:
+  - apps/studio-host/src/ui/agent-sidebar.ts
+  - apps/studio-host/src/styles/agent-sidebar.css
+  - apps/studio-host/src/core/ai-diff.ts
+  - apps/studio-host/index.html
+  - apps/studio-host/src/main.ts
+  - apps/studio-host/src/command/shortcut-map.ts
+  - apps/studio-host/src/host/command-runtime.ts
+acceptance_criteria:
+  - id: AC-a0e24ea5
+    ears: ubiquitous
+    text: "The system shall AI 패널과 문서 위 검토 요소의 색을 앱 테마 토큰(--ui-*, --color-*)에서 가져와, 앱이 다크·스킨으로 바뀌면 함께 바뀐다 — 패널 자체 고정 팔레트를 두지 않는다."
+    test_refs:
+      - apps/studio-host/src/ui/agent-sidebar-layout.test.ts
+    notes: |
+      ## Why
+      2026-10-08 화면 점검: 앱은 회색인데 패널만 베이지 종이색이었고, 다크 모드에서 패널만 밝게 남았다.
+      사용자가 '앱 테마 무채색'을 골랐다(개편안 artifact 076ec63d).
+  - id: AC-c20c4990
+    ears: ubiquitous
+    text: "The system shall 헤더 한 줄에 대화 탭과 새 대화·대화 기록·메뉴·닫기 버튼을 두고, 패널의 버튼 아이콘은 이모지·글자 기호 대신 앱에 내장된 선 아이콘(SVG)으로 그린다."
+    test_refs:
+      - apps/studio-host/src/ui/agent-sidebar-layout.test.ts
+  - id: AC-7b26a7fa
+    ears: event
+    condition: "When 사용자가 입력창 맨 앞에 /를 입력할 때"
+    text: "The system shall 빠른 작업 메뉴(간결하게·격식 있게·길게·문법 교정·변형 제안·전체 교정·요약·양식 항목 추가)를 열고, 뒤에 입력한 글자로 걸러 고르면(클릭 또는 Enter) 그 작업을 실행한다. 스킬·테마 선택은 이 메뉴 아래쪽에 있고, 입력 영역에는 빠른 작업 버튼을 상시 노출하지 않는다."
+    test_refs:
+      - apps/studio-host/src/ui/agent-sidebar-layout.test.ts
+  - id: AC-e8a6c4ab
+    ears: event
+    condition: "When 사용자가 입력창 아래의 모델 버튼(현재 모델 이름)을 누를 때"
+    text: "The system shall 제공자 전환·그 제공자의 모델 목록·직접 입력·목록 새로 고침·API 키 설정을 담은 팝오버를 열고, 고른 값은 기존 제공자/모델 선택과 같은 경로로 반영한다. 모드(편집/질문)도 입력창 아래 드롭다운으로 고른다."
+    test_refs:
+      - apps/studio-host/src/ui/agent-sidebar-layout.test.ts
+  - id: AC-c4f32f85
+    ears: state
+    condition: "While AI 제안이 승인 대기(미리보기) 상태인 동안"
+    text: "The system shall 입력창 바로 위에 '변경 N건' 검토 바(모두 거절·모두 승인)를 고정 표시하고, 변경을 개별 제외하면 N을 갱신하며, 승인·거절·취소로 대기가 끝나면 숨긴다."
+    test_refs:
+      - apps/studio-host/src/ui/agent-sidebar-layout.test.ts
+  - id: AC-0643a456
+    ears: ubiquitous
+    text: "The system shall 변경 목록을 변경마다 한 줄(종류 아이콘·위치·종류·내용 요약·+추가/−삭제 글자 수)로 보여주고 줄 끝에 제외(제외한 줄은 다시 포함) 버튼을 두며, 줄을 누르면 바꿈·삭제는 전후 비교를, 추가는 넣을 내용을 펼쳐 보이고 문서의 그 위치로 이동한다(변경이 1건이면 처음부터 펼친다). 목록 위에는 '변경 N건 · 추가 a · 바꿈 b · 삭제 c' 요약이 있다."
+    test_refs:
+      - apps/studio-host/src/ui/agent-sidebar-layout.test.ts
+      - apps/studio-host/src/core/ai-diff.test.ts
+  - id: AC-759eeed0
+    ears: state
+    condition: "While 요청을 처리하는 동안"
+    text: "The system shall 보내기 버튼 자리에 정지 버튼을 보이고(누르면 요청 취소), 답변 자리에 '생각 중 · N초' 경과 표시를 1초마다 갱신한다."
+    test_refs:
+      - apps/studio-host/src/ui/agent-sidebar-layout.test.ts
+  - id: AC-ee6c9340
+    ears: state
+    condition: "While 활성 대화에 메시지가 없는 동안"
+    text: "The system shall 입력창 아래에 최근 대화(저장된 대화 최대 3개)와 자주 쓰는 작업을 보여주고, 누르면 그 대화를 열거나 작업을 시작한다."
+    test_refs:
+      - apps/studio-host/src/ui/agent-sidebar-layout.test.ts
+  - id: AC-a2df0019
+    ears: event
+    condition: "When 사용자가 툴바의 AI 버튼을 누르거나 ⌘J(Ctrl+J)를 누를 때"
+    text: "The system shall AI 패널을 열고 닫으며 툴바 버튼에 열림 상태를 표시한다. 문서 위에 떠 있는 둥근 AI 버튼은 두지 않는다."
+    test_refs:
+      - apps/studio-host/src/ui/agent-sidebar-layout.test.ts
+      - apps/studio-host/src/command/shortcut-map.test.ts
+  - id: AC-62671196
+    ears: event
+    condition: "When AI 패널에 초점이 있고 승인 대기 중일 때 ⌘⏎(Ctrl+Enter), 또는 입력창이 비어 있거나 입력창 밖에서 ⌘⌫(Ctrl+Backspace)를 누를 때, 또는 요청 중 Esc를 누를 때"
+    text: "The system shall 각각 모두 승인, 모두 거절, 생성 중지를 실행한다. 문서 편집 중의 ⌘⏎(쪽 나누기) 등 기존 단축키는 바꾸지 않는다."
+    test_refs:
+      - apps/studio-host/src/ui/agent-sidebar-layout.test.ts

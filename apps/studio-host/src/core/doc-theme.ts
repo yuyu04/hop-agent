@@ -25,6 +25,8 @@ export interface DocThemeStyle {
   afterPt?: number;
   /** 왼쪽 들여쓰기(pt) — 인용 등. */
   indentPt?: number;
+  /** 다음 문단과 함께 — 제목이 쪽 끝에 홀로 남지 않게 다음 문단과 같은 쪽에 둔다. */
+  keepWithNext?: boolean;
   /** 문서에 정의된 '스타일 이름'(예: "개요 1", "본문"). 지정되어 있고 문서에서 찾으면
    *  수치 서식 대신 그 스타일을 적용한다(한컴 스타일 시스템 — 문서 전체 일관성 유지,
    *  나중에 한컴에서 스타일만 바꿔 전체 모양 변경 가능). 못 찾으면 수치로 폴백. */
@@ -66,16 +68,16 @@ export interface CompiledTheme {
 // 저장된다(렌더러가 /2) → 화면의 1pt = 200. ai-edit-coverage 메모리/serialize.rs
 // spacing_probe 단위 계약 테스트 참고.
 const FONT_PT = 100;
-const SPACING_PT = 200;
+export const SPACING_PT = 200;
 
 /** 번들 기본 테마(themes_default/기본.json과 동일 값 — 파일을 못 읽어도 항상 동작). */
 export const DEFAULT_THEME: DocTheme = {
   id: 'default',
   name: '기본',
   styles: {
-    title: { bold: true, fontPt: 18, color: '#1A1A1A', align: 'center', beforePt: 8, afterPt: 14 },
-    heading: { bold: true, fontPt: 14, color: '#1F3864', beforePt: 16, afterPt: 6 },
-    subheading: { bold: true, fontPt: 12, color: '#2F2F2F', beforePt: 12, afterPt: 4 },
+    title: { bold: true, fontPt: 18, color: '#1A1A1A', align: 'center', beforePt: 8, afterPt: 14, keepWithNext: true },
+    heading: { bold: true, fontPt: 14, color: '#1F3864', beforePt: 16, afterPt: 6, keepWithNext: true },
+    subheading: { bold: true, fontPt: 12, color: '#2F2F2F', beforePt: 12, afterPt: 4, keepWithNext: true },
     body: { fontPt: 10, align: 'justify', lineSpacingPercent: 180, afterPt: 3 },
     caption: { fontPt: 9, color: '#666666', align: 'center', beforePt: 3, afterPt: 8 },
     quote: { italic: true, color: '#444444', indentPt: 20, lineSpacingPercent: 160 },
@@ -104,6 +106,7 @@ function compileStyle(style: DocThemeStyle): {
   if (typeof style.beforePt === 'number') para.spacingBefore = Math.round(style.beforePt * SPACING_PT);
   if (typeof style.afterPt === 'number') para.spacingAfter = Math.round(style.afterPt * SPACING_PT);
   if (typeof style.indentPt === 'number') para.marginLeft = Math.round(style.indentPt * SPACING_PT);
+  if (typeof style.keepWithNext === 'boolean') para.keepWithNext = style.keepWithNext;
 
   return {
     ...(Object.keys(char).length ? { char } : {}),

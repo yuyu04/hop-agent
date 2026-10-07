@@ -45,8 +45,8 @@ use ai::{
     ai_open_skills_dir,
     ai_open_themes_dir,
     ai_parse_research_note_docx, ai_parse_research_note_pdf, ai_render_pdf_figure_pages,
-    ai_request_edit, ai_extract_text,
-    ai_set_api_key, ai_set_document_sensitivity,
+    ai_prepare_document_sync, ai_request_edit, ai_extract_text,
+    ai_set_api_key, ai_set_document_sensitivity, ai_sync_document,
 };
 use state::AppState;
 use updates::{get_update_state, restart_to_apply_update, start_update_install};
@@ -128,6 +128,8 @@ pub fn run() {
             start_update_install,
             restart_to_apply_update,
             ai_get_document_context,
+            ai_prepare_document_sync,
+            ai_sync_document,
             ai_request_edit,
             ai_cancel_request,
             ai_set_api_key,

@@ -21,8 +21,12 @@ pub enum EditCommand {
 /// 표 편집용 payload.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TableData {
+    /// 생략하면 matrix에서 유도한다(`normalize`).
+    #[serde(default)]
     pub rows: u32,
+    #[serde(default)]
     pub cols: u32,
+    #[serde(default)]
     pub matrix: Vec<Vec<String>>,
     /// 병합할 셀 영역들(선택). 헤더 병합·세로 병합 등에 쓴다.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -127,7 +131,7 @@ pub struct ChartData {
 impl Eq for ChartData {}
 
 /// 런 단위 부분 서식 스펙(payload.type="format"). 텍스트 내용은 바꾸지 않는다.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CharFormatSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bold: Option<bool>,
@@ -137,12 +141,112 @@ pub struct CharFormatSpec {
     pub underline: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub strikethrough: Option<bool>,
-    /// 글자 크기(pt). 적용 시 HWPUNIT(pt×100)으로 변환된다.
+    /// 글자 크기(pt). 적용 시 HWPUNIT(pt×100)으로 변환된다. 10.5pt 같은 소수도 받는다
+    /// (정수만 받으면 한 값 때문에 응답 전체가 파싱 실패했다).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub font_size_pt: Option<u32>,
+    pub font_size_pt: Option<f64>,
     /// 글자 색 "#RRGGBB".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text_color: Option<String>,
+    /// 글꼴 이름(예 "맑은 고딕"). 문서에 없으면 앱이 등록한다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font_family: Option<String>,
+    /// 형광펜(음영) 색 "#RRGGBB".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub highlight_color: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub superscript: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subscript: Option<bool>,
+}
+
+impl Eq for CharFormatSpec {}
+
+/// 문단 서식·번호 목록 스펙(payload.type="para_format", 또는 텍스트 INSERT/REPLACE에 동봉).
+///
+/// 테마(payload.style)가 정한 기본 서식 위에 덮어쓴다 — 사용자가 "오른쪽 정렬", "1. 가. 번호
+/// 매기기", "줄간격 160%"처럼 명시적으로 요구한 경우에만 채운다.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ParaFormatSpec {
+    /// "left" | "center" | "right" | "justify" | "distribute"
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alignment: Option<String>,
+    /// 줄 간격(%) — 예 160.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_spacing_percent: Option<f64>,
+    /// 첫 줄 들여쓰기(pt). 음수면 내어쓰기.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub indent_pt: Option<f64>,
+    /// 왼쪽 여백(pt).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub margin_left_pt: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spacing_before_pt: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spacing_after_pt: Option<f64>,
+    /// 다음 문단과 같은 쪽에 두기(제목이 쪽 끝에 홀로 남지 않게).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keep_with_next: Option<bool>,
+    /// 번호·글머리표 목록.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub list: Option<ListSpec>,
+}
+
+impl Eq for ParaFormatSpec {}
+
+/// 문단 번호/글머리표(한글의 문단 번호·글머리표·개요 번호).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ListSpec {
+    /// "number"(1. 가. 1) …) | "bullet"(● ■ …) | "outline"(개요 번호) | "none"(해제)
+    pub kind: String,
+    /// 수준 0~6(0=1수준).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub level: Option<u32>,
+    /// bullet일 때 글머리표 문자(생략 시 ●).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bullet_char: Option<String>,
+}
+
+/// 쪽 설정(payload.type="page_setup", target_id="doc") — 모든 구역에 적용.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PageSetupSpec {
+    /// "portrait" | "landscape"
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub orientation: Option<String>,
+    /// "A4" | "A3" | "B5" | "Letter"
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paper: Option<String>,
+    /// 여백(mm). 지정한 변만 바뀐다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub margins_mm: Option<MarginsMm>,
+}
+
+impl Eq for PageSetupSpec {}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MarginsMm {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub top: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bottom: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub left: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub right: Option<f64>,
+}
+
+/// 쪽 번호(payload.type="page_number", target_id="doc") — 머리말/꼬리말에 자동 쪽 번호 필드.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PageNumberSpec {
+    /// "footer"(기본) | "header"
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position: Option<String>,
+    /// "center"(기본) | "left" | "right"
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub align: Option<String>,
+    /// "plain"(1) | "dash"(- 1 -) | "total"(1 / 10)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub format: Option<String>,
 }
 
 /// 문서 전역 찾아 바꾸기 스펙(payload.type="replace_text", F-293e8c99).
@@ -267,6 +371,15 @@ pub struct EditPayload {
     /// type="paste_html"일 때: HTML을 서식 유지한 채 붙여넣는다.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub paste_html: Option<PasteHtmlSpec>,
+    /// type="para_format"이거나 텍스트 INSERT/REPLACE에 동봉: 문단 서식·번호 목록.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub para_format: Option<ParaFormatSpec>,
+    /// type="page_setup"일 때(target_id="doc"): 용지 방향·크기·여백.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page_setup: Option<PageSetupSpec>,
+    /// type="page_number"일 때(target_id="doc"): 머리말/꼬리말 쪽 번호.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page_number: Option<PageNumberSpec>,
     /// INSERT 시 참이면 새 페이지에서 시작(본문 문단에만 적용).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub page_break: Option<bool>,
@@ -297,6 +410,9 @@ pub struct ActionScript {
     /// 사용자에게 보여줄 대화형 요약(무엇을 했는지/못 했으면 이유). 한국어 1~3문장.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
+    /// 요청 앞 '작성 지침 목록'에서 골라 따른 지침의 이름(없으면 빈 문자열/생략).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skill: Option<String>,
 }
 
 /// LLM 응답 문자열을 `ActionScript`로 파싱한다.
@@ -325,6 +441,199 @@ pub fn parse_action_script(raw: &str) -> Result<ActionScript, String> {
         "Action Script JSON 파싱 실패. 받은 응답 일부: {}",
         preview(cleaned, 200)
     ))
+}
+
+/// 편집 단위로 관대하게 파싱한 결과.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LenientScript {
+    pub script: ActionScript,
+    /// 형식이 맞지 않아 버린 편집 설명(사용자 안내용).
+    pub dropped: Vec<String>,
+}
+
+/// LLM 응답을 편집 하나씩 파싱한다 — 한 편집의 형식 오류(예: 숫자 자리에 문자열)가
+/// 응답 전체를 버리게 하지 않는다. 최상위 구조(`edits` 배열)가 없을 때만 실패한다.
+pub fn parse_action_script_lenient(raw: &str) -> Result<LenientScript, String> {
+    let strict_error = match parse_action_script(raw) {
+        Ok(mut script) => {
+            normalize_script(&mut script);
+            return Ok(LenientScript {
+                script,
+                dropped: Vec::new(),
+            });
+        }
+        Err(message) => message,
+    };
+    let cleaned = strip_code_fences(raw).trim();
+    // 빈 응답은 관대 파싱으로 살릴 게 없다 — "다른 모델로 시도" 안내를 그대로 돌려준다.
+    if cleaned.is_empty() {
+        return Err(strict_error);
+    }
+    let value: Value = serde_json::from_str(cleaned)
+        .ok()
+        .or_else(|| extract_braced_object(cleaned).and_then(|b| serde_json::from_str(b).ok()))
+        .ok_or_else(|| {
+            format!(
+                "Action Script JSON 파싱 실패. 받은 응답 일부: {}",
+                preview(cleaned, 200)
+            )
+        })?;
+    let edits_value = value
+        .get("edits")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "Action Script에 edits 배열이 없습니다.".to_string())?;
+    let mut edits = Vec::new();
+    let mut dropped = Vec::new();
+    for (index, item) in edits_value.iter().enumerate() {
+        match serde_json::from_value::<Edit>(item.clone()) {
+            Ok(edit) => edits.push(edit),
+            Err(error) => dropped.push(format!("편집 {}번 형식 오류({})", index + 1, error)),
+        }
+    }
+    let message = value
+        .get("message")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let skill = value.get("skill").and_then(Value::as_str).map(str::to_string);
+    let mut script = ActionScript { edits, message, skill };
+    normalize_script(&mut script);
+    Ok(LenientScript { script, dropped })
+}
+
+/// 생략된 표 차원을 matrix에서 채운다(rows=행 수, cols=가장 긴 행의 칸 수).
+fn normalize_script(script: &mut ActionScript) {
+    for edit in &mut script.edits {
+        if let Some(table) = edit.payload.table_data.as_mut() {
+            if table.rows == 0 {
+                table.rows = table.matrix.len() as u32;
+            }
+            if table.cols == 0 {
+                table.cols = table.matrix.iter().map(Vec::len).max().unwrap_or(0) as u32;
+            }
+        }
+    }
+}
+
+/// 화이트리스트에 없는 대상을 겨눈 편집을 떼어 낸다. 반환: 떼어 낸 대상 ID들.
+pub fn drop_violations(script: &mut ActionScript, whitelist: &HashSet<String>) -> Vec<String> {
+    let mut removed = Vec::new();
+    script.edits.retain(|edit| {
+        let allowed = is_allowed_target(edit, whitelist);
+        if !allowed {
+            removed.push(edit.target_id.clone());
+        }
+        allowed
+    });
+    removed
+}
+
+/// 출력 한도·시간 초과로 중간에 끊긴 응답에서 '끝까지 닫힌' 편집만 건져, 유효한 Action
+/// Script JSON으로 다시 만든다. 완결된 편집이 하나도 없으면 None.
+///
+/// 최상위 객체의 `edits` 배열을 문자열·괄호 깊이를 따라 훑어, 닫는 `}`까지 온 원소만
+/// 모은다(쓰다 만 마지막 원소는 버린다). `message`가 완결돼 있으면 살리고, 잘렸다는
+/// 안내를 덧붙여 사용자가 '이어서 써줘'로 계속할 수 있게 한다.
+pub fn salvage_truncated_script(partial: &str) -> Option<String> {
+    let text = strip_code_fences(partial);
+    let start = text.find('{')?;
+    let bytes = text.as_bytes();
+
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    // 최상위(깊이 1) 문자열 — 키 후보와 그 값.
+    let mut string_start = 0usize;
+    let mut last_key: Option<String> = None;
+    let mut after_colon = false;
+    let mut message: Option<String> = None;
+    let mut skill: Option<String> = None;
+    // edits 배열 안(깊이 2)의 원소 시작 위치.
+    let mut in_edits = false;
+    let mut element_start: Option<usize> = None;
+    let mut elements: Vec<&str> = Vec::new();
+
+    let mut i = start;
+    while i < bytes.len() {
+        let c = bytes[i];
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if c == b'\\' {
+                escaped = true;
+            } else if c == b'"' {
+                in_string = false;
+                if depth == 1 {
+                    let raw = &text[string_start..=i];
+                    if after_colon {
+                        if last_key.as_deref() == Some("message") {
+                            message = serde_json::from_str::<String>(raw).ok();
+                        } else if last_key.as_deref() == Some("skill") {
+                            skill = serde_json::from_str::<String>(raw).ok();
+                        }
+                        after_colon = false;
+                    } else {
+                        last_key = serde_json::from_str::<String>(raw).ok();
+                    }
+                }
+            }
+            i += 1;
+            continue;
+        }
+        match c {
+            b'"' => {
+                in_string = true;
+                string_start = i;
+            }
+            b':' if depth == 1 => after_colon = true,
+            b',' if depth == 1 => after_colon = false,
+            b'{' | b'[' => {
+                if depth == 1 && c == b'[' && after_colon && last_key.as_deref() == Some("edits") {
+                    in_edits = true;
+                } else if depth == 2 && in_edits && c == b'{' {
+                    element_start = Some(i);
+                }
+                depth += 1;
+            }
+            b'}' | b']' => {
+                depth = depth.saturating_sub(1);
+                if depth == 2 && in_edits && c == b'}' {
+                    if let Some(s0) = element_start.take() {
+                        elements.push(&text[s0..=i]);
+                    }
+                } else if depth == 1 && in_edits && c == b']' {
+                    in_edits = false;
+                    after_colon = false;
+                }
+                if depth == 0 {
+                    break;
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+
+    let edits: Vec<Value> = elements
+        .iter()
+        .filter_map(|raw| serde_json::from_str::<Value>(raw).ok())
+        .filter(Value::is_object)
+        .collect();
+    if edits.is_empty() {
+        return None;
+    }
+    let note = format!(
+        "(응답이 출력 한도에서 끊겨 앞의 {}건까지만 받았습니다 — '이어서 써줘'라고 하면 나머지를 이어서 씁니다.)",
+        edits.len()
+    );
+    let message = match message {
+        Some(m) if !m.trim().is_empty() => format!("{} {}", m.trim(), note),
+        _ => note,
+    };
+    let mut out = serde_json::json!({ "message": message, "edits": edits });
+    if let Some(skill) = skill {
+        out["skill"] = Value::String(skill);
+    }
+    Some(out.to_string())
 }
 
 /// 텍스트에서 첫 `{`부터 마지막 `}`까지(가장 바깥 객체 후보)를 잘라낸다.
@@ -449,6 +758,7 @@ pub fn form_fill_schema() -> Value {
 }
 
 /// 화이트리스트에 없는 `target_id`(환각으로 간주) 목록을 반환한다. 빈 벡터면 통과.
+#[cfg(test)]
 pub fn collect_violations(script: &ActionScript, whitelist: &HashSet<String>) -> Vec<String> {
     script
         .edits
@@ -469,7 +779,12 @@ pub const DOC_SCOPE_TARGET: &str = "doc";
 /// (다른 payload가 "doc"을 target으로 잡는 환각을 막는다).
 fn is_allowed_target(edit: &Edit, whitelist: &HashSet<String>) -> bool {
     if edit.target_id == DOC_SCOPE_TARGET {
-        return whitelist.contains(DOC_SCOPE_TARGET) && edit.payload.replace_text.is_some();
+        // 프론트 판정과 같게: 쪽 번호는 필드가 모두 선택이라 type만으로도 유효하다.
+        let doc_scoped = edit.payload.replace_text.is_some()
+            || edit.payload.page_setup.is_some()
+            || edit.payload.page_number.is_some()
+            || edit.payload.kind.as_deref() == Some("page_number");
+        return whitelist.contains(DOC_SCOPE_TARGET) && doc_scoped;
     }
     whitelist.contains(&edit.target_id)
 }
@@ -484,6 +799,10 @@ pub fn action_script_schema() -> Value {
                 "type": "string",
                 "description": "사용자에게 보여줄 대화형 요약(무엇을 했는지, 못 했으면 이유). 한국어 1~3문장."
             },
+            "skill": {
+                "type": "string",
+                "description": "요청 앞 '작성 지침 목록'에서 골라 따른 지침의 이름(목록의 ### 제목 그대로). 목록이 없거나 따른 지침이 없으면 빈 문자열."
+            },
             "edits": {
                 "type": "array",
                 "items": {
@@ -497,7 +816,7 @@ pub fn action_script_schema() -> Value {
                         "payload": {
                             "type": "object",
                             "properties": {
-                                "type": { "type": "string", "enum": ["paragraph", "table", "image", "table_edit", "clone_table", "format", "chart", "replace_text", "table_formula", "footnote", "paste_html"] },
+                                "type": { "type": "string", "enum": ["paragraph", "table", "image", "table_edit", "clone_table", "format", "chart", "replace_text", "table_formula", "footnote", "paste_html", "para_format", "page_setup", "page_number"] },
                                 "text": { "type": "string" },
                                 "style": {
                                     "type": "string",
@@ -565,8 +884,61 @@ pub fn action_script_schema() -> Value {
                                         "italic": { "type": "boolean" },
                                         "underline": { "type": "boolean" },
                                         "strikethrough": { "type": "boolean" },
-                                        "font_size_pt": { "type": "integer", "description": "글자 크기(pt)" },
-                                        "text_color": { "type": "string", "description": "글자 색 #RRGGBB" }
+                                        "font_size_pt": { "type": "number", "description": "글자 크기(pt, 예 10.5)" },
+                                        "text_color": { "type": "string", "description": "글자 색 #RRGGBB" },
+                                        "font_family": { "type": "string", "description": "글꼴 이름(예 \"맑은 고딕\", \"함초롬바탕\")" },
+                                        "highlight_color": { "type": "string", "description": "형광펜(음영) 색 #RRGGBB" },
+                                        "superscript": { "type": "boolean", "description": "위 첨자" },
+                                        "subscript": { "type": "boolean", "description": "아래 첨자" }
+                                    }
+                                },
+                                "para_format": {
+                                    "type": "object",
+                                    "description": "문단 서식·번호 목록. type=\"para_format\"+command=REPLACE면 그 문단의 텍스트는 그대로 두고 서식만 바꾼다(본문 문단·표 셀 문단 ID). 텍스트를 넣는 INSERT/REPLACE 편집에 함께 넣으면 새 문단에 바로 적용된다. 사용자가 정렬·줄간격·들여쓰기·번호 매기기를 명시적으로 요구할 때만 채운다(평소 모양은 style이 정한다).",
+                                    "properties": {
+                                        "alignment": { "type": "string", "enum": ["left", "center", "right", "justify", "distribute"] },
+                                        "line_spacing_percent": { "type": "number", "description": "줄 간격(%) 예 160" },
+                                        "indent_pt": { "type": "number", "description": "첫 줄 들여쓰기(pt), 음수=내어쓰기" },
+                                        "margin_left_pt": { "type": "number", "description": "왼쪽 여백(pt)" },
+                                        "spacing_before_pt": { "type": "number", "description": "문단 위 간격(pt)" },
+                                        "spacing_after_pt": { "type": "number", "description": "문단 아래 간격(pt)" },
+                                        "keep_with_next": { "type": "boolean", "description": "다음 문단과 같은 쪽에" },
+                                        "list": {
+                                            "type": "object",
+                                            "description": "번호·글머리표. number=1. 가. 1) 순 문단 번호, bullet=글머리표, outline=개요 번호, none=해제.",
+                                            "properties": {
+                                                "kind": { "type": "string", "enum": ["number", "bullet", "outline", "none"] },
+                                                "level": { "type": "integer", "description": "수준 0~6(0=1수준: 1., 1=2수준: 가. …)" },
+                                                "bullet_char": { "type": "string", "description": "bullet 문자(생략 시 ●)" }
+                                            },
+                                            "required": ["kind"]
+                                        }
+                                    }
+                                },
+                                "page_setup": {
+                                    "type": "object",
+                                    "description": "type=\"page_setup\"일 때: 용지 방향·크기·여백. command=REPLACE, target_id=\"doc\". 모든 구역에 적용된다.",
+                                    "properties": {
+                                        "orientation": { "type": "string", "enum": ["portrait", "landscape"] },
+                                        "paper": { "type": "string", "enum": ["A4", "A3", "B5", "Letter"] },
+                                        "margins_mm": {
+                                            "type": "object",
+                                            "properties": {
+                                                "top": { "type": "number" },
+                                                "bottom": { "type": "number" },
+                                                "left": { "type": "number" },
+                                                "right": { "type": "number" }
+                                            }
+                                        }
+                                    }
+                                },
+                                "page_number": {
+                                    "type": "object",
+                                    "description": "type=\"page_number\"일 때: 모든 쪽에 자동 쪽 번호를 넣는다(직접 \"1\"을 쓰면 모든 쪽이 1이 된다). command=REPLACE, target_id=\"doc\". 그 위치(머리말/꼬리말)의 기존 내용은 쪽 번호로 대체된다.",
+                                    "properties": {
+                                        "position": { "type": "string", "enum": ["footer", "header"] },
+                                        "align": { "type": "string", "enum": ["center", "left", "right"] },
+                                        "format": { "type": "string", "enum": ["plain", "dash", "total"], "description": "plain=1, dash=- 1 -, total=1 / 10" }
                                     }
                                 },
                                 "replace_text": {
@@ -1060,7 +1432,7 @@ mod tests {
         assert_eq!(script.edits[0].payload.format_target.as_deref(), Some("핵심 성과"));
         let spec = script.edits[0].payload.char_format.as_ref().unwrap();
         assert_eq!(spec.bold, Some(true));
-        assert_eq!(spec.font_size_pt, Some(14));
+        assert_eq!(spec.font_size_pt, Some(14.0));
         let json = serde_json::to_string(&script).unwrap();
         assert!(json.contains("char_format") && json.contains("format_target"));
     }
@@ -1189,5 +1561,430 @@ mod tests {
     fn command_round_trips_to_screaming_snake_case() {
         let value = serde_json::to_value(EditCommand::InsertBefore).unwrap();
         assert_eq!(value, json!("INSERT_BEFORE"));
+    }
+
+    // ── F-45cee3df AC-e0560800: 새 서식 명령의 스키마 노출과 "doc" 화이트리스트 ──
+
+    /// "doc"을 겨눈 편집 네 가지: 쪽 설정·쪽 번호(허용) / 일반 텍스트·문단 서식(거부).
+    fn doc_scoped_script() -> ActionScript {
+        parse_action_script(
+            r#"{"edits":[
+                {"command":"REPLACE","target_id":"doc",
+                 "payload":{"type":"page_setup","page_setup":{"orientation":"landscape","paper":"A4"}}},
+                {"command":"REPLACE","target_id":"doc",
+                 "payload":{"type":"page_number","page_number":{"align":"center","format":"dash"}}},
+                {"command":"REPLACE","target_id":"doc",
+                 "payload":{"type":"paragraph","text":"문서 전체를 이걸로"}},
+                {"command":"REPLACE","target_id":"doc",
+                 "payload":{"type":"para_format","para_format":{"alignment":"center"}}}
+            ]}"#,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn f45cee3df_ac_e0560800_doc_target_passes_only_for_page_setup_and_page_number() {
+        let script = doc_scoped_script();
+        let types = |s: &ActionScript| -> Vec<Option<String>> {
+            s.edits.iter().map(|e| e.payload.kind.clone()).collect()
+        };
+
+        // collect_violations: 텍스트·문단 서식 payload만 위반으로 잡힌다.
+        let violations = collect_violations(&script, &whitelist(&["doc", "sec[0].p[0]"]));
+        assert_eq!(violations, vec!["doc".to_string(), "doc".to_string()]);
+
+        // drop_violations: 쪽 설정·쪽 번호는 남고, 나머지 두 편집만 떨어진다.
+        let mut kept = script.clone();
+        let removed = drop_violations(&mut kept, &whitelist(&["doc", "sec[0].p[0]"]));
+        assert_eq!(removed.len(), 2);
+        assert_eq!(
+            types(&kept),
+            vec![Some("page_setup".to_string()), Some("page_number".to_string())]
+        );
+    }
+
+    #[test]
+    fn f45cee3df_ac_e0560800_doc_page_edits_rejected_when_doc_not_whitelisted() {
+        // 구간 스코프 요청은 "doc"을 화이트리스트에 넣지 않는다 — 쪽 설정·쪽 번호도 거부.
+        let mut script = doc_scoped_script();
+        let removed = drop_violations(&mut script, &whitelist(&["sec[0].p[0]"]));
+        assert_eq!(removed.len(), 4);
+        assert!(script.edits.is_empty());
+    }
+
+    #[test]
+    fn f45cee3df_ac_e0560800_schema_exposes_format_commands() {
+        let schema = action_script_schema();
+        let payload = &schema["properties"]["edits"]["items"]["properties"]["payload"]["properties"];
+
+        let kinds: Vec<&str> = payload["type"]["enum"]
+            .as_array()
+            .expect("payload.type enum")
+            .iter()
+            .filter_map(Value::as_str)
+            .collect();
+        for kind in ["para_format", "page_setup", "page_number", "format", "replace_text"] {
+            assert!(kinds.contains(&kind), "payload.type enum에 {kind} 없음: {kinds:?}");
+        }
+
+        let para = &payload["para_format"]["properties"];
+        for key in [
+            "alignment",
+            "line_spacing_percent",
+            "indent_pt",
+            "margin_left_pt",
+            "spacing_before_pt",
+            "spacing_after_pt",
+            "keep_with_next",
+            "list",
+        ] {
+            assert!(para.get(key).is_some(), "para_format.{key} 누락");
+        }
+        assert_eq!(
+            para["list"]["properties"]["kind"]["enum"],
+            json!(["number", "bullet", "outline", "none"])
+        );
+
+        let page_setup = &payload["page_setup"]["properties"];
+        assert_eq!(page_setup["orientation"]["enum"], json!(["portrait", "landscape"]));
+        assert_eq!(page_setup["paper"]["enum"], json!(["A4", "A3", "B5", "Letter"]));
+        for side in ["top", "bottom", "left", "right"] {
+            assert!(page_setup["margins_mm"]["properties"].get(side).is_some(), "margins_mm.{side}");
+        }
+
+        let page_number = &payload["page_number"]["properties"];
+        assert_eq!(page_number["position"]["enum"], json!(["footer", "header"]));
+        assert_eq!(page_number["align"]["enum"], json!(["center", "left", "right"]));
+        assert_eq!(page_number["format"]["enum"], json!(["plain", "dash", "total"]));
+
+        let char_format = &payload["char_format"]["properties"];
+        for key in ["font_family", "highlight_color", "superscript", "subscript"] {
+            assert!(char_format.get(key).is_some(), "char_format.{key} 누락");
+        }
+    }
+
+    #[test]
+    fn f45cee3df_ac_e0560800_format_commands_round_trip_through_parse() {
+        // 스키마에만 있고 구조체에 없으면 canonical 재직렬화에서 조용히 버려진다.
+        let raw = r##"{"edits":[
+            {"command":"REPLACE","target_id":"doc",
+             "payload":{"type":"page_setup","page_setup":{"orientation":"landscape","paper":"B5",
+              "margins_mm":{"top":20,"left":15.5}}}},
+            {"command":"REPLACE","target_id":"doc",
+             "payload":{"type":"page_number","page_number":{"position":"header","align":"right","format":"total"}}},
+            {"command":"REPLACE","target_id":"sec[0].p[1]",
+             "payload":{"type":"para_format","para_format":{"alignment":"center","list":{"kind":"number","level":1}}}},
+            {"command":"REPLACE","target_id":"sec[0].p[2]",
+             "payload":{"type":"format","char_format":{"font_family":"맑은 고딕","highlight_color":"#FFFF00","superscript":true}}}
+        ]}"##;
+        let script = parse_action_script(raw).unwrap();
+        let json = serde_json::to_value(&script).unwrap();
+        let payloads: Vec<&Value> = json["edits"].as_array().unwrap().iter().map(|e| &e["payload"]).collect();
+        assert_eq!(payloads[0]["page_setup"]["paper"], json!("B5"));
+        assert_eq!(payloads[0]["page_setup"]["margins_mm"]["left"], json!(15.5));
+        assert_eq!(payloads[1]["page_number"]["format"], json!("total"));
+        assert_eq!(payloads[2]["para_format"]["list"]["kind"], json!("number"));
+        assert_eq!(payloads[3]["char_format"]["font_family"], json!("맑은 고딕"));
+        assert_eq!(payloads[3]["char_format"]["highlight_color"], json!("#FFFF00"));
+        assert_eq!(parse_action_script(&json.to_string()).unwrap(), script);
+    }
+
+    #[test]
+    fn f45cee3df_ac_e0560800_type_only_page_number_on_doc_passes_like_the_frontend() {
+        // 쪽 번호 필드는 모두 선택이라 프론트는 {"type":"page_number"}만으로도 기본값(가운데 꼬리말)
+        // 쪽 번호를 넣는다 — 화이트리스트가 이를 위반으로 버리면 안 된다.
+        let script = parse_action_script(
+            r#"{"edits":[
+                {"command":"REPLACE","target_id":"doc","payload":{"type":"page_number"}},
+                {"command":"REPLACE","target_id":"doc","payload":{"type":"page_setup"}}
+            ]}"#,
+        )
+        .unwrap();
+        assert!(script.edits[0].payload.page_number.is_none());
+
+        let mut kept = script.clone();
+        let removed = drop_violations(&mut kept, &whitelist(&["doc"]));
+        assert_eq!(kept.edits.len(), 1);
+        assert_eq!(kept.edits[0].payload.kind.as_deref(), Some("page_number"));
+        // page_setup은 바꿀 값이 없으면 프론트도 적용하지 않는다 — 객체 없이 오면 그대로 거부.
+        assert_eq!(removed, vec!["doc".to_string()]);
+
+        // "doc"이 화이트리스트에 없으면(구간 스코프) type만 있는 쪽 번호도 거부.
+        let mut scoped = script.clone();
+        assert_eq!(drop_violations(&mut scoped, &whitelist(&["sec[0].p[0]"])).len(), 2);
+    }
+
+    // ── F-bae302c6 AC-d7a9a930: 형식 오류 편집만 버리고 나머지를 살린다 ──
+
+    #[test]
+    fn fbae302c6_ac_d7a9a930_lenient_parse_drops_only_the_malformed_edit() {
+        let raw = r#"{"message":"작성했습니다.","edits":[
+            {"command":"REPLACE","target_id":"sec[0].p[0]","payload":{"text":"제목"}},
+            {"command":"INSERT_AFTER","target_id":"sec[0].p[0]","payload":{"type":"chart",
+             "chart_data":{"kind":"bar","labels":["a"],"series":[{"name":"s","values":["10억"]}]}}},
+            {"command":"MOVE","target_id":"sec[0].p[0]","payload":{"text":"x"}},
+            {"command":"INSERT_AFTER","target_id":"sec[0].p[0]","payload":{"text":"본문"}}
+        ]}"#;
+        // 엄격 파싱은 응답 전체를 버린다 — 관대 파싱이 필요한 이유.
+        assert!(parse_action_script(raw).is_err());
+
+        let parsed = parse_action_script_lenient(raw).unwrap();
+        let texts: Vec<Option<&str>> =
+            parsed.script.edits.iter().map(|e| e.payload.text.as_deref()).collect();
+        assert_eq!(texts, vec![Some("제목"), Some("본문")], "정상 편집은 순서대로 남는다");
+        assert_eq!(parsed.dropped.len(), 2);
+        assert!(parsed.dropped[0].contains("편집 2번"), "{:?}", parsed.dropped);
+        assert!(parsed.dropped[1].contains("편집 3번"), "{:?}", parsed.dropped);
+        assert_eq!(parsed.script.message.as_deref(), Some("작성했습니다."));
+    }
+
+    #[test]
+    fn fbae302c6_ac_d7a9a930_lenient_parse_of_valid_script_drops_nothing() {
+        let parsed = parse_action_script_lenient(
+            r#"{"edits":[{"command":"REPLACE","target_id":"sec[0].p[0]","payload":{"text":"a"}}]}"#,
+        )
+        .unwrap();
+        assert_eq!(parsed.script.edits.len(), 1);
+        assert!(parsed.dropped.is_empty());
+    }
+
+    #[test]
+    fn fbae302c6_ac_d7a9a930_lenient_parse_keeps_the_empty_response_message() {
+        for raw in ["", "   \n  ", "```json\n```"] {
+            let err = parse_action_script_lenient(raw).unwrap_err();
+            assert!(err.contains("빈 응답"), "{raw:?} → {err}");
+        }
+    }
+
+    #[test]
+    fn fbae302c6_ac_d7a9a930_lenient_parse_still_fails_without_edits_array() {
+        let err = parse_action_script_lenient(r#"{"message":"설명만 했습니다"}"#).unwrap_err();
+        assert!(err.contains("edits"), "{err}");
+        let err = parse_action_script_lenient("죄송하지만 편집할 수 없습니다.").unwrap_err();
+        assert!(err.contains("받은 응답 일부"), "{err}");
+    }
+
+    // ── F-a7b2c7ba AC-ee075a19: 출력 한도·시간 초과로 끊긴 응답에서 완결된 편집만 살린다 ──
+
+    const EDIT_TITLE: &str = r#"{"command":"REPLACE","target_id":"sec[0].p[0]","payload":{"text":"사업계획서","style":"title"}}"#;
+    const EDIT_BODY: &str = r#"{"command":"INSERT_AFTER","target_id":"sec[0].p[0]","payload":{"text":"1. 사업 개요","style":"heading"}}"#;
+    const HALF_EDIT: &str = r#"{"command":"INSERT_AFTER","target_id":"sec[0].p[0]","payload":{"text":"본문이 쓰이다 끊"#;
+
+    /// 살린 결과는 엄격 파서(`parse_action_script`)로도 그대로 읽혀야 한다.
+    fn salvage(partial: &str) -> ActionScript {
+        let json = salvage_truncated_script(partial).expect("완결된 편집이 있으면 Some");
+        parse_action_script(&json).unwrap_or_else(|e| panic!("살린 JSON이 유효하지 않다: {e}\n{json}"))
+    }
+
+    fn targets_and_texts(script: &ActionScript) -> Vec<(String, String)> {
+        script
+            .edits
+            .iter()
+            .map(|e| (e.target_id.clone(), e.payload.text.clone().unwrap_or_default()))
+            .collect()
+    }
+
+    #[test]
+    fn f_a7b2c7ba_ac_ee075a19_keeps_only_fully_closed_edits_and_drops_the_half_written_last() {
+        let partial = format!(r#"{{"edits":[{EDIT_TITLE},{EDIT_BODY},{HALF_EDIT}"#);
+        let script = salvage(&partial);
+        assert_eq!(
+            targets_and_texts(&script),
+            vec![
+                ("sec[0].p[0]".to_string(), "사업계획서".to_string()),
+                ("sec[0].p[0]".to_string(), "1. 사업 개요".to_string()),
+            ]
+        );
+        assert_eq!(script.edits[0].command, EditCommand::Replace);
+        assert_eq!(script.edits[1].payload.style.as_deref(), Some("heading"));
+    }
+
+    #[test]
+    fn f_a7b2c7ba_ac_ee075a19_keeps_a_complete_message_and_appends_the_count_notice() {
+        let partial = format!(r#"{{"message":"사업계획서 1~2절을 작성했습니다.","edits":[{EDIT_TITLE},{EDIT_BODY},{HALF_EDIT}"#);
+        let message = salvage(&partial).message.unwrap();
+        assert!(message.starts_with("사업계획서 1~2절을 작성했습니다. "), "{message}");
+        assert!(message.contains("출력 한도"), "{message}");
+        assert!(message.contains("앞의 2건까지만 받았습니다"), "{message}");
+        assert!(message.contains("'이어서 써줘'라고 하면 나머지를 이어서 씁니다"), "{message}");
+    }
+
+    #[test]
+    fn f_a7b2c7ba_ac_ee075a19_synthesizes_the_notice_when_message_is_missing_or_cut() {
+        let notice = "(응답이 출력 한도에서 끊겨 앞의 1건까지만 받았습니다 — '이어서 써줘'라고 하면 나머지를 이어서 씁니다.)";
+        // message가 아예 없다.
+        let no_message = format!(r#"{{"edits":[{EDIT_TITLE},{HALF_EDIT}"#);
+        assert_eq!(salvage(&no_message).message.as_deref(), Some(notice));
+        // message가 edits 뒤에 오다 끊겼다.
+        let cut_message = format!(r#"{{"edits":[{EDIT_TITLE}],"message":"작성을 마치"#);
+        assert_eq!(salvage(&cut_message).message.as_deref(), Some(notice));
+        // 공백뿐인 message는 없는 것으로 본다.
+        let blank = format!(r#"{{"message":"  ","edits":[{EDIT_TITLE},{HALF_EDIT}"#);
+        assert_eq!(salvage(&blank).message.as_deref(), Some(notice));
+    }
+
+    #[test]
+    fn f_a7b2c7ba_ac_ee075a19_message_after_edits_is_kept_when_complete() {
+        let partial = format!(r#"{{"edits":[{EDIT_TITLE},{EDIT_BODY}],"message":"두 문단을 넣었습니다.""#);
+        let script = salvage(&partial);
+        assert_eq!(script.edits.len(), 2);
+        let message = script.message.unwrap();
+        assert!(message.starts_with("두 문단을 넣었습니다."), "{message}");
+        assert!(message.contains("앞의 2건"), "{message}");
+    }
+
+    #[test]
+    fn f_a7b2c7ba_ac_ee075a19_handles_markdown_json_fences() {
+        let partial = format!("```json\n{{\"edits\":[{EDIT_TITLE},{EDIT_BODY},{HALF_EDIT}");
+        assert_eq!(salvage(&partial).edits.len(), 2);
+    }
+
+    #[test]
+    fn f_a7b2c7ba_ac_ee075a19_brackets_and_escaped_quotes_inside_strings_do_not_confuse_depth() {
+        // 문자열 안의 { } [ ] 와 \" \\ 는 구조로 세지 않는다. 마지막 편집은 문자열 안의 '{'에서 끊겼다.
+        let tricky = r#"{"command":"INSERT_AFTER","target_id":"sec[0].p[0]","payload":{"text":"괄호 {중괄호} [대괄호] ]} 와 \"인용\" 그리고 역슬래시 \\ 끝"}}"#;
+        let half = r#"{"command":"INSERT_AFTER","target_id":"sec[0].p[0]","payload":{"text":"열린 { 괄호와 \"따옴표 [ 와 }"#;
+        let partial = format!(r#"{{"message":"요약 {{초안}} [1/2] \"끝\"","edits":[{EDIT_TITLE},{tricky},{half}"#);
+        let script = salvage(&partial);
+        assert_eq!(script.edits.len(), 2);
+        assert_eq!(
+            script.edits[1].payload.text.as_deref(),
+            Some(r#"괄호 {중괄호} [대괄호] ]} 와 "인용" 그리고 역슬래시 \ 끝"#)
+        );
+        assert!(script.message.unwrap().starts_with(r#"요약 {초안} [1/2] "끝""#));
+    }
+
+    #[test]
+    fn f_a7b2c7ba_ac_ee075a19_nested_payload_objects_and_arrays_survive_intact() {
+        let table = r#"{"command":"INSERT_AFTER","target_id":"sec[0].p[0]","payload":{"type":"table","table_data":{"rows":3,"cols":2,"matrix":[["구분","내용"],["인건비","[1] 연구원 {2}명"],["재료비","시약"]],"merges":[{"start_row":1,"start_col":0,"end_row":2,"end_col":0}]}}}"#;
+        let half_table = r#"{"command":"INSERT_AFTER","target_id":"sec[0].p[0]","payload":{"type":"table","table_data":{"rows":2,"cols":2,"matrix":[["a","b"],["c""#;
+        let partial = format!(r#"{{"edits":[{EDIT_TITLE},{table},{half_table}"#);
+        let script = salvage(&partial);
+        assert_eq!(script.edits.len(), 2);
+        let data = script.edits[1].payload.table_data.as_ref().expect("표 편집");
+        assert_eq!((data.rows, data.cols), (3, 2));
+        assert_eq!(
+            data.matrix,
+            vec![
+                vec!["구분".to_string(), "내용".to_string()],
+                vec!["인건비".to_string(), "[1] 연구원 {2}명".to_string()],
+                vec!["재료비".to_string(), "시약".to_string()],
+            ]
+        );
+        assert_eq!(data.merges.len(), 1);
+        assert_eq!(data.merges[0].end_row, 2);
+    }
+
+    #[test]
+    fn f_a7b2c7ba_ac_ee075a19_returns_none_without_any_complete_edit() {
+        let only_half = format!(r#"{{"message":"작성 중","edits":[{HALF_EDIT}"#);
+        for partial in [
+            "",
+            "응답 없음",
+            r#"{"message":"생각 중"#,
+            r#"{"message":"다 썼습니다","edits":["#,
+            r#"{"message":"다 썼습니다","edits":[]"#,
+            only_half.as_str(),
+            r#"```json
+{"edits":[{"comm"#,
+        ] {
+            assert_eq!(salvage_truncated_script(partial), None, "{partial:?}");
+        }
+    }
+
+    // ── F-fb6592e9 AC-ae417d5d: 따른 지침 이름(skill)을 응답 형식에 두고, 파싱·잘림 복구를
+    //    거쳐도 잃지 않는다 ──
+
+    const SKILL_EDIT: &str = r#"{"command":"REPLACE","target_id":"sec[0].p[0]","payload":{"text":"협조 요청"}}"#;
+
+    #[test]
+    fn f_fb6592e9_ac_ae417d5d_schema_declares_skill_as_an_optional_string() {
+        let schema = action_script_schema();
+        assert_eq!(schema["properties"]["skill"]["type"], "string", "{}", schema["properties"]["skill"]);
+        let required: Vec<&str> = schema["required"]
+            .as_array()
+            .expect("최상위 required 배열")
+            .iter()
+            .filter_map(Value::as_str)
+            .collect();
+        // skill은 선택 항목 — 지침 목록이 없는 요청에서도 응답이 스키마를 만족해야 한다.
+        assert_eq!(required, vec!["edits"]);
+    }
+
+    #[test]
+    fn f_fb6592e9_ac_ae417d5d_strict_and_lenient_parsing_keep_skill() {
+        let raw = format!(r#"{{"message":"공문을 작성했습니다.","skill":"공문","edits":[{SKILL_EDIT}]}}"#);
+        assert_eq!(parse_action_script(&raw).unwrap().skill.as_deref(), Some("공문"));
+        let lenient = parse_action_script_lenient(&raw).unwrap();
+        assert_eq!(lenient.script.skill.as_deref(), Some("공문"));
+        assert!(lenient.dropped.is_empty());
+
+        // 코드펜스로 감싼 응답(CLI)에서도 남는다.
+        let fenced = format!("```json\n{raw}\n```");
+        assert_eq!(parse_action_script(&fenced).unwrap().skill.as_deref(), Some("공문"));
+    }
+
+    #[test]
+    fn f_fb6592e9_ac_ae417d5d_lenient_fallback_path_keeps_skill() {
+        // 형식이 틀린 편집(MOVE)이 섞여 엄격 파싱이 실패하고 관대 파싱이 편집 단위로 살리는 경로.
+        let raw = format!(
+            r#"{{"skill":"보고서","edits":[{SKILL_EDIT},{{"command":"MOVE","target_id":"sec[0].p[0]","payload":{{"text":"x"}}}}]}}"#
+        );
+        assert!(parse_action_script(&raw).is_err(), "엄격 파싱은 실패해야 관대 경로를 탄다");
+        let lenient = parse_action_script_lenient(&raw).unwrap();
+        assert_eq!(lenient.dropped.len(), 1, "{:?}", lenient.dropped);
+        assert_eq!(lenient.script.edits.len(), 1);
+        assert_eq!(lenient.script.skill.as_deref(), Some("보고서"));
+    }
+
+    #[test]
+    fn f_fb6592e9_ac_ae417d5d_skill_serializes_only_when_present() {
+        let without = parse_action_script(&format!(r#"{{"edits":[{SKILL_EDIT}]}}"#)).unwrap();
+        assert_eq!(without.skill, None);
+        let json = serde_json::to_string(&without).unwrap();
+        assert!(!json.contains("skill"), "skill이 없으면 키를 내보내지 않는다: {json}");
+
+        let with = parse_action_script(&format!(r#"{{"skill":"사업계획서","edits":[{SKILL_EDIT}]}}"#)).unwrap();
+        let json = serde_json::to_string(&with).unwrap();
+        assert!(json.contains(r#""skill":"사업계획서""#), "{json}");
+        // 직렬화 → 다시 파싱해도 같은 값(프런트로 보내는 정규 JSON 왕복).
+        assert_eq!(parse_action_script(&json).unwrap(), with);
+    }
+
+    #[test]
+    fn f_fb6592e9_ac_ae417d5d_salvage_keeps_a_complete_skill_written_before_edits() {
+        let partial = format!(r#"{{"skill":"사업계획서","message":"작성 중","edits":[{EDIT_TITLE},{HALF_EDIT}"#);
+        let script = salvage(&partial);
+        assert_eq!(script.edits.len(), 1);
+        assert_eq!(script.skill.as_deref(), Some("사업계획서"));
+    }
+
+    #[test]
+    fn f_fb6592e9_ac_ae417d5d_salvage_keeps_a_complete_skill_written_after_edits() {
+        // edits 배열은 닫혔고, 그 뒤 skill은 완결, message가 쓰이다 끊겼다.
+        let partial = format!(r#"{{"edits":[{EDIT_TITLE},{EDIT_BODY}],"skill":"보고서","message":"보고서를 작성"#);
+        let script = salvage(&partial);
+        assert_eq!(script.edits.len(), 2);
+        assert_eq!(script.skill.as_deref(), Some("보고서"));
+    }
+
+    #[test]
+    fn f_fb6592e9_ac_ae417d5d_salvage_drops_a_truncated_skill() {
+        let partial = format!(r#"{{"edits":[{EDIT_TITLE}],"skill":"보고"#);
+        let json = salvage_truncated_script(&partial).expect("완결된 편집이 있으면 Some");
+        assert!(!json.contains("skill"), "쓰다 만 skill은 싣지 않는다: {json}");
+        let script = salvage(&partial);
+        assert_eq!(script.edits.len(), 1);
+        assert_eq!(script.skill, None);
+    }
+
+    #[test]
+    fn f_fb6592e9_ac_ae417d5d_salvage_ignores_a_skill_key_nested_inside_an_edit() {
+        // 최상위 skill만 따른 지침 이름이다 — 편집 payload 안의 같은 이름 키는 무시한다.
+        let nested = r#"{"command":"REPLACE","target_id":"sec[0].p[0]","payload":{"text":"x","skill":"가짜"}}"#;
+        let partial = format!(r#"{{"edits":[{nested},{HALF_EDIT}"#);
+        let script = salvage(&partial);
+        assert_eq!(script.edits.len(), 1);
+        assert_eq!(script.skill, None);
     }
 }

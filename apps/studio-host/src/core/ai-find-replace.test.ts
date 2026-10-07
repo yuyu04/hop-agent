@@ -99,7 +99,7 @@ describe('F-293e8c99 AC-001 — 전역 치환을 엔진 프리미티브 한 번�
     expect(result.applied).toBe(1);
     expect(calls.some((c) => c.fn === 'replaceOne')).toBe(true);
     expect(calls.some((c) => c.fn === 'replaceAll')).toBe(false);
-    expect(result.changed).toEqual([{ sec: 0, para: 2 }]);
+    expect(result.changed.map(({ sec, para }) => ({ sec, para }))).toEqual([{ sec: 0, para: 2 }]);
   });
 
   it('본문 매치 위치를 changed에 실어 diff/부분 승인이 동작하게 한다', () => {
@@ -114,7 +114,7 @@ describe('F-293e8c99 AC-001 — 전역 치환을 엔진 프리미티브 한 번�
 
     const result = applyActionScript(wasm, script(replaceEdit({ query: '가', new_text: '나' })));
 
-    expect(result.changed).toEqual([
+    expect(result.changed.map(({ sec, para }) => ({ sec, para }))).toEqual([
       { sec: 0, para: 1 },
       { sec: 1, para: 0 },
     ]);
@@ -216,7 +216,7 @@ describe('F-293e8c99 AC-003 — 못 찾으면 조용히 성공하지 않는다',
     const result = applyActionScript(wasm, script(bogus));
 
     expect(result.applied).toBe(0);
-    expect(result.skipped[0].reason).toContain('전역 찾아 바꾸기');
+    expect(result.skipped[0].reason).toContain('찾아 바꾸기·쪽 설정·쪽 번호');
   });
 });
 

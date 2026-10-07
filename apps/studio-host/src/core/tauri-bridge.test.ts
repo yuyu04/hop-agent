@@ -783,6 +783,200 @@ describe('TauriBridge AI commands', () => {
   });
 });
 
+/**
+ * F-6c323309 — AI가 저장하지 않은 화면의 문서(직전 AI 결과 포함)를 그대로 본다.
+ * 컨텍스트 읽기·편집 요청 직전에 화면(WASM) 문서를 내보내 네이티브 세션 코어를 교체하고
+ * (AC-35e27d90), 동기화가 실패해도 경고만 남기고 마지막 저장본 기준으로 계속한다(AC-433fec3f).
+ */
+describe('TauriBridge AI live document sync (F-6c323309)', () => {
+  const STAGED = '/tmp/hop-ai-sync-1a2b3c4d.hwp';
+  /** 저장본과 다른 '화면의 문서' 바이트(저장 전 편집·직전 AI 결과가 반영된 상태). */
+  const LIVE_BYTES = new Uint8Array([7, 8, 9, 10]);
+  const CONTEXT = { document_metadata: { total_sections: 1 }, content: [] };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (globalThis as { document?: { title: string } }).document = { title: '' };
+    statMock.mockResolvedValue({ size: LIVE_BYTES.byteLength, isFile: true });
+    removeMock.mockResolvedValue(undefined);
+  });
+
+  /** doc-1이 열려 있고(저장 경로 있음, 저장된 상태) 화면 문서가 LIVE_BYTES인 브리지. */
+  function openBridge() {
+    const bridge = new TauriBridge();
+    applyOpenResult(bridge, nativeOpenResult({ docId: 'doc-1', revision: 4, dirty: false }));
+    getWasmMock(bridge, 'exportHwpMock').mockReturnValue(LIVE_BYTES);
+    const handle = writeHandle();
+    fsOpenMock.mockResolvedValue(handle);
+    return { bridge, handle };
+  }
+
+  /** 네이티브 커맨드 목 — 동기화 준비는 스테이징 경로를, 나머지는 성공을 돌려준다. */
+  function nativeCommands(overrides: Record<string, () => unknown> = {}) {
+    invokeMock.mockImplementation(async (command: string) => {
+      const override = overrides[command];
+      if (override) return override();
+      if (command === 'ai_prepare_document_sync') return STAGED;
+      if (command === 'ai_sync_document') return undefined;
+      if (command === 'ai_get_document_context') return CONTEXT;
+      if (command === 'ai_request_edit') return 'req-7';
+      throw new Error(`unexpected command ${command}`);
+    });
+  }
+
+  function invokedCommands(): string[] {
+    return invokeMock.mock.calls.map(([command]) => command as string);
+  }
+
+  /** 해당 커맨드 invoke의 전역 호출 순번. */
+  function invokeOrder(command: string): number {
+    const index = invokeMock.mock.calls.findIndex(([name]) => name === command);
+    expect(index, `${command} 호출 없음`).toBeGreaterThan(-1);
+    return invokeMock.mock.invocationCallOrder[index]!;
+  }
+
+  it('F-6c323309 AC-35e27d90: 컨텍스트를 읽기 직전에 화면 문서를 네이티브 코어로 동기화한다', async () => {
+    const { bridge, handle } = openBridge();
+    nativeCommands();
+
+    await expect(bridge.aiGetDocumentContext('doc-1', false, 'sec[0].p[2]', true)).resolves.toEqual(
+      CONTEXT,
+    );
+
+    expect(invokedCommands()).toEqual([
+      'ai_prepare_document_sync',
+      'ai_sync_document',
+      'ai_get_document_context',
+    ]);
+    // 화면(WASM) 문서를 내보낸 바이트가 네이티브가 정해 준 스테이징 경로에 쓰인다.
+    expect(fsOpenMock).toHaveBeenCalledWith(STAGED, { write: true, create: true, truncate: true });
+    expect(handle.write).toHaveBeenCalledWith(LIVE_BYTES);
+    expect(invokeMock).toHaveBeenCalledWith('ai_sync_document', { docId: 'doc-1', stagedPath: STAGED });
+    expect(invokeMock).toHaveBeenLastCalledWith('ai_get_document_context', {
+      docId: 'doc-1',
+      currentSelectionOnly: false,
+      cursorPath: 'sec[0].p[2]',
+      fullDocument: true,
+    });
+    // 순서: 준비 → 파일 쓰기(닫기까지) → 코어 교체 → 원래 요청.
+    expect(invokeOrder('ai_prepare_document_sync')).toBeLessThan(fsOpenMock.mock.invocationCallOrder[0]!);
+    expect(handle.close.mock.invocationCallOrder[0]!).toBeLessThan(invokeOrder('ai_sync_document'));
+    expect(invokeOrder('ai_sync_document')).toBeLessThan(invokeOrder('ai_get_document_context'));
+    // 저장 상태(dirty·제목)는 바꾸지 않는다.
+    expect(bridge.hasUnsavedChanges()).toBe(false);
+    expect(document.title).toBe('source.hwp - HOP');
+  });
+
+  it('F-6c323309 AC-35e27d90: 편집을 요청하기 직전에도 동기화한 뒤 원래 요청을 그대로 보낸다', async () => {
+    const { bridge, handle } = openBridge();
+    nativeCommands();
+
+    await expect(
+      bridge.aiRequestEdit('doc-1', '표 하나 더', 'ollama', 'qwen', null, null, null, null, null, null, [
+        '제목',
+      ]),
+    ).resolves.toBe('req-7');
+
+    expect(invokedCommands()).toEqual(['ai_prepare_document_sync', 'ai_sync_document', 'ai_request_edit']);
+    expect(handle.write).toHaveBeenCalledWith(LIVE_BYTES);
+    expect(invokeMock).toHaveBeenCalledWith('ai_sync_document', { docId: 'doc-1', stagedPath: STAGED });
+    expect(handle.close.mock.invocationCallOrder[0]!).toBeLessThan(invokeOrder('ai_sync_document'));
+    expect(invokeMock).toHaveBeenLastCalledWith('ai_request_edit', {
+      docId: 'doc-1',
+      userPrompt: '표 하나 더',
+      providerId: 'ollama',
+      modelId: 'qwen',
+      cursorPath: null,
+      baseUrl: null,
+      images: null,
+      documents: null,
+      filePaths: null,
+      targetIds: null,
+      formFillLabels: ['제목'],
+    });
+    expect(bridge.hasUnsavedChanges()).toBe(false);
+  });
+
+  it('F-6c323309 AC-35e27d90: 현재 열린 문서가 아닌 docId면 동기화하지 않는다', async () => {
+    const { bridge } = openBridge();
+    nativeCommands();
+
+    await bridge.aiGetDocumentContext('doc-other', false);
+    await bridge.aiRequestEdit('doc-other', '요약', 'ollama', 'qwen');
+
+    expect(invokedCommands()).toEqual(['ai_get_document_context', 'ai_request_edit']);
+    expect(fsOpenMock).not.toHaveBeenCalled();
+    expect(getWasmMock(bridge, 'exportHwpMock')).not.toHaveBeenCalled();
+
+    // 문서가 하나도 열려 있지 않아도 마찬가지다.
+    invokeMock.mockClear();
+    const empty = new TauriBridge();
+    await empty.aiRequestEdit('doc-1', '요약', 'ollama', 'qwen');
+    expect(invokedCommands()).toEqual(['ai_request_edit']);
+  });
+
+  it('F-6c323309 AC-433fec3f: 코어 교체가 실패해도 경고만 남기고 요청을 계속하며 임시 파일을 지운다', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const { bridge } = openBridge();
+    nativeCommands({
+      ai_sync_document: () => {
+        throw new Error('HWP 파싱 실패');
+      },
+    });
+
+    await expect(bridge.aiRequestEdit('doc-1', '표 하나 더', 'ollama', 'qwen')).resolves.toBe('req-7');
+
+    expect(invokedCommands()).toEqual(['ai_prepare_document_sync', 'ai_sync_document', 'ai_request_edit']);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(removeMock).toHaveBeenCalledWith(STAGED);
+    expect(bridge.hasUnsavedChanges()).toBe(false);
+  });
+
+  it('F-6c323309 AC-433fec3f: 스테이징 파일 쓰기가 실패하면 동기화 없이 컨텍스트를 그대로 읽는다', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const { bridge, handle } = openBridge();
+    handle.write.mockRejectedValue(new Error('disk full'));
+    nativeCommands();
+
+    await expect(bridge.aiGetDocumentContext('doc-1', false)).resolves.toEqual(CONTEXT);
+
+    // 깨진 파일로 코어를 교체하지 않는다.
+    expect(invokedCommands()).toEqual(['ai_prepare_document_sync', 'ai_get_document_context']);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(removeMock).toHaveBeenCalledWith(STAGED);
+  });
+
+  it('F-6c323309 AC-433fec3f: 임시 파일 정리나 동기화 준비가 실패해도 요청은 막히지 않는다', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const { bridge } = openBridge();
+    removeMock.mockRejectedValue(new Error('EPERM'));
+    nativeCommands({
+      ai_sync_document: () => {
+        throw new Error('HWP 파싱 실패');
+      },
+    });
+
+    await expect(bridge.aiRequestEdit('doc-1', '표 하나 더', 'ollama', 'qwen')).resolves.toBe('req-7');
+    expect(removeMock).toHaveBeenCalledWith(STAGED);
+
+    // 준비 단계가 실패하면 만든 파일이 없으니 쓰지도 지우지도 않는다.
+    invokeMock.mockClear();
+    removeMock.mockClear();
+    fsOpenMock.mockClear();
+    nativeCommands({
+      ai_prepare_document_sync: () => {
+        throw new Error('임시 폴더 없음');
+      },
+    });
+
+    await expect(bridge.aiGetDocumentContext('doc-1', false)).resolves.toEqual(CONTEXT);
+    expect(invokedCommands()).toEqual(['ai_prepare_document_sync', 'ai_get_document_context']);
+    expect(fsOpenMock).not.toHaveBeenCalled();
+    expect(removeMock).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledTimes(2);
+  });
+});
+
 function nativeOpenResult(overrides: Record<string, unknown> = {}) {
   return {
     docId: 'doc-1',

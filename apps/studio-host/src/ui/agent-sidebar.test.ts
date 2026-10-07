@@ -321,10 +321,12 @@ describe('AgentSidebar', () => {
     delete (globalThis as Record<string, unknown>).document;
   });
 
-  it('mounts the toggle button and panel into the document body', async () => {
+  it('mounts only the panel into the document body (no floating toggle button)', async () => {
     build();
     await flush();
-    expect(doc.body.children.length).toBe(2);
+    // 둥근 떠 있는 AI 버튼은 없다 — 툴바·메뉴·⌘J(view:ai-panel)가 패널을 연다.
+    expect(doc.body.children.length).toBe(1);
+    expect(doc.body.querySelector('.hop-ai-toggle')).toBeNull();
     expect(find('hop-ai-prompt')).toBeTruthy();
     expect(captured).not.toBeNull();
   });
@@ -398,7 +400,7 @@ describe('AgentSidebar', () => {
       'doc-new',
       '연구 계획 초안 써줘',
       'ollama',
-      'llama3.2',
+      'qwen3.8:27b',
       null,
       null,
       null,
@@ -488,7 +490,7 @@ describe('AgentSidebar', () => {
       'doc-1',
       '첫 문단 바꿔줘',
       'ollama',
-      'llama3.2',
+      'qwen3.8:27b',
       null,
       null,
       null,
@@ -510,7 +512,8 @@ describe('AgentSidebar', () => {
     expect(find('hop-ai-stream').querySelector('.hop-ai-thinking')).toBeNull();
 
     expect(find('hop-ai-accept').disabled).toBe(false);
-    expect(find('hop-ai-diff').children.length).toBe(1);
+    // 변경 요약 줄 + 변경 1건.
+    expect(find('hop-ai-diff').querySelectorAll('.hop-ai-diff-item').length).toBe(1);
     expect(find('hop-ai-status').textContent).toContain('제안 1건');
 
     find('hop-ai-accept').click();
@@ -688,8 +691,8 @@ describe('AgentSidebar', () => {
     expect(bridge.insertText).toHaveBeenCalled();
     expect(find('hop-ai-status').textContent).toContain('미리 적용');
 
-    // 새/바뀐 줄에 초록 변경 표시줄이 그려진다.
-    expect(scrollContent.querySelector('.hop-ai-inline-changebar')).not.toBeNull();
+    // 새/바뀐 문단 전체가 초록으로 칠해진다(F-21ca4efe).
+    expect(scrollContent.querySelector('.hop-ai-inline-mark')).not.toBeNull();
 
     // 거절 → 스냅샷으로 복원(loadDocument 호출). 바는 뷰포트 고정이라 body에 있다.
     doc.body.querySelector('.hop-ai-inline-reject')!.click();
@@ -778,7 +781,7 @@ describe('AgentSidebar', () => {
     expect(bridge.insertText).toHaveBeenCalledTimes(3);
     expect(bridge.insertText).toHaveBeenLastCalledWith(0, 1, 0, '둘째 수정');
     // 남은 편집의 하이라이트(초록 변경 표시줄)는 유지된다.
-    expect(scrollContent.querySelector('.hop-ai-inline-changebar')).not.toBeNull();
+    expect(scrollContent.querySelector('.hop-ai-inline-mark')).not.toBeNull();
     expect(find('hop-ai-status').textContent).toContain('1/2건 적용 예정');
 
     // 승인 — 문서엔 이미 남은 편집만 반영돼 있으므로 그대로 확정된다.
@@ -1091,12 +1094,12 @@ describe('AgentSidebar', () => {
     expect(bridge.aiListModels).toHaveBeenCalledWith('anthropic', undefined);
     // 조회에만 있던 신모델도 목록에 뜬다 — 카탈로그를 손대지 않아도 최신을 고를 수 있다.
     expect(modelOptions()).toEqual([
-      'claude-sonnet-5',
       'claude-haiku-4-5',
+      'claude-sonnet-5',
       'claude-opus-6',
       '__custom__',
     ]);
-    expect(find('hop-ai-model-select').value).toBe('claude-sonnet-5');
+    expect(find('hop-ai-model-select').value).toBe('claude-haiku-4-5');
     expect(find('hop-ai-status').textContent).toContain('모델 3개');
   });
 
@@ -1121,7 +1124,7 @@ describe('AgentSidebar', () => {
     await flush();
     await selectProvider('anthropic');
 
-    expect(find('hop-ai-model-select').value).toBe('claude-opus-5');
+    expect(find('hop-ai-model-select').value).toBe('claude-opus-5-5');
     expect(modelOptions()).not.toContain('claude-3-5-haiku-latest');
   });
 
@@ -1136,7 +1139,7 @@ describe('AgentSidebar', () => {
     await flush();
 
     expect(modelOptions()).toEqual(before);
-    expect(find('hop-ai-model-select').value).toBe('claude-opus-5');
+    expect(find('hop-ai-model-select').value).toBe('claude-opus-5-5');
     expect(find('hop-ai-status').textContent).toContain('불러오지 못했습니다');
     // 실패가 버튼을 영구히 잠그지 않는다(키를 저장한 뒤 다시 누를 수 있어야 한다).
     expect(find('hop-ai-model-refresh').disabled).toBe(false);
@@ -1151,7 +1154,7 @@ describe('AgentSidebar', () => {
     find('hop-ai-model-refresh').click();
     await flush();
 
-    expect(modelOptions()).toContain('gpt-5-mini');
+    expect(modelOptions()).toContain('gpt-6.1-sol');
     expect(find('hop-ai-status').textContent).toContain('기본 목록을 유지');
   });
 
@@ -1161,7 +1164,7 @@ describe('AgentSidebar', () => {
     await selectProvider('claude-cli');
 
     expect(find('hop-ai-model-refresh').disabled).toBe(true);
-    expect(modelOptions()).toEqual(['default', 'sonnet', 'opus', 'haiku', '__custom__']);
+    expect(modelOptions()).toEqual(['default', 'opus', 'sonnet', 'fable', 'haiku', 'opusplan', '__custom__']);
 
     find('hop-ai-model-refresh').click();
     await flush();
@@ -1376,6 +1379,408 @@ describe('AgentSidebar', () => {
     expect(surface.removeSourceFormTable).not.toHaveBeenCalled();
   });
 
+  /**
+   * F-ae14b6da — 연구노트·양식 채우기 결과를 승인/거절할 수 있고, 실패·거절 시 앱이 만든
+   * 빈 양식이 남지 않는다. 버튼이 '켜져 있다'가 아니라 눌렀을 때 문서가 실제로 확정/복원되는지,
+   * 복원 바이트가 '양식을 그리기 전' 문서인지를 본다.
+   */
+
+  /** 마지막 어시스턴트 버블의 상태줄 문구. */
+  function bubbleStatus(): string {
+    const all = doc.body.querySelectorAll('.hop-ai-bubble-status');
+    return all[all.length - 1]?.textContent ?? '';
+  }
+
+  /** 앱이 기본 양식 표를 그리기 전/후의 문서 바이트(스냅샷 시점 판별용). */
+  const BEFORE_FORM = new Uint8Array([0xb0, 0x01]);
+  const AFTER_FORM = new Uint8Array([0xa0, 0x02]);
+
+  /** exportHwp가 '양식 표를 그린 뒤'면 AFTER_FORM, 그 전이면 BEFORE_FORM을 내보내게 한다. */
+  function distinguishFormCreation(surface: ReturnType<typeof enableFormFillSurface>): void {
+    (bridge as Record<string, unknown>).fileName = 'note.hwp';
+    surface.exportHwp.mockImplementation(() =>
+      bridge.createTable.mock.calls.length ? AFTER_FORM : BEFORE_FORM,
+    );
+  }
+
+  /** 사용자 문서에 이미 양식 표가 있는 컨텍스트(앱이 양식을 만들지 않는 경로). */
+  function userFormContext(): Awaited<ReturnType<typeof bridge.aiGetDocumentContext>> {
+    return {
+      document_metadata: {
+        total_sections: 1,
+        form_tables: [
+          {
+            section: 0,
+            paragraph: 2,
+            control_index: 0,
+            rows: 2,
+            cols: 2,
+            cells: [
+              { row: 0, col: 0, role: 'label', text: '제목' },
+              { row: 0, col: 1, role: 'input', text: '' },
+              { row: 1, col: 0, role: 'label', text: '기록 일자' },
+              { row: 1, col: 1, role: 'input', text: '' },
+            ],
+          },
+        ],
+      },
+      content: [{ type: 'paragraph', id: 'sec[0].p[5]', text: '본문' }],
+    } as unknown as Awaited<ReturnType<typeof bridge.aiGetDocumentContext>>;
+  }
+
+  /** 양식 이어쓰기를 요청만 보내고(모델 응답 전) 멈춘다. */
+  async function startFormFill(prompt: string): Promise<void> {
+    find('hop-ai-prompt').value = prompt;
+    clickQuickAction('form_fill');
+    await flush();
+  }
+
+  it('F-ae14b6da AC-22433698: LLM 양식 채우기 미리보기에서 승인을 누르면 실제로 확정된다', async () => {
+    const surface = enableFormFillSurface();
+    build();
+    await flush();
+    await selectProvider('ollama');
+
+    await runFormFill('연구노트 3개 만들어줘');
+
+    // 미리 적용까지 갔고 승인/거절을 기다린다.
+    expect(bubbleStatus()).toContain('승인 또는 거절');
+    expect(find('hop-ai-accept').disabled).toBe(false);
+    expect(bridge.markDocumentDirty).not.toHaveBeenCalled();
+
+    find('hop-ai-accept').click();
+
+    // 응답 수신 때 세션이 IDLE로 끝나 승인이 무시되던 결함(감사 P1-6) — 이제 확정된다.
+    expect(bridge.markDocumentDirty).toHaveBeenCalledTimes(1);
+    expect(bubbleStatus()).toContain('적용 완료');
+    expect(find('hop-ai-accept').disabled).toBe(true);
+    // 승인은 문서를 되돌리지 않고, 확정된 뒤의 거절은 아무 일도 하지 않는다.
+    find('hop-ai-reject').click();
+    expect(surface.loadDocument).not.toHaveBeenCalled();
+  });
+
+  it('F-ae14b6da AC-22433698: LLM 양식 채우기 미리보기에서 거절을 누르면 스냅샷으로 되돌린다', async () => {
+    bridge.aiGetDocumentContext.mockResolvedValue(userFormContext());
+    const surface = enableFormFillSurface();
+    const snapshotBytes = new Uint8Array([4, 5, 6]);
+    surface.exportHwp.mockReturnValue(snapshotBytes);
+    (bridge as Record<string, unknown>).fileName = 'note.hwp';
+    build();
+    await flush();
+    await selectProvider('ollama');
+
+    await runFormFill('항목 3개 더 추가해줘');
+
+    // 사용자 표를 복제해 미리 적용했다(승인/거절 대기).
+    expect(surface.copyControl).toHaveBeenCalled();
+    expect(find('hop-ai-reject').disabled).toBe(false);
+    expect(surface.loadDocument).not.toHaveBeenCalled();
+
+    find('hop-ai-reject').click();
+
+    expect(surface.loadDocument).toHaveBeenCalledTimes(1);
+    expect(surface.loadDocument).toHaveBeenCalledWith(snapshotBytes, 'note.hwp');
+    expect(bubbleStatus()).toContain('거절하여 되돌렸습니다');
+    expect(find('hop-ai-reject').disabled).toBe(true);
+    expect(bridge.markDocumentDirty).not.toHaveBeenCalled();
+  });
+
+  it('F-ae14b6da AC-dddd7748: 앱이 양식을 만든 뒤 항목이 0개면 양식을 만들기 전 문서로 되돌린다', async () => {
+    const surface = enableFormFillSurface();
+    distinguishFormCreation(surface);
+    build();
+    await flush();
+    await selectProvider('ollama');
+
+    await startFormFill('연구노트 만들어줘');
+
+    // 응답 대기 중: 앱이 기본 양식을 그렸고, 스냅샷은 그 '전'에 잡혔다.
+    expect(bridge.createTable).toHaveBeenCalledTimes(1);
+    expect(surface.exportHwp).toHaveBeenCalled();
+    expect(surface.exportHwp.mock.invocationCallOrder[0]).toBeLessThan(
+      bridge.createTable.mock.invocationCallOrder[0],
+    );
+    expect(surface.loadDocument).not.toHaveBeenCalled();
+
+    captured!.onEditReady?.({
+      requestId: 'req-1',
+      actionScriptJson: JSON.stringify({ message: '정리할 내용이 없습니다.', entries: [] }),
+    });
+    await flush();
+
+    // 빈 양식 표가 남지 않는다 — 양식을 그리기 전 문서로 복원.
+    expect(surface.loadDocument).toHaveBeenCalledTimes(1);
+    expect(surface.loadDocument).toHaveBeenCalledWith(BEFORE_FORM, 'note.hwp');
+    expect(surface.copyControl).not.toHaveBeenCalled();
+    expect(find('hop-ai-accept').disabled).toBe(true);
+    expect(bubbleStatus()).toContain('추가할 항목이 없습니다');
+  });
+
+  it.each<{ label: string; setup?: () => void; interrupt?: () => void }>([
+    {
+      label: '요청 전송이 실패하면',
+      setup: () => {
+        bridge.aiRequestEdit.mockRejectedValueOnce(new Error('network down'));
+      },
+    },
+    {
+      label: '모델 응답이 실패하면',
+      interrupt: () =>
+        captured!.onEditFailed?.({ requestId: 'req-1', code: 'PROVIDER_ERROR', reason: 'HTTP 500' }),
+    },
+    {
+      label: '사용자가 취소하면',
+      interrupt: () => find('hop-ai-cancel').click(),
+    },
+  ])(
+    'F-ae14b6da AC-dddd7748: 앱이 양식을 만든 뒤 $label 양식을 만들기 전 문서로 되돌린다',
+    async ({ setup, interrupt }) => {
+      const surface = enableFormFillSurface();
+      distinguishFormCreation(surface);
+      setup?.();
+      build();
+      await flush();
+      await selectProvider('ollama');
+
+      await startFormFill('연구노트 만들어줘');
+      expect(bridge.createTable).toHaveBeenCalled();
+      interrupt?.();
+      await flush();
+
+      expect(surface.loadDocument).toHaveBeenCalledTimes(1);
+      expect(surface.loadDocument).toHaveBeenCalledWith(BEFORE_FORM, 'note.hwp');
+      expect(surface.copyControl).not.toHaveBeenCalled();
+      expect(find('hop-ai-accept').disabled).toBe(true);
+    },
+  );
+
+  it('F-ae14b6da AC-dddd7748: 앱이 만든 양식으로 채운 결과를 거절하면 양식을 만들기 전 문서로 돌아간다', async () => {
+    const surface = enableFormFillSurface();
+    distinguishFormCreation(surface);
+    build();
+    await flush();
+    await selectProvider('ollama');
+
+    await runFormFill('연구노트 3개 만들어줘');
+    // 복제 + 빈 템플릿 제거까지 미리 적용됐다.
+    expect(surface.removeSourceFormTable).toHaveBeenCalled();
+    expect(surface.loadDocument).not.toHaveBeenCalled();
+
+    find('hop-ai-reject').click();
+
+    // 양식을 그린 뒤 스냅샷을 잡으면 거절해도 빈 양식이 남는다 — 그리기 전 바이트여야 한다.
+    expect(surface.loadDocument).toHaveBeenCalledTimes(1);
+    expect(surface.loadDocument).toHaveBeenCalledWith(BEFORE_FORM, 'note.hwp');
+  });
+
+  /** 연구노트 구조로 파싱되는 PDF(LLM 없는 결정적 변환 경로)를 흉내낸다. */
+  function stubResearchNotePdf(): void {
+    (bridge as Record<string, unknown>).aiParseResearchNotePdf = vi.fn(async () => ({
+      entries: [
+        {
+          title: '1주차 실험 기록',
+          body_paragraphs: ['시료 준비', '측정 조건 정리'],
+          recorders: ['연구원 갑'],
+          confirmer: '책임자 을',
+          record_date: '2026.01.05',
+          confirm_date: '2026.01.06',
+          images: [],
+        },
+      ],
+      toc: [],
+    }));
+  }
+
+  /** 연구노트 PDF를 첨부하고 변환을 요청한다(드래그&드롭·파일 선택과 같은 첨부 상태). */
+  async function sendResearchNotePdf(sidebar: AgentSidebar): Promise<void> {
+    (sidebar as unknown as { attachments: unknown[] }).attachments.push({
+      id: 'a1',
+      kind: 'file',
+      name: 'note.pdf',
+      path: '/tmp/note.pdf',
+    });
+    find('hop-ai-prompt').value = '이 연구노트를 양식으로 옮겨줘';
+    find('hop-ai-send').click();
+    await flush();
+  }
+
+  it('F-ae14b6da AC-dddd7748: 구조 변환(연구노트 PDF) 결과를 거절해도 양식을 만들기 전 문서로 돌아간다', async () => {
+    stubResearchNotePdf();
+    const surface = enableFormFillSurface();
+    distinguishFormCreation(surface);
+    const sidebar = build();
+    await flush();
+    await selectProvider('ollama');
+
+    await sendResearchNotePdf(sidebar);
+
+    // 결정적 변환 경로가 양식을 만들고 미리 적용했다(LLM 요청 없음).
+    expect(bridge.aiRequestEdit).not.toHaveBeenCalled();
+    expect(bridge.createTable).toHaveBeenCalled();
+    expect(surface.exportHwp.mock.invocationCallOrder[0]).toBeLessThan(
+      bridge.createTable.mock.invocationCallOrder[0],
+    );
+    expect(bubbleStatus()).toContain('승인 또는 거절');
+
+    find('hop-ai-reject').click();
+
+    expect(surface.loadDocument).toHaveBeenCalledTimes(1);
+    expect(surface.loadDocument).toHaveBeenCalledWith(BEFORE_FORM, 'note.hwp');
+  });
+
+  it('F-ae14b6da AC-dddd7748: 구조 변환 중 양식 표 생성이 도중에 실패하면 반쯤 그린 표를 되돌린다', async () => {
+    stubResearchNotePdf();
+    // 표는 그려졌는데 본문 행 병합에서 실패한다.
+    bridge.mergeTableCells.mockReturnValue({ ok: false, cellCount: 0 });
+    const surface = enableFormFillSurface();
+    distinguishFormCreation(surface);
+    const sidebar = build();
+    await flush();
+    await selectProvider('ollama');
+
+    await sendResearchNotePdf(sidebar);
+
+    expect(bridge.createTable).toHaveBeenCalledTimes(1);
+    expect(surface.loadDocument).toHaveBeenCalledTimes(1);
+    expect(surface.loadDocument).toHaveBeenCalledWith(BEFORE_FORM, 'note.hwp');
+    expect(bubbleStatus()).toContain('기본 연구노트 양식을 만들지 못했습니다');
+  });
+
+  it('F-ae14b6da AC-dddd7748: 구조 변환이 양식을 만든 뒤 오류로 끝나면 양식을 만들기 전 문서로 되돌린다', async () => {
+    stubResearchNotePdf();
+    const surface = enableFormFillSurface();
+    distinguishFormCreation(surface);
+    const sidebar = build();
+    await flush();
+    await selectProvider('ollama');
+    // 양식 생성·복제 뒤 화면 갱신(document-changed)에서 터진다 — 미리보기 전 바깥 catch로 간다.
+    emit.mockImplementation((name: string) => {
+      if (name === 'document-changed') throw new Error('render boom');
+    });
+
+    await sendResearchNotePdf(sidebar);
+
+    expect(bridge.createTable).toHaveBeenCalledTimes(1);
+    expect(bubbleStatus()).toContain('docx 일괄 변환 실패');
+    // 앱이 만든 양식·일부 복제가 남지 않는다 — 양식을 그리기 전 문서로 복원.
+    expect(surface.loadDocument).toHaveBeenCalledTimes(1);
+    expect(surface.loadDocument).toHaveBeenCalledWith(BEFORE_FORM, 'note.hwp');
+    expect(find('hop-ai-accept').disabled).toBe(true);
+  });
+
+  it('F-ae14b6da AC-dddd7748: LLM 양식 채우기에서 양식 표 생성이 도중에 실패하면 반쯤 그린 표를 되돌린다', async () => {
+    // 표는 그려졌는데 본문 행 병합에서 실패한다(createdForm이 아직 비어 있는 시점).
+    bridge.mergeTableCells.mockReturnValue({ ok: false, cellCount: 0 });
+    const surface = enableFormFillSurface();
+    distinguishFormCreation(surface);
+    build();
+    await flush();
+    await selectProvider('ollama');
+
+    await startFormFill('연구노트 만들어줘');
+
+    expect(bridge.createTable).toHaveBeenCalledTimes(1);
+    // 양식이 없으니 모델에 요청하지 않고, 반쯤 그린 표는 양식을 그리기 전 문서로 되돌린다.
+    expect(bridge.aiRequestEdit).not.toHaveBeenCalled();
+    expect(surface.loadDocument).toHaveBeenCalledTimes(1);
+    expect(surface.loadDocument).toHaveBeenCalledWith(BEFORE_FORM, 'note.hwp');
+    expect(bubbleStatus()).toContain('양식 생성 실패');
+  });
+
+  it('F-ae14b6da AC-06f38469: 첨부 PDF 추출이 끝난 뒤 그 본문을 실어 보내고, 요청이 첨부를 소비한다', async () => {
+    enableFormFillSurface();
+    let finishExtract: (text: string) => void = () => undefined;
+    bridge.aiExtractText.mockImplementation(
+      () =>
+        new Promise<string>((resolve) => {
+          finishExtract = resolve;
+        }),
+    );
+    const sidebar = build();
+    await flush();
+    await selectProvider('ollama');
+    // 드래그&드롭과 같은 경로로 PDF를 붙인다 — 칩은 바로 뜨고 텍스트 추출은 백그라운드로 돈다.
+    await (sidebar as unknown as { attachPaths(paths: string[]): Promise<void> }).attachPaths([
+      '/tmp/paper.pdf',
+    ]);
+    expect(bridge.aiExtractText).toHaveBeenCalledWith('/tmp/paper.pdf');
+    expect(find('hop-ai-chip-label').textContent).toContain('분석 중');
+
+    find('hop-ai-prompt').value = '연구노트 만들어줘';
+    find('hop-ai-send').click();
+    for (let i = 0; i < 8; i += 1) await flush();
+
+    // 추출이 끝나기 전에는 요청이 나가지 않는다(본문 없이 지시문만 가면 모델이 항목을 지어낸다).
+    expect(bridge.aiRequestEdit).not.toHaveBeenCalled();
+
+    finishExtract('1주차: 시료 A 전처리 조건 비교');
+    await vi.waitFor(() => expect(bridge.aiRequestEdit).toHaveBeenCalledTimes(1));
+
+    const first = lastRequest();
+    expect(first[10], '연구노트(양식 채움) 경로로 라우팅돼야 한다').toBeTruthy();
+    expect(String(first[1])).toContain('[첨부 문서: paper.pdf]');
+    expect(String(first[1])).toContain('1주차: 시료 A 전처리 조건 비교');
+    // 이 요청이 첨부를 소비했다 — 컴포저의 첨부 칩이 비워진다.
+    expect(find('hop-ai-chips').classList.contains('hop-ai-hidden')).toBe(true);
+
+    // 응답을 마친 뒤 다음 메시지를 보내도 같은 PDF로 다시 라우팅되지 않는다.
+    captured!.onEditReady?.({ requestId: 'req-1', actionScriptJson: FORM_FILL_JSON });
+    await flush();
+    find('hop-ai-prompt').value = '연구노트 하나 더 만들어줘';
+    find('hop-ai-send').click();
+    await vi.waitFor(() => expect(bridge.aiRequestEdit).toHaveBeenCalledTimes(2));
+
+    expect(bridge.aiParseResearchNotePdf).toHaveBeenCalledTimes(1);
+    expect(String(lastRequest()[1])).not.toContain('paper.pdf');
+  });
+
+  it('F-ae14b6da AC-06f38469: 기다리는 동안 새로 붙은 첨부의 추출까지 끝난 뒤에 보낸다', async () => {
+    enableFormFillSurface();
+    let finishPaper: (text: string) => void = () => undefined;
+    let finishNotes: (text: string) => void = () => undefined;
+    bridge.aiExtractText
+      .mockImplementationOnce(
+        () =>
+          new Promise<string>((resolve) => {
+            finishPaper = resolve;
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise<string>((resolve) => {
+            finishNotes = resolve;
+          }),
+      );
+    const sidebar = build();
+    await flush();
+    await selectProvider('ollama');
+    const attach = (path: string): Promise<void> =>
+      (sidebar as unknown as { attachPaths(paths: string[]): Promise<void> }).attachPaths([path]);
+
+    await attach('/tmp/paper.pdf');
+    find('hop-ai-prompt').value = '연구노트 만들어줘';
+    find('hop-ai-send').click();
+    for (let i = 0; i < 4; i += 1) await flush();
+
+    // '분석이 끝나면 전송합니다' 대기 중에 사용자가 PDF를 하나 더 붙인다.
+    await attach('/tmp/notes.pdf');
+    expect(bridge.aiExtractText).toHaveBeenCalledTimes(2);
+
+    // 첫 첨부만 끝났다 — 새 첨부의 추출이 남아 있으니 아직 보내지 않는다.
+    finishPaper('논문 본문: 전처리 조건 비교');
+    for (let i = 0; i < 8; i += 1) await flush();
+    expect(bridge.aiRequestEdit).not.toHaveBeenCalled();
+
+    finishNotes('메모 본문: 2주차 측정값 정리');
+    await vi.waitFor(() => expect(bridge.aiRequestEdit).toHaveBeenCalledTimes(1));
+
+    const prompt = String(lastRequest()[1]);
+    expect(lastRequest()[10], '연구노트(양식 채움) 경로로 라우팅돼야 한다').toBeTruthy();
+    expect(prompt).toContain('논문 본문: 전처리 조건 비교');
+    expect(prompt).toContain('[첨부 문서: notes.pdf]');
+    expect(prompt).toContain('메모 본문: 2주차 측정값 정리');
+  });
+
   it('F-9dbe7a25 AC-001: 키 줄이 어느 provider의 키인지 밝힌다', async () => {
     bridge.aiHasApiKey.mockResolvedValue(false);
     build();
@@ -1536,7 +1941,7 @@ describe('AgentSidebar', () => {
     await flush();
     await selectProvider('gemini');
 
-    expect(find('hop-ai-model-select').value).toBe('gemini-flash-latest');
+    expect(find('hop-ai-model-select').value).toBe('gemini-3.8-flash');
     find('hop-ai-prompt').value = '요약';
     find('hop-ai-send').click();
     await flush();
@@ -1545,7 +1950,7 @@ describe('AgentSidebar', () => {
       'doc-1',
       '요약',
       'gemini',
-      'gemini-flash-latest',
+      'gemini-3.8-flash',
       null,
       null,
       null,
@@ -1625,7 +2030,7 @@ describe('AgentSidebar', () => {
       'doc-1',
       '요약해줘',
       'ollama',
-      'llama3.2',
+      'qwen3.8:27b',
       null,
       null,
       null,
@@ -1652,7 +2057,7 @@ describe('AgentSidebar', () => {
       'doc-1',
       '바꿔줘',
       'ollama',
-      'llama3.2',
+      'qwen3.8:27b',
       'sec[0].p[7]',
       null,
       null,

@@ -209,7 +209,7 @@ fn collect_targets(data: &[u8]) -> Vec<Target> {
 /// 렌더 트리(페이지별 본문 런)에서 (sec, para, 줄 k) → 페이지 상대 y(px)를 모은다.
 /// 같은 줄에 런이 여럿이면 최솟값(줄 윗변)을 쓴다.
 fn collect_render_line_y(
-    core: &rhwp::DocumentCore,
+    core: &hop_rhwp_adapter::DocumentCore,
     sections: &[SectionStream],
 ) -> std::collections::HashMap<(usize, usize, usize), f64> {
     use std::collections::HashMap;
@@ -279,7 +279,7 @@ fn patch_section_linesegs(
             ]);
             let vpos = match line_y.get(&(sec_idx, target.para_idx, k)) {
                 Some(y_px) => {
-                    let v = (rhwp::renderer::px_to_hwpunit(*y_px, DPI) - body_top).max(0);
+                    let v = (hop_rhwp_adapter::px_to_hwpunit(*y_px, DPI) - body_top).max(0);
                     last_anchor = Some((v, old));
                     v
                 }
@@ -337,8 +337,8 @@ mod tests {
         out
     }
 
-    fn multipage_doc() -> (rhwp::DocumentCore, Vec<u8>) {
-        let mut core = rhwp::DocumentCore::new_empty();
+    fn multipage_doc() -> (hop_rhwp_adapter::DocumentCore, Vec<u8>) {
+        let mut core = hop_rhwp_adapter::DocumentCore::new_empty();
         core.create_blank_document_native().unwrap();
         let body = "이 문단은 다중 페이지 줄 배치 저장 검증을 위한 본문입니다. \
                     충분히 길게 써서 한 문단이 여러 줄을 차지하게 합니다. \
@@ -346,7 +346,7 @@ mod tests {
         core.insert_text_native(0, 0, 0, "다중 페이지 줄 배치 검증").unwrap();
         for i in 0..60 {
             let len = core.get_paragraph_length_native(0, i).unwrap();
-            core.split_paragraph_native(0, i, len).unwrap();
+            core.split_paragraph_native(0, i, len, None).unwrap();
             core.insert_text_native(0, i + 1, 0, body).unwrap();
             core.apply_para_format_native(
                 0,
@@ -435,7 +435,7 @@ mod tests {
         // 넘치는 본문 셀이 다음 페이지로 흐르게 한다(잘림·빈 페이지 없음). 목차 표에 이미 쓰는
         // 안전한 설정이라 한컴이 거부하지 않는다.
         if std::env::var("HOP_ENTRY_SPLIT").as_deref() == Ok("1") {
-            use rhwp::model::control::Control;
+            use hop_rhwp_adapter::model::control::Control;
             // 항목 표(6x3) 좌표 수집.
             let mut locs: Vec<(usize, usize, usize)> = Vec::new();
             for (si, s) in core.document().sections.iter().enumerate() {
@@ -462,7 +462,7 @@ mod tests {
         }
         // (실험) 목차 표를 페이지별 개별 표로 쪼개기 — 효과 없어 기본 OFF(HOP_RECHUNK=1로만 켬).
         if std::env::var("HOP_RECHUNK").as_deref() == Ok("1") {
-            use rhwp::model::control::Control;
+            use hop_rhwp_adapter::model::control::Control;
             let rows_per_chunk: usize = std::env::var("HOP_TOCROWS")
                 .ok()
                 .and_then(|s| s.parse().ok())
@@ -505,7 +505,7 @@ mod tests {
         // 목차 쪽번호 재매김: 분할이 반영된 '정확한' 페이지네이션이 필요하므로, 1차 저장본을
         // 다시 로드(재로드 시 셀 reflow로 분할이 페이지네이션에 반영)한 뒤 목차를 동기화한다.
         let final_bytes = if std::env::var("HOP_SYNC_TOC").as_deref() == Ok("1") {
-            use rhwp::model::control::Control;
+            use hop_rhwp_adapter::model::control::Control;
             let mut core2 =
                 crate::state::editable_core_from_bytes(&fixed1, "재로드 파싱", "재로드 변환")
                     .expect("reload");
@@ -540,7 +540,7 @@ mod tests {
     /// 한 쪽짜리 문서(누적==페이지 상대)는 사실상 변화가 없어야 한다(값 동등 보정).
     #[test]
     fn single_page_doc_stays_consistent() {
-        let mut core = rhwp::DocumentCore::new_empty();
+        let mut core = hop_rhwp_adapter::DocumentCore::new_empty();
         core.create_blank_document_native().unwrap();
         core.insert_text_native(0, 0, 0, "한 쪽짜리 문서").unwrap();
         let raw = core.export_hwp_native().unwrap();

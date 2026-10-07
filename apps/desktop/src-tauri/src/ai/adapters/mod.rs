@@ -102,10 +102,22 @@ pub(crate) fn image_data_url(image: &crate::ai::provider::ImageInput) -> String 
     format!("data:{};base64,{}", image.mime_type, image.data_base64)
 }
 
-/// 타임아웃이 설정된 공용 reqwest 클라이언트(스펙 7장).
+/// 스트림이 이만큼 아무 바이트도 보내지 않으면 끊긴 것으로 본다(스펙 7장).
+///
+/// 전체 소요 시간 상한(`timeout`)은 두지 않는다 — 긴 문서 생성은 스트리밍으로 몇 분씩
+/// 걸리고, 전체 상한은 응답 본문을 읽는 시간까지 포함해 정상 응답을 중간에 끊는다.
+/// 생각(thinking) 단계에서 첫 토큰까지 오래 걸리는 모델도 있어 넉넉히 잡는다.
+pub(crate) const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// 연결·무응답 타임아웃이 설정된 공용 reqwest 클라이언트(스펙 7장).
 pub(crate) fn http_client() -> Result<reqwest::Client, ProviderError> {
+    http_client_with_idle_timeout(STREAM_IDLE_TIMEOUT)
+}
+
+/// 무응답 타임아웃만 두고 전체 상한은 두지 않는 클라이언트(테스트에서 짧은 값으로 검증).
+pub(crate) fn http_client_with_idle_timeout(idle: Duration) -> Result<reqwest::Client, ProviderError> {
     reqwest::Client::builder()
-        .timeout(Duration::from_secs(60))
+        .read_timeout(idle)
         .connect_timeout(Duration::from_secs(15))
         .build()
         .map_err(|e| ProviderError::Provider(format!("HTTP 클라이언트 생성 실패: {}", e)))
@@ -169,5 +181,98 @@ mod tests {
         let content = user_content(&req);
         assert!(content.contains("지시"));
         assert!(content.contains("{\"x\":1}"));
+    }
+    // ── F-73cbb137 AC-078633ca: 스트리밍에는 전체 상한 없이 무응답(읽기) 타임아웃만 ──
+
+    use std::io::{Read, Write};
+    use std::net::{TcpListener, TcpStream};
+    use std::sync::mpsc;
+    use std::time::Instant;
+
+    /// 테스트용 무응답 타임아웃. 트리클 간격(100ms)의 4배라 지터에 넉넉하다.
+    const TEST_IDLE: Duration = Duration::from_millis(400);
+
+    /// 요청 하나를 받아 헤더 끝까지 읽은 뒤 `respond`로 응답을 흘리는 1회용 서버.
+    fn serve_once(
+        respond: impl FnOnce(&mut TcpStream) + Send + 'static,
+    ) -> (String, std::thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/stream", listener.local_addr().unwrap());
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream.set_nodelay(true).unwrap();
+            let mut request = Vec::new();
+            let mut buf = [0u8; 1024];
+            while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                let n = stream.read(&mut buf).unwrap();
+                if n == 0 {
+                    return;
+                }
+                request.extend_from_slice(&buf[..n]);
+            }
+            respond(&mut stream);
+        });
+        (url, handle)
+    }
+
+    fn fetch(url: &str) -> Result<Vec<u8>, reqwest::Error> {
+        let client = http_client_with_idle_timeout(TEST_IDLE).unwrap();
+        tauri::async_runtime::block_on(async {
+            let response = client.get(url).send().await?;
+            Ok(response.bytes().await?.to_vec())
+        })
+    }
+
+    #[test]
+    fn f73cbb137_ac_078633ca_slow_but_steady_stream_is_not_cut_by_a_total_cap() {
+        const BODY: &[u8] = b"streamed";
+        let (url, server) = serve_once(|stream| {
+            let header = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                BODY.len()
+            );
+            stream.write_all(header.as_bytes()).unwrap();
+            stream.flush().unwrap();
+            // 바이트 사이 간격(100ms)은 무응답 타임아웃(400ms)보다 짧지만, 합계(800ms)는 길다.
+            for byte in BODY {
+                std::thread::sleep(Duration::from_millis(100));
+                stream.write_all(&[*byte]).unwrap();
+                stream.flush().unwrap();
+            }
+        });
+
+        let started = Instant::now();
+        let body = fetch(&url).expect("꾸준히 오는 스트림은 오래 걸려도 끝까지 받아야 한다");
+        let elapsed = started.elapsed();
+
+        assert_eq!(body, BODY);
+        assert!(elapsed > TEST_IDLE, "전체 소요({elapsed:?})가 무응답 타임아웃보다 길어야 의미가 있다");
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn f73cbb137_ac_078633ca_stalled_stream_times_out_after_the_idle_window() {
+        let (release, wait_release) = mpsc::channel::<()>();
+        let (url, server) = serve_once(move |stream| {
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 8\r\nConnection: close\r\n\r\nst")
+                .unwrap();
+            stream.flush().unwrap();
+            // 나머지를 보내지 않고 멈춘다(테스트가 끝났다고 알리거나 3초가 지날 때까지).
+            let _ = wait_release.recv_timeout(Duration::from_secs(3));
+        });
+
+        let started = Instant::now();
+        let error = fetch(&url).expect_err("멈춘 스트림은 실패해야 한다");
+        let elapsed = started.elapsed();
+        let _ = release.send(());
+
+        assert!(error.is_timeout(), "기대: 타임아웃 오류, 실제: {error}");
+        assert_eq!(sse::map_reqwest_err(error), ProviderError::Timeout);
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "서버가 연결을 닫기 전에 무응답 타임아웃으로 끊겨야 한다: {elapsed:?}"
+        );
+        server.join().unwrap();
     }
 }

@@ -9,7 +9,9 @@ export type { ShortcutDef };
 const hopShortcuts: [ShortcutDef, string][] = [
   [{ key: 'n', ctrl: true, shift: true }, 'file:new-window'],
   [{ key: 'o', ctrl: true, alt: true }, 'file:open-recent'],
-  [{ key: 's', ctrl: true, shift: true }, 'file:save-as'],
+  [{ key: 's', code: 'KeyS', ctrl: true, shift: true }, 'file:save-as'],
+  // AI 편집 패널 — 한컴 단축키와 겹치지 않는 Ctrl/⌘+J(⌘L=다시 찾기, ⌘I=기울임, ⌘⏎=쪽 나누기).
+  [{ key: 'j', code: 'KeyJ', ctrl: true }, 'view:ai-panel'],
 ];
 
 const hopShortcutKeys = new Set(hopShortcuts.map(([shortcut]) => shortcutKey(shortcut)));

@@ -43,7 +43,10 @@ function makeWasm(
       calls.push({ fn: 'insertPageBreak', args });
       return '';
     },
-    applyParaFormat: () => '',
+    applyParaFormat: (...args: unknown[]) => {
+      calls.push({ fn: 'applyParaFormat', args });
+      return '';
+    },
     applyStyle: () => '',
     getStyleList: () => '[]',
     getCellParagraphLength: () => 4,
@@ -128,7 +131,7 @@ describe('F-4f6d826e AC-001 — 명령별 붙여넣기 위치', () => {
   it('page_break가 참이면 붙여넣은 문단을 새 페이지에서 시작한다', () => {
     const { wasm, calls } = makeWasm();
     applyActionScript(wasm, script(pasteEdit('INSERT_AFTER', BODY_ID, HTML, { page_break: true })));
-    expect(calls.find((c) => c.fn === 'insertPageBreak')?.args).toEqual([0, 4, 0]);
+    expect(calls.find((c) => c.fn === 'applyParaFormat')?.args).toEqual([0, 4, JSON.stringify({ pageBreakBefore: true })]);
   });
 });
 
@@ -139,7 +142,7 @@ describe('F-4f6d826e AC-002 — 늘어난 문단 수를 재서 보정한다', ()
 
     const result = applyActionScript(wasm, script(pasteEdit('INSERT_AFTER', BODY_ID)));
 
-    expect(result.changed).toEqual([
+    expect(result.changed.map(({ sec, para }) => ({ sec, para }))).toEqual([
       { sec: 0, para: 4 },
       { sec: 0, para: 5 },
       { sec: 0, para: 6 },
@@ -154,7 +157,7 @@ describe('F-4f6d826e AC-002 — 늘어난 문단 수를 재서 보정한다', ()
 
     expect(result.applied).toBe(1);
     expect(calls.some((c) => c.fn === 'pasteHtml')).toBe(true);
-    expect(result.changed).toEqual([{ sec: 0, para: 4 }]);
+    expect(result.changed.map(({ sec, para }) => ({ sec, para }))).toEqual([{ sec: 0, para: 4 }]);
   });
 
   it('문단 수가 줄어든 것으로 나와도 음수로 보정하지 않는다', () => {
@@ -163,7 +166,7 @@ describe('F-4f6d826e AC-002 — 늘어난 문단 수를 재서 보정한다', ()
     const result = applyActionScript(wasm, script(pasteEdit('INSERT_AFTER', BODY_ID)));
 
     expect(result.applied).toBe(1);
-    expect(result.changed).toEqual([{ sec: 0, para: 4 }]);
+    expect(result.changed.map(({ sec, para }) => ({ sec, para }))).toEqual([{ sec: 0, para: 4 }]);
   });
 });
 

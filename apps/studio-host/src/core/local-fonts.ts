@@ -2,9 +2,12 @@ import { upstreamLocalFonts } from '@/upstream/local-fonts';
 import type {
   DetectLocalFontsOptions,
   GetLocalFontsOptions,
+  HostFontData,
+  HostFontProvider,
   LocalFontRecord,
   LocalFontSnapshot,
   LocalFontState,
+  LocalFontStyleRequest,
 } from '@/upstream/local-fonts';
 import {
   clearStoredDesktopFonts,
@@ -33,6 +36,7 @@ export type {
   LocalFontSnapshot,
   LocalFontState,
   LocalFontStorageKind,
+  LocalFontStyleRequest,
 } from '@/upstream/local-fonts';
 export type { LocalFontEntry } from './desktop-local-fonts';
 
@@ -94,7 +98,7 @@ export function resolveLocalFont(fontName: string): LocalFontRecord | null {
 }
 
 export function localFontFaceKey(
-  record: Pick<LocalFontRecord, 'family' | 'fullName' | 'postscriptName'>,
+  record: Pick<LocalFontRecord, 'family' | 'fullName' | 'postscriptName' | 'hostReference'>,
 ): string {
   return upstreamLocalFonts.localFontFaceKey(record);
 }
@@ -113,6 +117,46 @@ export function loadLocalFontBytes(fontName: string): Promise<ArrayBuffer | null
 
 export function getLocalFontState(): LocalFontState {
   return isDesktopTauriRuntime() ? getDesktopFontState() : upstreamLocalFonts.getLocalFontState();
+}
+
+// Host font provider(rhwp 0.8.7+) — upstream이 상태를 소유한다(upstream 내부 모듈은 상대 경로로
+// 같은 인스턴스를 쓴다). HOP는 위임만 하고, provider가 없을 때 데스크톱 렌더러 조회만 네이티브로 돌린다.
+export function setHostFontProvider(provider: HostFontProvider | null): Promise<void> {
+  return upstreamLocalFonts.setHostFontProvider(provider);
+}
+
+export function onHostFontsChanged(listener: () => void): () => void {
+  return upstreamLocalFonts.onHostFontsChanged(listener);
+}
+
+export function hasHostFontProvider(): boolean {
+  return upstreamLocalFonts.hasHostFontProvider();
+}
+
+export function prepareHostFontCatalog(): Promise<void> {
+  return upstreamLocalFonts.prepareHostFontCatalog();
+}
+
+export function getHostFontState(): ReturnType<typeof upstreamLocalFonts.getHostFontState> {
+  return upstreamLocalFonts.getHostFontState();
+}
+
+export function resolveRendererLocalFont(
+  name: string,
+  style?: LocalFontStyleRequest,
+): LocalFontRecord | null {
+  if (isDesktopTauriRuntime() && !upstreamLocalFonts.hasHostFontProvider()) {
+    return resolveDesktopFont(name);
+  }
+  return upstreamLocalFonts.resolveRendererLocalFont(name, style);
+}
+
+export async function loadRendererLocalFont(record: LocalFontRecord): Promise<HostFontData | null> {
+  if (!record.hostReference && isDesktopTauriRuntime()) {
+    const bytes = await loadDesktopFontBytes(record.postscriptName || record.fullName || record.family);
+    return bytes ? { bytes, faceIndex: 0 } : null;
+  }
+  return upstreamLocalFonts.loadRendererLocalFont(record);
 }
 
 export function resetLocalFontsForTests(): void {

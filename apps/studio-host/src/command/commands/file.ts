@@ -29,6 +29,9 @@ const browserOnlyFileCommands = new Set([
   'file:save-as-hwp',
   'file:save-as-hwpx',
   'file:print-to-pdf',
+  // rhwp 0.8.7: HTML/HTML-.doc 내보내기는 blob 다운로드라 WebView에서 파일이 남지 않는다.
+  'file:export-html',
+  'file:export-doc',
 ]);
 const adoptedUpstreamCommands = upstreamFileCommands.filter(
   (command) => !browserOnlyFileCommands.has(command.id),

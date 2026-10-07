@@ -121,6 +121,18 @@ export type EditCommand = 'INSERT_BEFORE' | 'INSERT_AFTER' | 'REPLACE' | 'DELETE
  */
 export const DOC_SCOPE_TARGET = 'doc';
 
+/** 문단 서식·번호 목록(payload.para_format). 길이 단위는 pt. */
+export interface ParaFormatSpec {
+  alignment?: 'left' | 'center' | 'right' | 'justify' | 'distribute';
+  line_spacing_percent?: number;
+  indent_pt?: number;
+  margin_left_pt?: number;
+  spacing_before_pt?: number;
+  spacing_after_pt?: number;
+  keep_with_next?: boolean;
+  list?: { kind: 'number' | 'bullet' | 'outline' | 'none'; level?: number; bullet_char?: string };
+}
+
 export interface EditPayload {
   type?:
     | 'paragraph'
@@ -133,7 +145,10 @@ export interface EditPayload {
     | 'replace_text'
     | 'table_formula'
     | 'footnote'
-    | 'paste_html';
+    | 'paste_html'
+    | 'para_format'
+    | 'page_setup'
+    | 'page_number';
   text?: string;
   style?: string;
   /** type="image"일 때 삽입할 첨부 이미지의 0-기준 인덱스(첨부 순서). */
@@ -174,6 +189,29 @@ export interface EditPayload {
     font_size_pt?: number;
     /** 글자 색 #RRGGBB. */
     text_color?: string;
+    /** 글꼴 이름(문서에 없으면 등록). */
+    font_family?: string;
+    /** 형광펜(음영) 색 #RRGGBB. */
+    highlight_color?: string;
+    superscript?: boolean;
+    subscript?: boolean;
+  };
+  /**
+   * type="para_format"이거나 텍스트 INSERT/REPLACE에 동봉: 문단 서식·번호 목록.
+   * 테마(style) 위에 덮어쓴다 — 사용자가 명시적으로 요구한 속성만 온다.
+   */
+  para_format?: ParaFormatSpec;
+  /** type="page_setup"일 때(target_id="doc"): 용지 방향·크기·여백(mm). */
+  page_setup?: {
+    orientation?: 'portrait' | 'landscape';
+    paper?: 'A4' | 'A3' | 'B5' | 'Letter';
+    margins_mm?: { top?: number; bottom?: number; left?: number; right?: number };
+  };
+  /** type="page_number"일 때(target_id="doc"): 머리말/꼬리말 자동 쪽 번호. */
+  page_number?: {
+    position?: 'footer' | 'header';
+    align?: 'center' | 'left' | 'right';
+    format?: 'plain' | 'dash' | 'total';
   };
   /**
    * type="replace_text"일 때: 문서 전역 찾아 바꾸기(F-293e8c99). target_id는 `DOC_SCOPE_TARGET`.
@@ -291,6 +329,8 @@ export interface ActionScript {
   edits: Edit[];
   /** 사용자에게 보여줄 대화형 요약(AI가 무엇을 했는지). */
   message?: string;
+  /** 요청 앞 '작성 지침 목록'에서 AI가 골라 따른 지침 이름(없으면 빈 문자열/생략). */
+  skill?: string;
 }
 
 /** `hop-ai-stream-delta` payload. */

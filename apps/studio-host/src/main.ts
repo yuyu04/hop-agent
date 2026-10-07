@@ -15,7 +15,8 @@ import {
   TableResizeRenderer,
 } from '@/upstream/editor';
 import { Toolbar } from '@/ui/toolbar';
-import { CommandPalette, ContextMenu, MenuBar } from '@/upstream/ui';
+import { CommandPalette, ContextMenu, MenuBar, initStyleToolbarOverflow } from '@/upstream/ui';
+import { MODAL_DIALOG_CLOSED_EVENT } from '@/ui/dialog';
 import { AgentSidebar } from '@/ui/agent-sidebar';
 import { loadWebFonts } from '@/core/font-loader';
 import { loadStoredLocalFonts } from '@/core/local-fonts';
@@ -167,6 +168,9 @@ async function initialize(): Promise<void> {
     inputHandler.setEditMode(commandRuntime.getEditMode());
 
     toolbar = new Toolbar(document.getElementById('style-bar')!, wasm, eventBus, dispatcher);
+    // rhwp 0.8.7 서식 도구 모음: 중간 폭에서 문단 명령을 접는 '더보기' 패널을 연결한다
+    // (마크업은 upstream과 동일하게 유지 — 연결하지 않으면 접힌 명령에 닿을 수 없다).
+    initStyleToolbarOverflow(document.getElementById('style-bar'));
     toolbar.setEnabled(false);
 
     // InputHandler에 커맨드 디스패처 및 컨텍스트 메뉴 주입
@@ -282,6 +286,13 @@ function updateNoticeActions(bridge: unknown): UpdateNoticeActions {
  * 예: 문서 미로드 상태에서도 Alt+N(새 문서), Ctrl+O(열기) 등.
  */
 function setupGlobalShortcuts(): void {
+  // 마지막 모달이 닫히면 편집기 키보드 포커스를 되돌린다(rhwp #3414). 포커스가 이미 다른
+  // 입력(예: AI 사이드바)으로 옮겨 갔으면 건드리지 않는다.
+  document.addEventListener(MODAL_DIALOG_CLOSED_EVENT, () => {
+    const active = document.activeElement;
+    if (active && active !== document.body) return;
+    if (inputHandler?.isActive()) inputHandler.focus();
+  });
   document.addEventListener('keydown', (e) => {
     // input/textarea 등 편집 가능 요소 내부에서는 무시
     const target = e.target as HTMLElement;
@@ -316,6 +327,8 @@ function setupGlobalShortcuts(): void {
       else if (!e.shiftKey && !e.altKey && key === 's') commandId = 'file:save';
       else if (e.shiftKey && !e.altKey && key === 's') commandId = 'file:save-as';
       else if (!e.shiftKey && !e.altKey && key === 'p') commandId = 'file:print';
+      // AI 편집 패널(Ctrl/⌘+J) — 문서가 없을 때도 열 수 있어야 한다. 한글 IME('ㅓ')는 code로 잡는다.
+      else if (!e.shiftKey && !e.altKey && (key === 'j' || e.code === 'KeyJ')) commandId = 'view:ai-panel';
 
       if (commandId) {
         e.preventDefault();

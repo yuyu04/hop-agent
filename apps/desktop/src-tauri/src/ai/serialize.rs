@@ -8,7 +8,7 @@
 //! 직렬화로 직렬화→화이트리스트→검증 경로 전체를 확립한다.
 
 use super::schema::DOC_SCOPE_TARGET;
-use rhwp::DocumentCore;
+use hop_rhwp_adapter::DocumentCore;
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 
@@ -92,7 +92,7 @@ pub struct DocumentContext {
 /// 면적을 줄인다. 화이트리스트도 윈도우에 포함된 ID로만 좁혀지므로(스펙 7장),
 /// LLM은 보이지 않는 문단을 편집 대상으로 삼을 수 없다.
 ///
-/// 헤딩(목차) 전체 포함은 후속 작업이다 — `rhwp::DocumentCore`가 문단 스타일을
+/// 헤딩(목차) 전체 포함은 후속 작업이다 — `DocumentCore`가 문단 스타일을
 /// 네이티브로 노출하지 않아(필드가 `pub(crate)`) 현재 경계에서 구현할 수 없다.
 pub fn build_windowed_context(
     core: &DocumentCore,
@@ -801,7 +801,7 @@ mod tests {
             core.insert_text_native(0, i, 0, &text).unwrap();
             if i + 1 < n {
                 let len = core.get_paragraph_length_native(0, i).unwrap();
-                core.split_paragraph_native(0, i, len).unwrap();
+                core.split_paragraph_native(0, i, len, None).unwrap();
             }
         }
         core
@@ -839,7 +839,7 @@ mod tests {
     fn whitelist_matches_every_serialized_id() {
         let mut core = blank_core();
         core.insert_text_native(0, 0, 0, "첫 문단").unwrap();
-        core.split_paragraph_native(0, 0, core.get_paragraph_length_native(0, 0).unwrap())
+        core.split_paragraph_native(0, 0, core.get_paragraph_length_native(0, 0).unwrap(), None)
             .unwrap();
 
         let (context, whitelist) = build_windowed_context(&core, None, false).unwrap();
@@ -1124,7 +1124,7 @@ mod tests {
         assert_eq!(src_map.len(), leaf_count, "원본 매핑 누락: {:?}", src_map);
 
         // 표를 클립보드로 복제 → 본문 맨 끝 빈 문단에 붙여넣기.
-        let copy = core.copy_control_native(0, tp, ctrl).unwrap();
+        let copy = core.copy_control_native(0, tp, &[], ctrl).unwrap();
         assert!(copy.contains("[표]"), "표 복사 실패: {}", copy);
         let last_para = core.get_paragraph_count_native(0).unwrap().saturating_sub(1);
         let last_len = core.get_paragraph_length_native(0, last_para).unwrap();
@@ -1347,7 +1347,7 @@ mod tests {
             .unwrap() as usize;
         core.insert_text_in_cell_native(0, table_para, ctrl, 0, 0, 0, "첫 셀").unwrap();
         let len = core.get_cell_paragraph_length_native(0, table_para, ctrl, 0, 0).unwrap();
-        core.split_paragraph_in_cell_native(0, table_para, ctrl, 0, 0, len).unwrap();
+        core.split_paragraph_in_cell_native(0, table_para, ctrl, 0, 0, len, None).unwrap();
         core.insert_text_in_cell_native(0, table_para, ctrl, 0, 1, 0, "둘째 문단").unwrap();
         // 글상자도 하나 만들어 편집(F-21a81b 경로).
         let shape = core
@@ -1536,7 +1536,7 @@ mod spacing_probe {
     /// ai-apply PARA_STYLES는 SPACING_PT=200 곱으로 이 계약을 따른다.
     #[test]
     fn para_spacing_unit_contract_hwpunit() {
-        let mut core = rhwp::DocumentCore::new_empty();
+        let mut core = hop_rhwp_adapter::DocumentCore::new_empty();
         core.create_blank_document_native().unwrap();
         core.insert_text_native(0, 0, 0, "본문 문단").unwrap();
         core.apply_para_format_native(
@@ -1586,7 +1586,7 @@ mod lineseg_probe {
     #[test]
     #[ignore]
     fn export_multipage_doc_for_lineseg_check() {
-        let mut core = rhwp::DocumentCore::new_empty();
+        let mut core = hop_rhwp_adapter::DocumentCore::new_empty();
         core.create_blank_document_native().unwrap();
         let body = "이 문단은 다중 페이지 줄 배치 저장 검증을 위한 본문입니다. \
                     충분히 길게 써서 한 문단이 여러 줄을 차지하게 합니다. \
@@ -1594,7 +1594,7 @@ mod lineseg_probe {
         core.insert_text_native(0, 0, 0, "다중 페이지 줄 배치 검증").unwrap();
         for i in 0..60 {
             let len = core.get_paragraph_length_native(0, i).unwrap();
-            core.split_paragraph_native(0, i, len).unwrap();
+            core.split_paragraph_native(0, i, len, None).unwrap();
             core.insert_text_native(0, i + 1, 0, body).unwrap();
             // 생성 파이프라인과 동일하게 body 스타일(줄간격 180% + 아래 6pt)도 입힌다.
             core.apply_para_format_native(
