@@ -1,15 +1,20 @@
 {
   "schemaVersion": 1,
   "source": "https://github.com/edwardkim/rhwp",
-  "version": "0.8.4",
-  "tag": "v0.8.4",
-  "commit": "496333b27d21ddb9114ba9ae340bcb895870c9a7",
+  "version": "0.8.7",
+  "tag": "v0.8.7",
+  "commit": "1a76570e833917d15817415a53c09ad61ab3203f",
+  "fork": {
+    "source": "https://github.com/yuyu04/rhwp",
+    "branch": "feat/hop-agent-native-ops-v0.8.7",
+    "commit": "76f157eb9302401835a9f4d98f5b93d821e1fd54",
+    "reason": "hop-agent AI 양식 후처리 native 연산 9종(셀 내부 표·그림 삽입, 양식 정리, 목차)이 아직 edwardkim/rhwp에 없다 — docs/architecture/UPSTREAM.md \"임시 포크\"."
+  },
   "rustToolchain": "1.93.1",
-  "wasmPackVersion": "0.14.0",
+  "wasmPackVersion": "0.15.0",
   "cargoPatches": {
     "svg2pdf": {
-      "git": "https://github.com/edwardkim/svg2pdf",
-      "rev": "2caeb0a038f9128b79833d803b94c2667565c4da"
+      "path": "third_party/rhwp/vendor/svg2pdf"
     }
   }
 }

@@ -36,7 +36,6 @@ uuid = { version = "1", features = ["v4", "serde"] }
 tempfile = "3"
 open = "5"
 usvg = "0.45"
-pdf-writer = "0.12"
 zip = { version = "8.5", default-features = false, features = ["deflate"] }
 quick-xml = "0.38"
 pdf-extract = "0.9"
@@ -50,8 +49,8 @@ png = "0.17"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 
 [patch.crates-io]
-# rhwp #2269: keep PDF object/resource ordering deterministic until svg2pdf is replaced upstream.
-svg2pdf = { git = "https://github.com/edwardkim/svg2pdf", rev = "2caeb0a038f9128b79833d803b94c2667565c4da" }
+# rhwp #2269/#7077/#6936: rhwp가 품은(vendor) 결정적 svg2pdf를 그대로 쓴다 — 데스크톱·Quick Look·rhwp가 같은 PDF 소스.
+svg2pdf = { path = "../../../third_party/rhwp/vendor/svg2pdf" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSDocumentController"] }

@@ -1,31 +1,37 @@
 {
   "schemaVersion": 1,
   "source": "https://github.com/edwardkim/rhwp",
-  "version": "0.8.4",
-  "tag": "v0.8.4",
-  "commit": "496333b27d21ddb9114ba9ae340bcb895870c9a7",
+  "version": "0.8.7",
+  "tag": "v0.8.7",
+  "commit": "1a76570e833917d15817415a53c09ad61ab3203f",
+  "fork": {
+    "source": "https://github.com/yuyu04/rhwp",
+    "branch": "feat/hop-agent-native-ops-v0.8.7",
+    "commit": "76f157eb9302401835a9f4d98f5b93d821e1fd54",
+    "reason": "hop-agent AI 양식 후처리 native 연산 9종(셀 내부 표·그림 삽입, 양식 정리, 목차)이 아직 edwardkim/rhwp에 없다 — docs/architecture/UPSTREAM.md \"임시 포크\"."
+  },
   "rustToolchain": "1.93.1",
-  "wasmPackVersion": "0.14.0",
+  "wasmPackVersion": "0.15.0",
   "artifacts": {
     "rhwp_bg.wasm": {
-      "bytes": 8038521,
-      "sha256": "f059bddbb553223ee9ceb01e2b9e4cd8856301dc366f41310ad6f4cddbfb07f8"
+      "bytes": 11822033,
+      "sha256": "f28a5d408a4c2c7515e698c4996b95716758ac92f76066f7a4fa195678c387b7"
     },
     "rhwp.js": {
-      "bytes": 404678,
-      "sha256": "d2d2a33e1d75e122a8772fbdb372dcd547f3de4e5a16bf2e663bfb591f17656f"
+      "bytes": 461385,
+      "sha256": "0cef2d7b0d1c3302778f8875ed5b9c769fad8bc410f5c3d08589cb844d80e613"
     },
     "rhwp.d.ts": {
-      "bytes": 161595,
-      "sha256": "86457f42ee2c32cab51b1dab15352be50f68bd60dbc9a81f3a1fd0de38fd197a"
+      "bytes": 186402,
+      "sha256": "6ac018186e6c36dbb344f20b025e2bc0c84f852599caa3c52528d27b370fcd43"
     },
     "rhwp_bg.wasm.d.ts": {
-      "bytes": 54447,
-      "sha256": "2121088aed3a96dfe168eaf0a738ecf3d091430460018da1997d0a0ecb4f606b"
+      "bytes": 62604,
+      "sha256": "c3204b1096ba57d2c4bd1aa7d50471c756ac3898635a54248f1e39806137983a"
     },
     "package.json": {
-      "bytes": 414,
-      "sha256": "05a17e17a69a6163704d10145d4b798416aae5e3a4e98420f2b3dd8999fa6aaf"
+      "bytes": 415,
+      "sha256": "267a441ed76906609928a1ca8d013b90f72c9f353c2ef91c2755774ffe6ca390"
     },
     "LICENSE": {
       "bytes": 1072,

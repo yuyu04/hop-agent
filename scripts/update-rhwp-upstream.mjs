@@ -37,6 +37,13 @@ if (!tag) {
 }
 
 assertStableTag(tag);
+if ((await readJson(upstreamLockPath)).fork) {
+  console.error(
+    'config/rhwp-upstream.json pins a temporary rhwp fork. Re-port the fork onto the new tag first '
+    + '(docs/architecture/UPSTREAM.md "임시 포크"), then update the lock by hand.',
+  );
+  process.exit(2);
+}
 await assertSafeWorkingState();
 await verifyRhwpUpstream();
 
@@ -154,7 +161,11 @@ async function resolveHopCargoPatches(existing) {
   const upstreamCargoLock = await readFile(join(upstreamDir, 'Cargo.lock'), 'utf8').catch(() => '');
   // Cargo patches are HOP-owned product policy. If upstream carries the same
   // patch, follow its pinned source; otherwise retain HOP's reviewed pin.
-  if (!/^svg2pdf\s*=/m.test(tomlSection(cargoToml, 'patch.crates-io'))) return existing;
+  const upstreamPatch = tomlSection(cargoToml, 'patch.crates-io');
+  if (!/^svg2pdf\s*=/m.test(upstreamPatch)) return existing;
+  // 0.8.6+: upstream이 svg2pdf를 저장소 안(vendor/)에 품고 경로로 patch한다 — 같은 소스를 쓴다.
+  const vendored = upstreamPatch.match(/^svg2pdf\s*=\s*\{[^}]*path\s*=\s*"([^"]+)"/m)?.[1];
+  if (vendored) return { ...existing, svg2pdf: { path: `third_party/rhwp/${vendored}` } };
   const source = cargoLockPackageEntries(upstreamCargoLock, 'svg2pdf')
     .map((entry) => entry.source?.match(/^git\+([^?#]+)(?:\?[^#]*)?#([0-9a-f]{40})$/))
     .find(Boolean);
@@ -167,9 +178,9 @@ async function assertHopCargoPatches(patches) {
     const cargoToml = await readFile(join(root, 'Cargo.toml'), 'utf8');
     const patchSection = tomlSection(cargoToml, 'patch.crates-io');
     for (const [name, patch] of Object.entries(patches)) {
-      const expected = cargoPatchTomlPattern(name, patch);
+      const expected = cargoPatchTomlPattern(name, patch, root);
       if (!expected.test(patchSection)) {
-        throw new Error(`${basename(root)}/Cargo.toml must pin ${name} to ${patch.git}#${patch.rev}`);
+        throw new Error(`${basename(root)}/Cargo.toml must pin ${name} to ${patch.path ?? `${patch.git}#${patch.rev}`}`);
       }
     }
   }
@@ -179,7 +190,7 @@ async function syncHopCargoPatches(previousPatches, nextPatches) {
   for (const root of cargoRoots) {
     const path = join(root, 'Cargo.toml');
     const cargoToml = await readFile(path, 'utf8');
-    await writeFile(path, synchronizeCargoPatchToml(cargoToml, previousPatches, nextPatches));
+    await writeFile(path, synchronizeCargoPatchToml(cargoToml, previousPatches, nextPatches, root));
   }
 }
 

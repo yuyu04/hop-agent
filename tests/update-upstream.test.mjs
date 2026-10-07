@@ -8,6 +8,7 @@ import test from 'node:test';
 import {
   artifactMetadata,
   assertStableTag,
+  cargoPatchPath,
   cargoPatchTomlPattern,
   cargoLockHasPatchSource,
   cargoLockPackageVersion,
@@ -141,6 +142,47 @@ test('synchronizes Cargo patch sources as one upstream contract transition', () 
   assert.match(
     tomlSection(synchronized, 'patch.crates-io'),
     /https:\/\/github\.com\/new\/svg2pdf/,
+  );
+});
+
+test('vendored path patches resolve per Cargo root and need no lock source', () => {
+  const patch = { path: 'third_party/rhwp/vendor/svg2pdf' };
+  const desktopRoot = join(repoRoot, 'apps/desktop/src-tauri');
+  const quickLookRoot = join(repoRoot, 'apps/desktop/quicklook/rust');
+  assert.equal(cargoPatchPath(patch, desktopRoot), '../../../third_party/rhwp/vendor/svg2pdf');
+  assert.equal(cargoPatchPath(patch, quickLookRoot), '../../../../third_party/rhwp/vendor/svg2pdf');
+  assert.match(
+    'svg2pdf = { path = "../../../third_party/rhwp/vendor/svg2pdf" }',
+    cargoPatchTomlPattern('svg2pdf', patch, desktopRoot),
+  );
+  assert.doesNotMatch(
+    'svg2pdf = { path = "../../../third_party/rhwp/vendor/svg2pdf" }',
+    cargoPatchTomlPattern('svg2pdf', patch, quickLookRoot),
+  );
+  assert.throws(() => cargoPatchTomlPattern('svg2pdf', patch), /Cargo root is required/);
+  assert.equal(
+    cargoLockHasPatchSource('[[package]]\nname = "svg2pdf"\nversion = "0.13.0"\n', 'svg2pdf', patch),
+    true,
+  );
+  assert.equal(
+    cargoLockHasPatchSource(
+      '[[package]]\nname = "svg2pdf"\nversion = "0.13.0"\nsource = "registry+https://github.com/rust-lang/crates.io-index"',
+      'svg2pdf',
+      patch,
+    ),
+    false,
+  );
+});
+
+test('synchronizes a git Cargo patch to a vendored path patch', () => {
+  const previous = {
+    svg2pdf: { git: 'https://github.com/old/svg2pdf', rev: '1111111111111111111111111111111111111111' },
+  };
+  const next = { svg2pdf: { path: 'third_party/rhwp/vendor/svg2pdf' } };
+  const cargoToml = '[patch.crates-io]\nsvg2pdf = { git = "https://github.com/old/svg2pdf", rev = "1111111111111111111111111111111111111111" }\n';
+  assert.equal(
+    synchronizeCargoPatchToml(cargoToml, previous, next, join(repoRoot, 'apps/desktop/src-tauri')),
+    '[patch.crates-io]\nsvg2pdf = { path = "../../../third_party/rhwp/vendor/svg2pdf" }\n',
   );
 });
 

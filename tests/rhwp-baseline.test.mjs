@@ -12,6 +12,8 @@ const upstreamLock = JSON.parse(
 );
 const expectedRhwpVersion = upstreamLock.version;
 const expectedRhwpCommit = upstreamLock.commit;
+// 임시 포크가 있으면 submodule은 release 커밋 위에 올린 포크 커밋을 가리킨다.
+const expectedSubmoduleCommit = upstreamLock.fork?.commit ?? expectedRhwpCommit;
 
 test('HOP keeps the rhwp renderer baseline aligned across submodule, vendored WASM, and native lockfile', async () => {
   const wasmPackage = JSON.parse(
@@ -25,6 +27,7 @@ test('HOP keeps the rhwp renderer baseline aligned across submodule, vendored WA
   assert.equal(provenance.source, upstreamLock.source);
   assert.equal(provenance.tag, upstreamLock.tag);
   assert.equal(provenance.commit, expectedRhwpCommit);
+  assert.deepEqual(provenance.fork, upstreamLock.fork);
   assert.equal(provenance.rustToolchain, upstreamLock.rustToolchain);
   assert.equal(provenance.wasmPackVersion, upstreamLock.wasmPackVersion);
 
@@ -60,7 +63,7 @@ test('HOP keeps the rhwp renderer baseline aligned across submodule, vendored WA
   assert.match(upstreamDoc, /config\/rhwp-upstream\.json/);
 
   const submoduleStatus = git(['submodule', 'status', 'third_party/rhwp']).stdout.trim();
-  assert.match(submoduleStatus, new RegExp(`^[ +-]?${expectedRhwpCommit} third_party/rhwp\\b`));
+  assert.match(submoduleStatus, new RegExp(`^[ +-]?${expectedSubmoduleCommit} third_party/rhwp\\b`));
 });
 
 test('active HOP font catalog only references packaged font assets', async () => {

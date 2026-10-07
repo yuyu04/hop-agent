@@ -184,14 +184,17 @@ def collect_tables(recs):
                     cur["para_count"] += 1
                 elif t2 == HWPTAG_PARA_TEXT and l2 == level + 1 and cur is not None:
                     cur["texts"].append(decode_para_text(p2).strip())
-                elif t2 == HWPTAG_TABLE or (t2 == HWPTAG_CTRL_HEADER and l2 <= level):
+                elif l2 <= level and t2 in (HWPTAG_TABLE, HWPTAG_CTRL_HEADER):
+                    # 같은 깊이(형제) 이하의 표/컨트롤에서만 끝낸다. 셀 안에 든 중첩 표는
+                    # 더 깊은 레벨이라 바깥 표의 셀 수집을 끊지 않는다.
                     break
                 j += 1
             if cur is not None:
                 cells.append(cur)
             tbl["cells"] = cells
             tables.append(tbl)
-            i = j
+            # 셀 안의 중첩 표도 따로 검사하도록 바로 다음 레코드부터 다시 훑는다.
+            i += 1
         else:
             i += 1
     return tables

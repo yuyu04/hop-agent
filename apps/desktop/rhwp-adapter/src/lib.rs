@@ -7,6 +7,10 @@
 pub use rhwp::document_core::queries::rendering::PngExportOptions;
 pub use rhwp::parser::extract_thumbnail_only;
 pub use rhwp::DocumentCore;
+/// AI 양식 후처리(`hwp_lineseg_fix`)·문서 직렬화·DOCX 내보내기가 읽는 문서 모델과 단위 변환.
+/// upstream이 모듈을 옮기면 이 두 줄만 고친다.
+pub use rhwp::model;
+pub use rhwp::renderer::px_to_hwpunit;
 use std::path::PathBuf;
 
 /// Split a paragraph for a normal HOP editing action.

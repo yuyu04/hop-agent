@@ -10,6 +10,7 @@ import {
   cargoLockPackageVersion,
   cargoRoots,
   currentUpstreamCommit,
+  expectedSubmoduleCommit,
   normalizeGitSource,
   officialUpstreamSource,
   parsePackageVersion,
@@ -32,15 +33,30 @@ export async function verifyRhwpUpstream() {
   const lock = await readJson(upstreamLockPath);
   assert.equal(lock.schemaVersion, 1);
   assert.equal(normalizeGitSource(lock.source), officialUpstreamSource);
-  assert.equal(
-    normalizeGitSource(run('git', ['remote', 'get-url', 'origin'], { cwd: upstreamDir })),
-    officialUpstreamSource,
+  const allowedOrigins = [officialUpstreamSource];
+  if (lock.fork) {
+    assert.match(lock.fork.commit, /^[0-9a-f]{40}$/);
+    assert.match(lock.fork.reason ?? '', /\S/, 'temporary fork must record why it exists');
+    allowedOrigins.push(normalizeGitSource(lock.fork.source));
+  }
+  assert.ok(
+    allowedOrigins.includes(
+      normalizeGitSource(run('git', ['remote', 'get-url', 'origin'], { cwd: upstreamDir })),
+    ),
     'submodule origin must match the provenance source',
   );
   assert.match(lock.version, /^\d+\.\d+\.\d+$/);
   assert.equal(lock.tag, `v${lock.version}`);
   assert.match(lock.commit, /^[0-9a-f]{40}$/);
-  assert.equal(currentUpstreamCommit(), lock.commit, 'submodule checkout must match upstream lock');
+  assert.equal(
+    currentUpstreamCommit(),
+    expectedSubmoduleCommit(lock),
+    'submodule checkout must match upstream lock',
+  );
+  if (lock.fork) {
+    // 포크는 공식 release 위에만 올린다 — release 커밋을 조상으로 가져야 한다.
+    run('git', ['merge-base', '--is-ancestor', lock.commit, lock.fork.commit], { cwd: upstreamDir });
+  }
 
   const cargoToml = await readFile(join(upstreamDir, 'Cargo.toml'), 'utf8');
   const studioPackage = await readJson(join(upstreamDir, 'rhwp-studio/package.json'));
@@ -54,7 +70,7 @@ export async function verifyRhwpUpstream() {
   assert.equal(wasmPackage.name, 'rhwp');
   assert.equal(wasmPackage.version, lock.version);
   assert.equal(provenance.schemaVersion, 1);
-  for (const field of ['source', 'version', 'tag', 'commit', 'rustToolchain', 'wasmPackVersion']) {
+  for (const field of ['source', 'version', 'tag', 'commit', 'fork', 'rustToolchain', 'wasmPackVersion']) {
     assert.deepEqual(provenance[field], lock[field], `provenance ${field} must match upstream lock`);
   }
   assert.deepEqual(Object.keys(provenance.artifacts).sort(), [...vendoredArtifactNames].sort());
@@ -90,10 +106,10 @@ async function verifyCargoPatches(lock, cargoRoot, cargoLock) {
   const cargoToml = await readFile(join(cargoRoot, 'Cargo.toml'), 'utf8');
   const patchSection = tomlSection(cargoToml, 'patch.crates-io');
   for (const [crateName, patch] of Object.entries(lock.cargoPatches ?? {})) {
-    assert.match(patchSection, cargoPatchTomlPattern(crateName, patch));
+    assert.match(patchSection, cargoPatchTomlPattern(crateName, patch, cargoRoot));
     assert.ok(
       cargoLockHasPatchSource(cargoLock, crateName, patch),
-      `${crateName} Cargo.lock source must match ${patch.git}#${patch.rev}`,
+      `${crateName} Cargo.lock source must match ${patch.path ?? `${patch.git}#${patch.rev}`}`,
     );
   }
 }

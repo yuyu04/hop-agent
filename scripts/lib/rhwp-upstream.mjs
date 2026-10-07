@@ -129,10 +129,19 @@ export async function buildProvenance(lock) {
     version: lock.version,
     tag: lock.tag,
     commit: lock.commit,
+    ...(lock.fork ? { fork: lock.fork } : {}),
     rustToolchain: lock.rustToolchain,
     wasmPackVersion: lock.wasmPackVersion,
     artifacts,
   };
+}
+
+/**
+ * submodule이 실제로 가리켜야 하는 커밋. 임시 포크(`lock.fork`)가 있으면 공식 release
+ * 커밋(`lock.commit`) 위에 올린 포크 커밋이고, 없으면 release 커밋 그대로다.
+ */
+export function expectedSubmoduleCommit(lock) {
+  return lock.fork?.commit ?? lock.commit;
 }
 
 export async function buildStudioOverrideBaseline(manifest, upstream) {
@@ -182,8 +191,26 @@ export function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-export function cargoPatchTomlPattern(crateName, patch) {
+/**
+ * Cargo patch는 두 형식이다: 고정 git revision(`{ git, rev }`) 또는 저장소 안 경로
+ * (`{ path }`, repo root 기준). rhwp 0.8.6+는 svg2pdf를 `vendor/svg2pdf`로 품고 경로로
+ * patch하므로, HOP도 같은 소스를 쓰려면 경로 patch가 필요하다. 경로는 각 Cargo root
+ * 기준 상대 경로로 Cargo.toml에 적는다.
+ */
+export function cargoPatchPath(patch, cargoRoot) {
+  return relative(cargoRoot, join(repoRoot, patch.path)).replaceAll('\\', '/');
+}
+
+export function cargoPatchTomlPattern(crateName, patch, cargoRoot) {
   const crate = escapeRegExp(crateName);
+  if (patch.path) {
+    if (!cargoRoot) throw new Error(`Cargo root is required to match path patch ${crateName}`);
+    const path = escapeRegExp(cargoPatchPath(patch, cargoRoot));
+    return new RegExp(
+      `^${crate}\\s*=\\s*\\{(?=[^}]*path\\s*=\\s*"${path}")[^}]*\\}[^\\S\\r\\n]*$`,
+      'm',
+    );
+  }
   const git = escapeRegExp(patch.git);
   const rev = escapeRegExp(patch.rev);
   return new RegExp(
@@ -192,10 +219,10 @@ export function cargoPatchTomlPattern(crateName, patch) {
   );
 }
 
-export function synchronizeCargoPatchToml(toml, previousPatches, nextPatches) {
+export function synchronizeCargoPatchToml(toml, previousPatches, nextPatches, cargoRoot) {
   let patchSection = tomlSection(toml, 'patch.crates-io');
   for (const [crateName, patch] of Object.entries(previousPatches)) {
-    if (!cargoPatchTomlPattern(crateName, patch).test(patchSection)) {
+    if (!cargoPatchTomlPattern(crateName, patch, cargoRoot).test(patchSection)) {
       throw new Error(`Cargo.toml patch ${crateName} does not match the current upstream contract`);
     }
   }
@@ -209,7 +236,9 @@ export function synchronizeCargoPatchToml(toml, previousPatches, nextPatches) {
       continue;
     }
 
-    const declaration = `${crateName} = { git = ${JSON.stringify(next.git)}, rev = ${JSON.stringify(next.rev)} }`;
+    const declaration = next.path
+      ? `${crateName} = { path = ${JSON.stringify(cargoPatchPath(next, cargoRoot))} }`
+      : `${crateName} = { git = ${JSON.stringify(next.git)}, rev = ${JSON.stringify(next.rev)} }`;
     if (linePattern.test(patchSection)) {
       patchSection = patchSection.replace(linePattern, declaration);
       continue;
@@ -220,6 +249,8 @@ export function synchronizeCargoPatchToml(toml, previousPatches, nextPatches) {
 }
 
 export function cargoLockHasPatchSource(lock, crateName, patch) {
+  // 경로 의존성은 Cargo.lock에 source 줄이 없다.
+  if (patch.path) return cargoLockPackageEntries(lock, crateName).some(({ source }) => !source);
   return cargoLockPackageEntries(lock, crateName).some(({ source }) => {
     const parsed = source?.match(/^git\+([^?#]+)(?:\?[^#]*)?#([0-9a-f]{40})$/);
     return parsed?.[1] === patch.git && parsed[2] === patch.rev;
