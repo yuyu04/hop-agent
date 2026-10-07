@@ -12,6 +12,7 @@ docs/
     UPSTREAM.md              upstream rhwp 경계와 업데이트 방식
   operations/
     DESKTOP_RELEASE.md       데스크톱 릴리즈와 서명/공증 메모
+    RHWP_UPDATE.md           rhwp 업데이트 실행 체크리스트와 복구 절차
 ```
 
 ## 작성 규칙

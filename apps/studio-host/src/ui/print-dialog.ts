@@ -1,4 +1,4 @@
-import type { PageInfo } from '@/core/types';
+import type { PageInfo } from '@/upstream/core';
 
 interface PrintableDocument {
   fileName: string;

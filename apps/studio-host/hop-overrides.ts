@@ -1,55 +1,49 @@
-import { resolve } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { isAbsolute, resolve } from 'node:path';
 
-const overrideIds = [
-  'core/font-loader',
-  'core/font-application',
-  'core/font-authoring-policy',
-  'core/local-fonts',
-  'core/bridge-factory',
-  'core/ai-bridge',
-  'core/ai-apply',
-  'core/ai-diff',
-  'core/ai-session',
-  'core/chart-render',
-  'core/conversation-store',
-  'core/doc-theme',
-  'core/model-catalog',
-  'core/document-files',
-  'core/desktop-chrome',
-  'core/desktop-events',
-  'core/platform',
-  'core/tauri-bridge',
-  'command/shortcut-map',
-  'command/commands/edit',
-  'command/commands/format',
-  'command/commands/file',
-  'ui/about-dialog',
-  'ui/agent-sidebar',
-  'ui/ai-inline-diff',
-  'ui/custom-select',
-  'ui/dialog',
-  'ui/home-screen',
-  'ui/preview-svg',
-  'ui/print-dialog',
-  'ui/recent-documents-dialog',
-  'ui/style-edit-dialog',
-  'ui/toolbar',
-  'ui/update-notice',
-  'ui/validation-modal',
-  'view/canvas-view',
-  'view/ruler',
-  'styles/agent-sidebar.css',
-  'styles/about-dialog.css',
-  'styles/custom-select.css',
-  'styles/font-set-dialog.css',
-  'styles/home-screen.css',
-  'styles/update-notice.css',
-  'styles/recent-documents-dialog.css',
-] as const;
+type OverrideStrategy = 'extension' | 'fork' | 'contribution';
+
+interface OverrideEntry {
+  id: string;
+  strategy: OverrideStrategy;
+  reason: string;
+}
+
+interface OverrideManifest {
+  schemaVersion: number;
+  overrides: OverrideEntry[];
+}
+
+const manifestUrl = new URL('../../config/rhwp-studio-overrides.json', import.meta.url);
+const manifest = JSON.parse(readFileSync(manifestUrl, 'utf8')) as OverrideManifest;
+
+validateManifest(manifest);
+
+export const hopOverrides = manifest.overrides;
 
 export function createHopOverrides(hopSrc: string) {
-  return overrideIds.map((id) => ({
+  return hopOverrides.map(({ id }) => ({
     find: `@/${id}`,
     replacement: resolve(hopSrc, id),
   }));
+}
+
+function validateManifest(candidate: OverrideManifest): void {
+  if (candidate.schemaVersion !== 1 || !Array.isArray(candidate.overrides)) {
+    throw new Error('Unsupported rhwp studio override manifest');
+  }
+  const ids = new Set<string>();
+  for (const entry of candidate.overrides) {
+    if (!entry.id || ids.has(entry.id)) throw new Error(`Invalid or duplicate HOP override: ${entry.id}`);
+    const segments = entry.id.split(/[\\/]+/);
+    const isForeignAbsolutePath = /^[A-Za-z]:[\\/]/.test(entry.id) || /^[\\/]{2}/.test(entry.id);
+    if (isAbsolute(entry.id) || isForeignAbsolutePath || segments.includes('..')) {
+      throw new Error(`HOP override escapes the source root: ${entry.id}`);
+    }
+    if (!['extension', 'fork', 'contribution'].includes(entry.strategy)) {
+      throw new Error(`Invalid strategy for HOP override: ${entry.id}`);
+    }
+    if (!entry.reason.trim()) throw new Error(`Missing reason for HOP override: ${entry.id}`);
+    ids.add(entry.id);
+  }
 }

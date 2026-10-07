@@ -1,4 +1,4 @@
-import { WasmBridge } from '@/core/wasm-bridge';
+import { WasmBridge } from '@/upstream/core';
 import { TauriBridge } from './tauri-bridge';
 
 export function isTauriRuntime(): boolean {

@@ -40,7 +40,7 @@
   align-items: flex-start;
   min-width: 200px;
   padding: 12px 14px;
-  border: 1px solid #c8c8c8;
+  border: 1px solid var(--color-border-light);
   border-radius: var(--radius-lg);
   background: linear-gradient(to bottom, var(--color-surface), var(--color-surface-raised));
   color: inherit;
@@ -49,8 +49,8 @@
 }
 
 .home-action:hover {
-  border-color: #96a6cd;
-  background: #e9eefb;
+  border-color: var(--color-primary-hover);
+  background: var(--color-accent-bg-light);
   color: var(--color-primary-dark);
 }
 
@@ -105,7 +105,7 @@
   min-width: 48px;
   height: 24px;
   padding: 0 10px;
-  border: 1px solid #c8c8c8;
+  border: 1px solid var(--color-border-light);
   border-radius: var(--radius-lg);
   background: var(--color-surface-raised);
   color: var(--color-text);
@@ -115,14 +115,14 @@
 }
 
 .home-recent-page-btn:hover:enabled {
-  border-color: #96a6cd;
-  background: #e9eefb;
+  border-color: var(--color-primary-hover);
+  background: var(--color-accent-bg-light);
   color: var(--color-primary-dark);
 }
 
 .home-recent-page-btn:disabled {
   color: var(--color-text-disabled);
-  background: #f5f5f5;
+  background: var(--color-bg-light);
 }
 
 .home-recent-hint {
@@ -153,7 +153,7 @@
   width: 100%;
   min-width: 0;
   padding: 0;
-  border: 1px solid #c8c8c8;
+  border: 1px solid var(--color-border-light);
   border-radius: var(--radius-lg);
   -webkit-appearance: none;
   appearance: none;
@@ -167,8 +167,8 @@
 }
 
 .home-recent-card:hover {
-  border-color: #96a6cd;
-  background: #fdfdfd;
+  border-color: var(--color-primary-hover);
+  background: var(--color-surface-raised);
 }
 
 .home-recent-card.is-placeholder {
@@ -180,7 +180,7 @@
   box-sizing: border-box;
   min-width: 0;
   padding: 18px 18px 14px;
-  border-bottom: 1px solid #e0e0e0;
+  border-bottom: 1px solid var(--color-border-lighter);
   overflow: hidden;
 }
 
@@ -216,7 +216,7 @@
   content: '';
   position: absolute;
   inset: 22px;
-  border: 1px solid #d0d0d0;
+  border: 1px solid var(--color-border-light);
   border-radius: var(--radius-lg);
   background: var(--color-surface);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
@@ -252,7 +252,7 @@
   height: 8px;
   margin: 0 18px 10px;
   border-radius: 999px;
-  background: #c0c8d8;
+  background: var(--color-text-disabled);
 }
 
 .home-preview-line.is-wide {
@@ -272,9 +272,9 @@
 
 .home-preview-cell {
   aspect-ratio: 1.2;
-  border: 1px solid #d0d0d0;
+  border: 1px solid var(--color-border-light);
   border-radius: 3px;
-  background: #f7f7f7;
+  background: var(--color-surface-raised);
 }
 
 .home-drop-hint {

@@ -1,10 +1,7 @@
-import type { WasmBridge } from '@/core/wasm-bridge';
-import type { EventBus } from '@/core/event-bus';
-import type { CharProperties, ParaProperties } from '@/core/types';
-import type { CommandDispatcher } from '@/command/dispatcher';
+import type { CharProperties, EventBus, FontSet, ParaProperties, WasmBridge } from '@/upstream/core';
+import { userSettings } from '@/upstream/core';
+import type { CommandDispatcher } from '@/upstream/commands';
 import { loadWebFonts } from '@/core/font-loader';
-import { userSettings } from '@/core/user-settings';
-import type { FontSet } from '@/core/user-settings';
 import { getLocalFonts } from '@/core/local-fonts';
 import { sanitizeAuthoringFontFamily } from '@/core/font-authoring-policy';
 import { getCustomSelectRoot, syncCustomSelect } from './custom-select';
@@ -167,10 +164,11 @@ export class Toolbar {
       const commit = () => {
         const num = parseInt(input.value, 10);
         if (num > 0) {
-          this.ensureLsOption(num);
-          this.lsSelect.value = String(num);
+          const clamped = Math.min(500, num);
+          this.ensureLsOption(clamped);
+          this.lsSelect.value = String(clamped);
           syncCustomSelect(this.lsSelect);
-          this.dispatcher.dispatch('format:line-spacing', { value: num });
+          this.dispatcher.dispatch('format:line-spacing', { value: clamped });
         }
         input.remove();
         host.style.display = '';
@@ -187,7 +185,7 @@ export class Toolbar {
     this.btnLsUp.addEventListener('mousedown', (e) => {
       e.preventDefault();
       const cur = Number(this.lsSelect.value) || 160;
-      const next = cur + 5;
+      const next = Math.min(500, cur + 5);
       this.ensureLsOption(next);
       this.lsSelect.value = String(next);
       syncCustomSelect(this.lsSelect);
@@ -257,7 +255,9 @@ export class Toolbar {
         e.preventDefault();
         const pt = parseFloat(this.fontSize.value);
         if (!isNaN(pt) && pt > 0) {
-          this.eventBus.emit('format-char', { fontSize: Math.round(pt * 100) } as CharProperties);
+          const clampedPt = Math.min(4096, Math.max(1, pt));
+          this.fontSize.value = String(clampedPt);
+          this.eventBus.emit('format-char', { fontSize: Math.round(clampedPt * 100) } as CharProperties);
         }
       }
     });
@@ -266,7 +266,7 @@ export class Toolbar {
     this.btnSizeUp.addEventListener('mousedown', (e) => {
       e.preventDefault();
       const pt = parseFloat(this.fontSize.value) || 10;
-      const newPt = pt + 1;
+      const newPt = Math.min(4096, pt + 1);
       this.fontSize.value = String(newPt);
       this.eventBus.emit('format-char', { fontSize: Math.round(newPt * 100) } as CharProperties);
     });
@@ -506,7 +506,10 @@ export class Toolbar {
       this.ensureLsOption(val);
       this.lsSelect.value = String(val);
       syncCustomSelect(this.lsSelect);
+      return;
     }
+    this.lsSelect.selectedIndex = -1;
+    syncCustomSelect(this.lsSelect);
   }
 
   /** 커서 위치의 스타일을 드롭다운에 반영한다 */

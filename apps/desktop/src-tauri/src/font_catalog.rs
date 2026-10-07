@@ -2,6 +2,7 @@ use serde::Serialize;
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use tauri::{AppHandle, Manager};
 use usvg::fontdb::{self, Source};
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -48,14 +49,17 @@ pub fn desktop_extra_font_dirs() -> Vec<PathBuf> {
     dedupe_existing_dirs(dirs)
 }
 
-pub fn collect_desktop_local_font_entries() -> Vec<LocalFontEntry> {
-    collect_local_font_entries(&desktop_extra_font_dirs())
+pub fn pdf_font_dirs(app: &AppHandle) -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        dirs.push(resource_dir.join("fonts/pdf"));
+    }
+    dirs.extend(desktop_extra_font_dirs());
+    dedupe_existing_dirs(dirs)
 }
 
-pub fn create_pdf_font_database() -> fontdb::Database {
-    let mut fontdb = create_font_database(&desktop_extra_font_dirs());
-    apply_pdf_font_defaults(&mut fontdb);
-    fontdb
+pub fn collect_desktop_local_font_entries() -> Vec<LocalFontEntry> {
+    collect_local_font_entries(&desktop_extra_font_dirs())
 }
 
 pub fn read_desktop_local_font(path: &Path) -> Result<Vec<u8>, String> {
@@ -166,19 +170,6 @@ fn source_path(source: &Source) -> Option<String> {
             Some(path.to_string_lossy().to_string())
         }
         Source::Binary(_) => None,
-    }
-}
-
-fn apply_pdf_font_defaults(fontdb: &mut fontdb::Database) {
-    fontdb.set_serif_family("바탕");
-    fontdb.set_sans_serif_family("맑은 고딕");
-    fontdb.set_monospace_family("D2Coding");
-
-    #[cfg(target_os = "macos")]
-    {
-        fontdb.set_serif_family("AppleMyungjo");
-        fontdb.set_sans_serif_family("Apple SD Gothic Neo");
-        fontdb.set_monospace_family("Menlo");
     }
 }
 

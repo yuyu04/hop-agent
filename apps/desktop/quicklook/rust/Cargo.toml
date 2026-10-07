@@ -11,11 +11,15 @@ crate-type = ["staticlib", "rlib"]
 [dependencies]
 base64 = "0.22"
 pdf-writer = "0.12"
-rhwp = { path = "../../../../third_party/rhwp" }
+hop-rhwp-adapter = { path = "../../rhwp-adapter" }
 serde_json = "1"
 svg2pdf = "0.13"
 usvg = "0.45"
 
+[patch.crates-io]
+# Keep Quick Look PDF output on the same deterministic svg2pdf revision as the desktop app.
+svg2pdf = { git = "https://github.com/edwardkim/svg2pdf", rev = "2caeb0a038f9128b79833d803b94c2667565c4da" }
+
 [features]
 default = []
-native-skia = ["rhwp/native-skia"]
+native-skia = ["hop-rhwp-adapter/native-skia"]

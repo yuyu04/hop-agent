@@ -1,0 +1,157 @@
+{
+  "schemaVersion": 1,
+  "upstream": {
+    "version": "0.8.4",
+    "commit": "496333b27d21ddb9114ba9ae340bcb895870c9a7",
+    "counterparts": {
+      "core/font-loader": "fab2b7cd67fff96303fae386760eaebe0620955dea0c967c6ef711f056090c05",
+      "core/local-fonts": "2b56048dc4f567de53a22626bc3343debf0004ed410aad9d24161bf01d993195",
+      "command/shortcut-map": "9970f3fd9203aa9a044100776e8c650491bbc3f485972984587170d3124ca63d",
+      "command/commands/edit": "72ffb0cd4b11870f069b7c00198665f380861aab69f8f47329f66ae418cc7f35",
+      "command/commands/file": "f2a0a67b6d424fa4c9cf0cd16a64a57b673451bf139ef2103106b1ce82330503",
+      "ui/about-dialog": "9cbb79eef1e407706899c2989147f3da3f82678a39fe5b67923a456d5157c84b",
+      "ui/dialog": "ec55feb51d76ab90094bbc04ba7d2c5eacb25dee4ba7e8dd5c1c88e746944afd",
+      "ui/toolbar": "29227846354d9fa97d81fd8bdcb7f8d0b5ce9817c8a11b4525b8f02251891427"
+    },
+    "assets": {
+      "public/images/icon_small_ko_dark.svg": "9d02ea0b8c1d399a89290d97613759826f19f3e3f392b6d79dcf6109e7e15fa6"
+    }
+  },
+  "overrides": [
+    {
+      "id": "core/font-loader",
+      "strategy": "fork",
+      "reason": "HOP packages its own redistributable font catalog and authoring policy."
+    },
+    {
+      "id": "core/font-authoring-policy",
+      "strategy": "contribution",
+      "reason": "HOP owns the restricted-font authoring and fallback policy."
+    },
+    {
+      "id": "core/local-fonts",
+      "strategy": "extension",
+      "reason": "Delegates browser behavior upstream and adds Tauri native font discovery and byte loading."
+    },
+    {
+      "id": "core/bridge-factory",
+      "strategy": "contribution",
+      "reason": "Selects the HOP desktop bridge only inside a Tauri runtime."
+    },
+    {
+      "id": "core/document-files",
+      "strategy": "contribution",
+      "reason": "Defines the document formats exposed by the HOP desktop product."
+    },
+    {
+      "id": "core/desktop-chrome",
+      "strategy": "contribution",
+      "reason": "Applies desktop-only window chrome and context-menu behavior."
+    },
+    {
+      "id": "core/desktop-events",
+      "strategy": "contribution",
+      "reason": "Connects Tauri document sessions and window events to the editor host."
+    },
+    {
+      "id": "core/platform",
+      "strategy": "contribution",
+      "reason": "Provides cross-platform desktop modifier and platform detection."
+    },
+    {
+      "id": "core/tauri-bridge",
+      "strategy": "contribution",
+      "reason": "Owns the typed native filesystem, session, save, export and print boundary."
+    },
+    {
+      "id": "command/shortcut-map",
+      "strategy": "extension",
+      "reason": "Adds HOP desktop shortcuts while preserving upstream shortcut assignments."
+    },
+    {
+      "id": "command/commands/edit",
+      "strategy": "extension",
+      "reason": "Wraps selected upstream edit commands with HOP clipboard behavior."
+    },
+    {
+      "id": "command/commands/file",
+      "strategy": "extension",
+      "reason": "Replaces native file actions while falling back to upstream web actions."
+    },
+    {
+      "id": "ui/about-dialog",
+      "strategy": "extension",
+      "reason": "Subclasses the upstream dialog to add the HOP product version."
+    },
+    {
+      "id": "ui/custom-select",
+      "strategy": "contribution",
+      "reason": "Provides HOP desktop select styling and interaction."
+    },
+    {
+      "id": "ui/dialog",
+      "strategy": "fork",
+      "reason": "Preserves HOP modal focus and desktop interaction behavior."
+    },
+    {
+      "id": "ui/home-screen",
+      "strategy": "contribution",
+      "reason": "Provides HOP recent-file and desktop document entry flows."
+    },
+    {
+      "id": "ui/preview-svg",
+      "strategy": "contribution",
+      "reason": "Provides HOP preview rendering helpers."
+    },
+    {
+      "id": "ui/print-dialog",
+      "strategy": "contribution",
+      "reason": "Owns HOP native print and PDF export choices."
+    },
+    {
+      "id": "ui/recent-documents-dialog",
+      "strategy": "contribution",
+      "reason": "Owns HOP native recent-document interaction."
+    },
+    {
+      "id": "ui/toolbar",
+      "strategy": "fork",
+      "reason": "Preserves HOP authoring-font policy and asynchronous desktop font loading."
+    },
+    {
+      "id": "ui/update-notice",
+      "strategy": "contribution",
+      "reason": "Owns HOP desktop updater presentation and actions."
+    },
+    {
+      "id": "styles/about-dialog.css",
+      "strategy": "contribution",
+      "reason": "Styles the HOP version added to the upstream dialog."
+    },
+    {
+      "id": "styles/custom-select.css",
+      "strategy": "contribution",
+      "reason": "Styles the HOP custom select contribution."
+    },
+    {
+      "id": "styles/font-set-dialog.css",
+      "strategy": "contribution",
+      "reason": "Styles HOP font set controls."
+    },
+    {
+      "id": "styles/home-screen.css",
+      "strategy": "contribution",
+      "reason": "Styles the HOP desktop home screen."
+    },
+    {
+      "id": "styles/update-notice.css",
+      "strategy": "contribution",
+      "reason": "Styles HOP update notices."
+    },
+    {
+      "id": "styles/recent-documents-dialog.css",
+      "strategy": "contribution",
+      "reason": "Styles HOP recent-document UI."
+    }
+  ]
+}

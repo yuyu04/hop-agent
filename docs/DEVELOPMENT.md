@@ -66,7 +66,7 @@ public beta 전까지는 아래 항목이 더 필요합니다.
 
 * HWPX 저장은 아직 막아 두었습니다. HWPX 열기는 가능하지만, 안전한 HWPX serializer가 준비되기 전까지 저장은 지원하지 않습니다.
 * autosave/recovery는 아직 없습니다.
-* 외부 파일 변경 감지는 아직 없습니다.
+* 외부 파일 변경은 저장 전에 감지하고 충돌 확인을 거칩니다.
 * 큰 문서에서는 현재 WASM mirror를 거치는 구간이 있어 native-authoritative 구조로 더 개선해야 합니다.
 * signing, notarization, updater manifest는 배포 자격증명이 준비된 뒤 활성화할 예정입니다.
 
@@ -107,10 +107,12 @@ pnpm run clippy:desktop
 upstream 갱신:
 
 ```sh
-RUN_CHECKS=1 scripts/update-upstream.sh
+pnpm upstream:update -- vX.Y.Z
+pnpm upstream:verify
 ```
 
 ## 관련 문서
 
 * [upstream 경계와 업데이트 방식](architecture/UPSTREAM.md)
+* [rhwp 업데이트 운영 매뉴얼](operations/RHWP_UPDATE.md)
 * [데스크톱 릴리즈 노트](operations/DESKTOP_RELEASE.md)

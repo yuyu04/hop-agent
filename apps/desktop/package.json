@@ -1,6 +1,6 @@
 {
   "name": "hop-desktop",
-  "version": "0.4.1",
+  "version": "0.4.4",
   "private": true,
   "description": "HOP - Open HWP desktop app",
   "type": "module",
@@ -10,6 +10,6 @@
     "tauri": "tauri"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.11.4"
+    "@tauri-apps/cli": "^2.0.0"
   }
 }

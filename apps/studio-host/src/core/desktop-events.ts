@@ -1,5 +1,5 @@
-import type { CommandDispatcher } from '@/command/dispatcher';
-import type { EventBus } from '@/core/event-bus';
+import type { CommandDispatcher } from '@/upstream/commands';
+import type { EventBus } from '@/upstream/core';
 import { isTauriRuntime } from '@/core/bridge-factory';
 import { findLatestSupportedDocumentPath, hasSupportedDocumentPath } from '@/core/document-files';
 import type { DesktopBridgeApi, DesktopLoadPayload, DesktopUpdateState } from './tauri-bridge';

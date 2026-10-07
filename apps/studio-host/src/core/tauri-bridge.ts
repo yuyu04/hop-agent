@@ -1,7 +1,7 @@
 //! Tauri 데스크톱 백엔드 어댑터 — 웹 호스트의 추상 브리지(WasmBridge/AiBridge)를 실제
 //! `#[tauri::command]` invoke 호출과 파일시스템 플러그인에 연결한다. 코어 로직은 여기 없다.
-import { WasmBridge } from '@/core/wasm-bridge';
-import type { DocumentInfo } from '@/core/types';
+import { WasmBridge } from '@/upstream/core';
+import type { DocumentInfo } from '@/upstream/core';
 import { remove, stat } from '@tauri-apps/plugin-fs';
 import { finiteFileSize, readFileInChunks, writeFileInChunks } from './chunked-fs';
 import type { DocumentContext, ResearchNoteDoc } from './ai-bridge';

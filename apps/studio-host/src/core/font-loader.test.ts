@@ -7,6 +7,15 @@ describe('font loader', () => {
     delete (globalThis as { FontFace?: unknown }).FontFace;
   });
 
+  it('exposes only authoring-safe families to upstream font dialogs', async () => {
+    const { REGISTERED_FONTS } = await import('./font-loader');
+
+    expect(REGISTERED_FONTS.has('HY헤드라인M')).toBe(false);
+    expect(REGISTERED_FONTS.has('휴먼명조')).toBe(false);
+    expect(REGISTERED_FONTS.has('함초롬돋움')).toBe(true);
+    expect(REGISTERED_FONTS.has('함초롬바탕')).toBe(true);
+  });
+
   it('registers font-face CSS and loads critical fonts once', async () => {
     const fontFaces: Array<{ name: string; source: string }> = [];
     installFontEnvironment({

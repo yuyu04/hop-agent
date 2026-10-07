@@ -74,8 +74,11 @@ If a change needs to exceed these limits, document why in the 1-Pager or split t
 `third_party/rhwp` is vendor source. Update it through:
 
 ```bash
-RUN_CHECKS=1 scripts/update-upstream.sh
+pnpm upstream:update -- vX.Y.Z
 ```
+
+Always pass the intended stable release tag explicitly. Then run `pnpm upstream:verify` and the
+focused product checks; never update from a moving branch such as `main`.
 
 After an upstream update, check the submodule pointer, `apps/studio-host` alias/override compatibility, Rust native API compatibility, and HOP-specific file, print, window, and drag/drop flows.
 

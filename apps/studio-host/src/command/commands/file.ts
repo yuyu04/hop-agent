@@ -1,8 +1,9 @@
-import { fileCommands as upstreamFileCommands } from '@upstream/command/commands/file';
-import type { CommandDef, CommandServices } from '@/command/types';
+import { fileCommands as upstreamFileCommands } from '@/upstream/commands';
+import type { CommandDef, CommandServices } from '@/upstream/commands';
 import type { DesktopBridgeApi } from '@/core/tauri-bridge';
 import { openPrintDialog } from '@/ui/print-dialog';
 import { openRecentDocumentsDialog } from '@/ui/recent-documents-dialog';
+import { replaceUpstreamCommands } from '../replace-upstream-commands';
 
 type DesktopFileBridge = Pick<
   DesktopBridgeApi,
@@ -22,6 +23,16 @@ type DesktopRecentBridge = Pick<
 >;
 
 const upstreamById = new Map(upstreamFileCommands.map((command) => [command.id, command]));
+// HOP owns save format choices and PDF export through native paths. Browser-only
+// commands must be reviewed explicitly instead of arriving through group merge.
+const browserOnlyFileCommands = new Set([
+  'file:save-as-hwp',
+  'file:save-as-hwpx',
+  'file:print-to-pdf',
+]);
+const adoptedUpstreamCommands = upstreamFileCommands.filter(
+  (command) => !browserOnlyFileCommands.has(command.id),
+);
 
 function desktopBridge(wasm: unknown): DesktopFileBridge | null {
   if (!wasm || typeof wasm !== 'object') return null;
@@ -69,28 +80,87 @@ function reportCommandError(services: CommandServices, action: string, error: un
   alert(`${action}에 실패했습니다:\n${message}`);
 }
 
+async function runDesktopAction(
+  services: CommandServices,
+  action: string,
+  operation: () => Promise<unknown>,
+): Promise<void> {
+  try {
+    await operation();
+  } catch (error) {
+    reportCommandError(services, action, error);
+  }
+}
+
 const desktopCommands = new Map<string, CommandDef>([
   ['file:open', withDesktopOverride('file:open', async (services) => {
     const desktop = desktopBridge(services.wasm);
     if (!desktop) return upstream('file:open').execute(services);
 
-    const payload = await desktop.openDocumentFromDialog();
-    if (payload) services.eventBus.emit('desktop-document-loaded', payload);
+    await runDesktopAction(services, '파일 열기', async () => {
+      const payload = await desktop.openDocumentFromDialog();
+      if (payload) services.eventBus.emit('desktop-document-loaded', payload);
+    });
+  })],
+  ['file:open-recent', withDesktopOverride('file:open-recent', async (services) => {
+    const desktop = recentBridge(services.wasm);
+    if (!desktop) return upstream('file:open-recent').execute(services);
+
+    await runDesktopAction(services, '최근 문서 열기', async () => {
+      const documents = await desktop.listRecentDocuments();
+      if (documents.length === 0) {
+        emitStatus(services, '최근 문서가 없습니다');
+        alert('최근 문서가 없습니다.');
+        return;
+      }
+
+      const selected = await openRecentDocumentsDialog(documents, {
+        clearRecentDocuments: () => desktop.clearRecentDocuments(),
+      });
+      if (!selected) {
+        emitStatus(services, '최근 문서 목록을 닫았습니다');
+        return;
+      }
+
+      emitStatus(services, '파일 로딩 중...');
+      const payload = await desktop.openDocumentByPath(selected.path);
+      if (payload) services.eventBus.emit('desktop-document-loaded', payload);
+    });
+  })],
+  ['file:clear-recent', withDesktopOverride('file:clear-recent', async (services) => {
+    const desktop = recentBridge(services.wasm);
+    if (!desktop) return upstream('file:clear-recent').execute(services);
+
+    await runDesktopAction(services, '최근 문서 지우기', async () => {
+      await desktop.clearRecentDocuments();
+      emitStatus(services, '최근 문서를 지웠습니다');
+    });
   })],
   ['file:save', withDesktopOverride('file:save', async (services) => {
     const desktop = desktopBridge(services.wasm);
     if (!desktop) return upstream('file:save').execute(services);
 
-    try {
+    await runDesktopAction(services, '저장', async () => {
       emitStatus(services, '저장 중...');
       const result = await desktop.saveDocumentFromCommand();
       if (result) {
         services.eventBus.emit('desktop-document-saved', result);
         emitStatus(services, '저장 완료');
       }
-    } catch (error) {
-      reportCommandError(services, '저장', error);
-    }
+    });
+  })],
+  ['file:save-as', withDesktopOverride('file:save-as', async (services) => {
+    const desktop = desktopBridge(services.wasm);
+    if (!desktop) return upstream('file:save-as').execute(services);
+
+    await runDesktopAction(services, '다른 이름으로 저장', async () => {
+      emitStatus(services, '다른 이름으로 저장 중...');
+      const result = await desktop.saveDocumentAsFromCommand();
+      if (result) {
+        services.eventBus.emit('desktop-document-saved', result);
+        emitStatus(services, '저장 완료');
+      }
+    });
   })],
   ['file:print', withDesktopOverride('file:print', async (services) => {
     const statusEl = document.getElementById('sb-message');
@@ -125,64 +195,7 @@ const hopOnlyCommands: CommandDef[] = [
         window.open(window.location.href, '_blank');
         return;
       }
-      await desktop.createNewWindow();
-    },
-  },
-  {
-    id: 'file:open-recent',
-    label: '최근 문서',
-    shortcutLabel: 'Ctrl+Alt+O',
-    async execute(services) {
-      const desktop = recentBridge(services.wasm);
-      if (!desktop) {
-        alert('최근 문서는 HOP 데스크톱 앱에서 지원합니다.');
-        return;
-      }
-
-      try {
-        const documents = await desktop.listRecentDocuments();
-        if (documents.length === 0) {
-          emitStatus(services, '최근 문서가 없습니다');
-          alert('최근 문서가 없습니다.');
-          return;
-        }
-
-        const selected = await openRecentDocumentsDialog(documents, {
-          clearRecentDocuments: () => desktop.clearRecentDocuments(),
-        });
-        if (!selected) {
-          emitStatus(services, '최근 문서 목록을 닫았습니다');
-          return;
-        }
-
-        emitStatus(services, '파일 로딩 중...');
-        const payload = await desktop.openDocumentByPath(selected.path);
-        if (payload) {
-          services.eventBus.emit('desktop-document-loaded', payload);
-        }
-      } catch (error) {
-        reportCommandError(services, '최근 문서 열기', error);
-      }
-    },
-  },
-  {
-    id: 'file:save-as',
-    label: '다른 이름으로 저장',
-    canExecute: (ctx) => ctx.hasDocument,
-    async execute(services) {
-      const desktop = desktopBridge(services.wasm);
-      if (!desktop) return upstream('file:save').execute(services);
-
-      try {
-        emitStatus(services, '다른 이름으로 저장 중...');
-        const result = await desktop.saveDocumentAsFromCommand();
-        if (result) {
-          services.eventBus.emit('desktop-document-saved', result);
-          emitStatus(services, '저장 완료');
-        }
-      } catch (error) {
-        reportCommandError(services, '다른 이름으로 저장', error);
-      }
+      await runDesktopAction(services, '새 창 열기', () => desktop.createNewWindow());
     },
   },
   {
@@ -196,14 +209,16 @@ const hopOnlyCommands: CommandDef[] = [
         return;
       }
 
-      emitStatus(services, 'PDF 내보내기 중...');
-      const jobId = await desktop.exportPdfFromCommand();
-      if (jobId) emitStatus(services, 'PDF 내보내기 완료');
+      await runDesktopAction(services, 'PDF 내보내기', async () => {
+        emitStatus(services, 'PDF 내보내기 중...');
+        const jobId = await desktop.exportPdfFromCommand();
+        if (jobId) emitStatus(services, 'PDF 내보내기 완료');
+      });
     },
   },
 ];
 
 export const fileCommands: CommandDef[] = [
-  ...upstreamFileCommands.map((command) => desktopCommands.get(command.id) ?? command),
+  ...replaceUpstreamCommands(adoptedUpstreamCommands, [...desktopCommands.values()]),
   ...hopOnlyCommands,
 ];

@@ -4,7 +4,7 @@ use crate::state::{
     editable_core_from_bytes, AppState, DocumentFormat, DocumentOpenResult,
     ExternalModificationStatus, FileFingerprint, MutationResult, PageSvgResult, SaveResult,
 };
-use rhwp::DocumentCore;
+use hop_rhwp_adapter::DocumentCore;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -477,10 +477,12 @@ fn export_pdf_from_core(
     open_after: bool,
 ) -> Result<(), String> {
     let path = PathBuf::from(&target_path);
+    let font_dirs = crate::font_catalog::pdf_font_dirs(app);
     let total = crate::pdf_export::export_core_to_pdf(
         core,
         &path,
         page_range,
+        font_dirs,
         |phase, done, total, message| {
             emit_progress(app, job_id, phase, done, total, &message);
         },

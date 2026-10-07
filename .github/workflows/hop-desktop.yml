@@ -285,6 +285,13 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Pin Rust to upstream contract
+        shell: bash
+        run: |
+          toolchain="$(node -p "require('./config/rhwp-upstream.json').rustToolchain")"
+          rustup toolchain install "$toolchain" --profile minimal
+          echo "RUSTUP_TOOLCHAIN=$toolchain" >> "$GITHUB_ENV"
+
       - name: Cache cargo
         uses: actions/cache@v5
         with:
@@ -391,6 +398,13 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+
+      - name: Pin Rust and target to upstream contract
+        shell: bash
+        run: |
+          toolchain="$(node -p "require('./config/rhwp-upstream.json').rustToolchain")"
+          rustup toolchain install "$toolchain" --profile minimal --target "${{ matrix.target }}"
+          echo "RUSTUP_TOOLCHAIN=$toolchain" >> "$GITHUB_ENV"
 
       - name: Cache cargo
         uses: actions/cache@v5
@@ -768,7 +782,7 @@ jobs:
         run: |
           set -euo pipefail
           find artifacts -type f | sort
-          if ! find artifacts -type f | grep -q .; then
+          if [[ -z "$(find artifacts -type f -print -quit)" ]]; then
             echo "No desktop artifacts were downloaded."
             exit 1
           fi

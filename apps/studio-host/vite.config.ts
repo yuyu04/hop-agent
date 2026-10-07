@@ -2,18 +2,18 @@ import { defineConfig, normalizePath } from 'vite';
 import { basename, dirname, relative, resolve } from 'node:path';
 import { copyFileSync, createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import type { Plugin } from 'vite';
-import { createHopOverrides } from './hop-overrides';
+import { createHopOverrides } from './hop-overrides.ts';
 
 const desktopConfig = JSON.parse(
-  readFileSync(resolve(__dirname, '../desktop/src-tauri/tauri.conf.json'), 'utf-8'),
+  readFileSync(resolve(import.meta.dirname, '../desktop/src-tauri/tauri.conf.json'), 'utf-8'),
 );
-const upstreamStudioDir = resolve(__dirname, '../../third_party/rhwp/rhwp-studio');
-const upstreamSrc = resolve(__dirname, '../../third_party/rhwp/rhwp-studio/src');
-const hopSrc = resolve(__dirname, 'src');
-const rhwpWasmModule = normalizePath(resolve(__dirname, 'vendor/rhwp-core/rhwp.js'));
+const upstreamStudioDir = resolve(import.meta.dirname, '../../third_party/rhwp/rhwp-studio');
+const upstreamSrc = resolve(import.meta.dirname, '../../third_party/rhwp/rhwp-studio/src');
+const hopSrc = resolve(import.meta.dirname, 'src');
+const rhwpWasmModule = normalizePath(resolve(import.meta.dirname, 'vendor/rhwp-core/rhwp.js'));
 const rhwpWasmDir = dirname(rhwpWasmModule);
 const rhwpWasmPackage = JSON.parse(readFileSync(resolve(rhwpWasmDir, 'package.json'), 'utf-8'));
-const fontAssetsDir = resolve(__dirname, '../../assets/fonts');
+const fontAssetsDir = resolve(import.meta.dirname, '../../assets/fonts');
 
 function hopFontAssets(): Plugin {
   return {
@@ -39,7 +39,7 @@ function hopFontAssets(): Plugin {
       });
     },
     closeBundle() {
-      const outDir = resolve(__dirname, 'dist/fonts');
+      const outDir = resolve(import.meta.dirname, 'dist/fonts');
       mkdirSync(outDir, { recursive: true });
       for (const fileName of readdirSync(fontAssetsDir)) {
         const source = resolve(fontAssetsDir, fileName);
@@ -69,6 +69,7 @@ export default defineConfig({
     alias: [
       ...createHopOverrides(hopSrc),
       { find: '@wasm/rhwp.js', replacement: rhwpWasmModule },
+      { find: '@/upstream', replacement: resolve(hopSrc, 'upstream') },
       { find: '@upstream', replacement: upstreamSrc },
       { find: '@', replacement: upstreamSrc },
     ],
@@ -78,7 +79,7 @@ export default defineConfig({
     port: 7700,
     fs: {
       allow: [
-        __dirname,
+        import.meta.dirname,
         rhwpWasmDir,
         fontAssetsDir,
         upstreamStudioDir,

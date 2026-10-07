@@ -82,6 +82,13 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Pin Rust to upstream contract
+        shell: bash
+        run: |
+          toolchain="$(node -p "require('./config/rhwp-upstream.json').rustToolchain")"
+          rustup toolchain install "$toolchain" --profile minimal --component clippy
+          echo "RUSTUP_TOOLCHAIN=$toolchain" >> "$GITHUB_ENV"
+
       - name: Cache cargo
         uses: actions/cache@v5
         with:
@@ -96,5 +103,14 @@ jobs:
       - name: Install Node dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Verify rhwp upstream contract
+        run: pnpm upstream:verify
+
+      - name: Typecheck and build studio
+        run: pnpm build:studio
+
       - name: Run unit tests
         run: pnpm test
+
+      - name: Lint desktop Rust
+        run: pnpm clippy:desktop

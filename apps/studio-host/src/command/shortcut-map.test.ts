@@ -16,8 +16,6 @@ describe('shortcut-map', () => {
       .toBe('file:new-window');
     expect(matchShortcut(keyEvent({ key: 'o', metaKey: true, altKey: true }), defaultShortcuts))
       .toBe('file:open-recent');
-    expect(matchShortcut(keyEvent({ key: 't', metaKey: true, altKey: true }), defaultShortcuts))
-      .toBe('table:cell-selection-enter');
   });
 
   it('keeps Ctrl+E mapped to upstream delete instead of PDF export', () => {
@@ -32,6 +30,24 @@ describe('shortcut-map', () => {
     expect(matchShortcut(keyEvent({ key: 's', metaKey: true }), defaultShortcuts)).toBeNull();
     expect(matchShortcut(keyEvent({ key: 's', ctrlKey: true }), defaultShortcuts)).toBe('file:save');
   });
+
+  it('preserves upstream physical-key shortcuts when Option changes the key value', () => {
+    installNavigator({ platform: 'MacIntel', userAgent: 'Mac OS X' });
+
+    expect(matchShortcut(
+      keyEvent({ key: '©', code: 'KeyG', altKey: true }),
+      defaultShortcuts,
+    )).toBe('edit:goto');
+  });
+
+  it('does not run unmodified shortcuts while a non-primary system modifier is held', () => {
+    installNavigator({ platform: 'Win32', userAgent: 'Windows NT 10.0' });
+
+    expect(matchShortcut(
+      keyEvent({ key: 'p', code: 'KeyP', metaKey: true }),
+      defaultShortcuts,
+    )).toBeNull();
+  });
 });
 
 function installNavigator(value: Pick<Navigator, 'platform' | 'userAgent'>): void {
@@ -42,10 +58,11 @@ function installNavigator(value: Pick<Navigator, 'platform' | 'userAgent'>): voi
 }
 
 function keyEvent(
-  overrides: Partial<Pick<KeyboardEvent, 'key' | 'ctrlKey' | 'metaKey' | 'shiftKey' | 'altKey'>>,
+  overrides: Partial<Pick<KeyboardEvent, 'key' | 'code' | 'ctrlKey' | 'metaKey' | 'shiftKey' | 'altKey'>>,
 ): KeyboardEvent {
   return {
     key: '',
+    code: '',
     ctrlKey: false,
     metaKey: false,
     shiftKey: false,

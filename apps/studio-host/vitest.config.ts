@@ -1,9 +1,10 @@
 import { defineConfig } from 'vitest/config';
 import { resolve } from 'node:path';
-import { createHopOverrides } from './hop-overrides';
+import { createHopOverrides } from './hop-overrides.ts';
 
-const upstreamSrc = resolve(__dirname, '../../third_party/rhwp/rhwp-studio/src');
-const hopSrc = resolve(__dirname, 'src');
+const upstreamSrc = resolve(import.meta.dirname, '../../third_party/rhwp/rhwp-studio/src');
+const hopSrc = resolve(import.meta.dirname, 'src');
+const rhwpWasmModule = resolve(import.meta.dirname, 'vendor/rhwp-core/rhwp.js');
 
 export default defineConfig({
   test: {
@@ -16,6 +17,8 @@ export default defineConfig({
   resolve: {
     alias: [
       ...createHopOverrides(hopSrc),
+      { find: '@wasm/rhwp.js', replacement: rhwpWasmModule },
+      { find: '@/upstream', replacement: resolve(hopSrc, 'upstream') },
       { find: '@upstream', replacement: upstreamSrc },
       { find: '@', replacement: upstreamSrc },
     ],

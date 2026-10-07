@@ -109,13 +109,142 @@ describe('local fonts', () => {
 
     expect(getLocalFonts()).toEqual([]);
   });
+
+  it('does not request browser local-font permission during background font hydration', async () => {
+    const queryLocalFonts = vi.fn().mockResolvedValue([]);
+    (globalThis as { window?: unknown }).window = {
+      location: { protocol: 'https:' },
+      queryLocalFonts,
+    };
+
+    const { detectLocalFontEntries, ensureLocalFontsAvailable } = await import('./local-fonts');
+
+    await detectLocalFontEntries();
+    await ensureLocalFontsAvailable(['Noto Sans KR']);
+
+    expect(queryLocalFonts).not.toHaveBeenCalled();
+  });
+
+  it('prefers a regular desktop face when a family has multiple styles', async () => {
+    (globalThis as { window?: unknown }).window = { __TAURI_INTERNALS__: {} };
+    invokeMock.mockResolvedValue([
+      {
+        family: '가족 폰트',
+        postScriptName: 'Family-Bold',
+        style: 'Bold',
+        sourceKind: 'file-backed',
+        path: '/fonts/family-bold.ttf',
+      },
+      {
+        family: '가족 폰트',
+        postScriptName: 'Family-Regular',
+        style: 'Regular',
+        sourceKind: 'file-backed',
+        path: '/fonts/family-regular.ttf',
+      },
+    ]);
+
+    const { detectLocalFonts, resolveLocalFont } = await import('./local-fonts');
+    await detectLocalFonts({ includeRegistered: true });
+
+    expect(resolveLocalFont('가족 폰트')?.postscriptName).toBe('Family-Regular');
+    expect(resolveLocalFont('Family-Bold')?.style).toBe('Bold');
+  });
+
+  it('loads the exact desktop face selected by PostScript name', async () => {
+    (globalThis as { window?: unknown }).window = { __TAURI_INTERNALS__: {} };
+    invokeMock.mockImplementation(async (command: string, args?: { path?: string }) => {
+      if (command === 'list_local_fonts') {
+        return [{
+          family: '가족 폰트',
+          postScriptName: 'Family-Bold',
+          style: 'Bold',
+          sourceKind: 'file-backed',
+          path: '/fonts/family-bold.ttf',
+        }];
+      }
+      if (command === 'read_local_font') {
+        expect(args?.path).toBe('/fonts/family-bold.ttf');
+        return [1, 2, 3];
+      }
+      throw new Error(`unexpected command: ${command}`);
+    });
+
+    const { detectLocalFonts, loadLocalFontBytesFor } = await import('./local-fonts');
+    await detectLocalFonts({ includeRegistered: true });
+    const bytesByFace = await loadLocalFontBytesFor(['Family-Bold']);
+
+    expect([...bytesByFace.keys()]).toEqual(['family-bold']);
+    expect([...new Uint8Array(bytesByFace.get('family-bold')!)]).toEqual([1, 2, 3]);
+  });
+
+  it('removes previously registered file-backed faces after a forced catalog refresh', async () => {
+    (globalThis as { window?: unknown }).window = { __TAURI_INTERNALS__: {} };
+    const addedFamilies: string[] = [];
+    const deletedFamilies: string[] = [];
+    installBinaryFontEnvironment(addedFamilies, deletedFamilies);
+    invokeMock.mockImplementation(async (command: string) => {
+      if (command === 'list_local_fonts') {
+        return [{
+          family: '새 파일폰트',
+          postScriptName: 'NewFont',
+          style: 'normal',
+          sourceKind: 'file-backed',
+          path: '/vendor/NewFont.ttf',
+        }];
+      }
+      if (command === 'read_local_font') return [0, 1, 2, 3];
+      throw new Error(`unexpected command: ${command}`);
+    });
+
+    const { detectLocalFonts, ensureLocalFontsAvailable } = await import('./local-fonts');
+    await detectLocalFonts();
+    await ensureLocalFontsAvailable(['새 파일폰트']);
+    await detectLocalFonts({ force: true });
+
+    expect(addedFamilies).toEqual(['새 파일폰트']);
+    expect(deletedFamilies).toEqual(['새 파일폰트']);
+  });
+
+  it('coalesces concurrent registration of the same file-backed face', async () => {
+    (globalThis as { window?: unknown }).window = { __TAURI_INTERNALS__: {} };
+    const addedFamilies: string[] = [];
+    installBinaryFontEnvironment(addedFamilies);
+    invokeMock.mockImplementation(async (command: string) => {
+      if (command === 'list_local_fonts') {
+        return [{
+          family: '동시 폰트',
+          postScriptName: 'ConcurrentFont',
+          style: 'normal',
+          sourceKind: 'file-backed',
+          path: '/vendor/ConcurrentFont.ttf',
+        }];
+      }
+      if (command === 'read_local_font') return [0, 1, 2, 3];
+      throw new Error(`unexpected command: ${command}`);
+    });
+
+    const { detectLocalFonts, ensureLocalFontsAvailable } = await import('./local-fonts');
+    await detectLocalFonts();
+    await Promise.all([
+      ensureLocalFontsAvailable(['동시 폰트']),
+      ensureLocalFontsAvailable(['동시 폰트']),
+    ]);
+
+    expect(addedFamilies).toEqual(['동시 폰트']);
+    expect(invokeMock.mock.calls.filter(([command]) => command === 'read_local_font')).toHaveLength(1);
+  });
 });
 
-function installBinaryFontEnvironment(addedFamilies: string[]) {
+function installBinaryFontEnvironment(addedFamilies: string[], deletedFamilies: string[] = []) {
   (globalThis as { document?: unknown }).document = {
     fonts: {
       add: vi.fn((face: { family: string }) => {
         addedFamilies.push(face.family);
+      }),
+      delete: vi.fn((face: { family: string }) => {
+        deletedFamilies.push(face.family);
+        return true;
       }),
     },
   };

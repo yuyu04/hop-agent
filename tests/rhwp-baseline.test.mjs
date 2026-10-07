@@ -1,24 +1,42 @@
 import assert from 'node:assert/strict';
 import { access, readFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-const expectedRhwpVersion = '0.7.13';
-// 임시 포크(yuyu04/rhwp feat/hop-agent-native-ops) 커밋. upstream 기준은
-// b3e16ef2(v0.7.13)이고, edwardkim/rhwp에 PR이 머지되면 원복한다 —
-// 절차는 docs/architecture/UPSTREAM.md '임시 포크' 참조.
-const expectedRhwpCommit = 'f40c12f0f542cbf309898093183706a0379768c2';
+const upstreamLock = JSON.parse(
+  await readFile(join(repoRoot, 'config/rhwp-upstream.json'), 'utf8'),
+);
+const expectedRhwpVersion = upstreamLock.version;
+const expectedRhwpCommit = upstreamLock.commit;
 
 test('HOP keeps the rhwp renderer baseline aligned across submodule, vendored WASM, and native lockfile', async () => {
   const wasmPackage = JSON.parse(
     await readFile(join(repoRoot, 'apps/studio-host/vendor/rhwp-core/package.json'), 'utf8'),
   );
   assert.equal(wasmPackage.version, expectedRhwpVersion);
-  const wasmBytes = await readFile(join(repoRoot, 'apps/studio-host/vendor/rhwp-core/rhwp_bg.wasm'));
-  assert.ok(wasmBytes.length > 0, 'vendored rhwp WASM should be present');
+  const provenance = JSON.parse(
+    await readFile(join(repoRoot, 'apps/studio-host/vendor/rhwp-core/PROVENANCE.json'), 'utf8'),
+  );
+  assert.equal(provenance.version, expectedRhwpVersion);
+  assert.equal(provenance.source, upstreamLock.source);
+  assert.equal(provenance.tag, upstreamLock.tag);
+  assert.equal(provenance.commit, expectedRhwpCommit);
+  assert.equal(provenance.rustToolchain, upstreamLock.rustToolchain);
+  assert.equal(provenance.wasmPackVersion, upstreamLock.wasmPackVersion);
+
+  for (const [fileName, expected] of Object.entries(provenance.artifacts)) {
+    const bytes = await readFile(join(repoRoot, 'apps/studio-host/vendor/rhwp-core', fileName));
+    assert.equal(bytes.length, expected.bytes, `${fileName} byte size should match provenance`);
+    assert.equal(
+      createHash('sha256').update(bytes).digest('hex'),
+      expected.sha256,
+      `${fileName} checksum should match provenance`,
+    );
+  }
 
   const pnpmLock = await readFile(join(repoRoot, 'pnpm-lock.yaml'), 'utf8');
   assert.doesNotMatch(pnpmLock, /@rhwp\/core@/);
@@ -29,46 +47,55 @@ test('HOP keeps the rhwp renderer baseline aligned across submodule, vendored WA
     new RegExp(`name = "rhwp"\\r?\\nversion = "${escapeRegExp(expectedRhwpVersion)}"`),
   );
 
+  const quickLookCargoLock = await readFile(
+    join(repoRoot, 'apps/desktop/quicklook/rust/Cargo.lock'),
+    'utf8',
+  );
+  assert.match(
+    quickLookCargoLock,
+    new RegExp(`name = "rhwp"\\r?\\nversion = "${escapeRegExp(expectedRhwpVersion)}"`),
+  );
+
   const upstreamDoc = await readFile(join(repoRoot, 'docs/architecture/UPSTREAM.md'), 'utf8');
-  assert.match(upstreamDoc, new RegExp(escapeRegExp(expectedRhwpCommit)));
-  assert.match(upstreamDoc, new RegExp(escapeRegExp(`v${expectedRhwpVersion}`)));
+  assert.match(upstreamDoc, /config\/rhwp-upstream\.json/);
 
   const submoduleStatus = git(['submodule', 'status', 'third_party/rhwp']).stdout.trim();
   assert.match(submoduleStatus, new RegExp(`^[ +-]?${expectedRhwpCommit} third_party/rhwp\\b`));
 });
 
-test('HOP preserves upstream lineseg validation and auto-reflow on document load', async () => {
+test('active HOP font catalog only references packaged font assets', async () => {
+  const fontCatalog = await readFile(
+    join(repoRoot, 'apps/studio-host/src/core/font-catalog.ts'),
+    'utf8',
+  );
+  const referencedFonts = Array.from(fontCatalog.matchAll(/['"]\/fonts\/([^'"]+)['"]/g),
+    (match) => match[1]);
+  assert.ok(referencedFonts.length > 0, 'font loader should declare packaged font assets');
+
+  for (const fileName of new Set(referencedFonts)) {
+    await access(join(repoRoot, 'assets/fonts', fileName));
+  }
+});
+
+test('HOP leaves unsafe lineseg repair out of the document-open path', async () => {
   const mainSource = await readFile(join(repoRoot, 'apps/studio-host/src/main.ts'), 'utf8');
-  const overrides = await readFile(join(repoRoot, 'apps/studio-host/hop-overrides.ts'), 'utf8');
-  const validationModal = await readFile(join(repoRoot, 'apps/studio-host/src/ui/validation-modal.ts'), 'utf8');
+  const manifest = JSON.parse(
+    await readFile(join(repoRoot, 'config/rhwp-studio-overrides.json'), 'utf8'),
+  );
 
-  assert.match(mainSource, /showValidationModalIfNeeded/);
-  assert.doesNotMatch(mainSource, /currentSourceFormat/);
-  assert.match(mainSource, /wasm\.getValidationWarnings\(\)/);
-  assert.match(mainSource, /wasm\.reflowLinesegs\(\)/);
-  assert.match(mainSource, /canvasView\?\.loadDocument\(\)/);
-  assert.match(mainSource, /repairValidationWarningsIfNeeded/);
-
-  const validationStart = mainSource.indexOf('async function repairValidationWarningsIfNeeded');
-  assert.notEqual(validationStart, -1, 'validation block should call getValidationWarnings');
-  const validationEnd = mainSource.indexOf('/** 문서 초기화 공통 시퀀스', validationStart);
-  assert.ok(validationEnd > validationStart, 'validation helper should exist before document initialization');
-
-  const validationBlock = mainSource.slice(validationStart, validationEnd);
-  assert.doesNotMatch(validationBlock, /sourceFormat\s*===\s*['"]hwpx['"]/);
-  assert.match(validationBlock, /const report = wasm\.getValidationWarnings\(\)/);
-  assert.match(validationBlock, /catch \(error\)/);
-  assert.match(validationBlock, /return reflowedCount\s*>\s*0/);
-  assert.match(mainSource, /const normalizedDuringLoad = await repairValidationWarningsIfNeeded\(displayName\)/);
-  assert.match(overrides, /['"]ui\/validation-modal['"]/);
-  assert.match(validationModal, /문서 보정 확인/);
-  assert.doesNotMatch(validationModal, /HWPX 비표준 감지/);
+  assert.doesNotMatch(mainSource, /showValidationModalIfNeeded|repairValidationWarningsIfNeeded/);
+  assert.doesNotMatch(mainSource, /getValidationWarnings|reflowLinesegs/);
+  assert.ok(!manifest.overrides.some((entry) => entry.id === 'ui/validation-modal'));
+  await assert.rejects(
+    access(join(repoRoot, 'apps/studio-host/src/ui/validation-modal.ts')),
+    { code: 'ENOENT' },
+  );
 });
 
 test('HOP keeps unsaved-document guards on local file and new-document replacement paths', async () => {
   const mainSource = await readFile(join(repoRoot, 'apps/studio-host/src/main.ts'), 'utf8');
 
-  assert.match(mainSource, /import \{ confirmSaveBeforeReplacingDocument \} from ['"]@upstream\/command\/commands\/file['"]/);
+  assert.match(mainSource, /confirmSaveBeforeReplacingDocument[\s\S]*from ['"]@\/upstream\/commands['"]/);
   assert.match(mainSource, /async function canReplaceCurrentDocument\([\s\S]*confirmSaveBeforeReplacingDocument\(commandServices\)/);
   assert.match(mainSource, /const skipUnsavedGuard = input\.dataset\.skipUnsavedGuard === ['"]true['"]/);
   assert.match(mainSource, /await loadFile\(file, \{ skipUnsavedGuard \}\)/);
@@ -77,10 +104,13 @@ test('HOP keeps unsaved-document guards on local file and new-document replaceme
 });
 
 test('HOP defers editor engine and table command behavior to upstream rhwp', async () => {
-  const overrides = await readFile(join(repoRoot, 'apps/studio-host/hop-overrides.ts'), 'utf8');
+  const manifest = JSON.parse(
+    await readFile(join(repoRoot, 'config/rhwp-studio-overrides.json'), 'utf8'),
+  );
+  const overrideIds = manifest.overrides.map((entry) => entry.id);
 
-  assert.doesNotMatch(overrides, /['"]engine\//);
-  assert.doesNotMatch(overrides, /['"]command\/commands\/table['"]/);
+  assert.ok(!overrideIds.some((id) => id.startsWith('engine/')));
+  assert.ok(!overrideIds.includes('command/commands/table'));
 
   for (const path of [
     'apps/studio-host/src/engine/input-handler.ts',
@@ -103,6 +133,40 @@ test('HOP product info keeps the upstream rhwp version and adds HOP version sepa
   assert.match(aboutDialog, /HOP \$\{__HOP_VERSION__\}/);
 });
 
+test('desktop release tests and platform builds use the upstream Rust toolchain', async () => {
+  const releaseWorkflow = await readFile(
+    join(repoRoot, '.github/workflows/hop-desktop.yml'),
+    'utf8',
+  );
+  const contractReads = releaseWorkflow.match(
+    /require\(['"]\.\/config\/rhwp-upstream\.json['"]\)\.rustToolchain/g,
+  ) ?? [];
+
+  assert.equal(contractReads.length, 2, 'release test and build jobs should read the contract');
+  assert.match(
+    releaseWorkflow,
+    /rustup toolchain install "\$toolchain" --profile minimal --target "\$\{\{ matrix\.target \}\}"/,
+  );
+  assert.equal(
+    releaseWorkflow.match(/RUSTUP_TOOLCHAIN=\$toolchain/g)?.length,
+    2,
+    'release test and build jobs should activate the pinned toolchain',
+  );
+});
+
+test('CI installs clippy for the upstream Rust toolchain', async () => {
+  const ciWorkflow = await readFile(
+    join(repoRoot, '.github/workflows/ci.yml'),
+    'utf8',
+  );
+
+  assert.match(
+    ciWorkflow,
+    /rustup toolchain install "\$toolchain" --profile minimal --component clippy/,
+  );
+  assert.match(ciWorkflow, /RUSTUP_TOOLCHAIN=\$toolchain/);
+});
+
 test('desktop release checksum manifest does not hash itself', async () => {
   const releaseWorkflow = await readFile(
     join(repoRoot, '.github/workflows/hop-desktop.yml'),
@@ -113,6 +177,16 @@ test('desktop release checksum manifest does not hash itself', async () => {
     releaseWorkflow,
     /find \. -type f ! -name 'SHA256SUMS\.txt' -print0/,
   );
+});
+
+test('desktop release artifact presence check is pipefail-safe', async () => {
+  const releaseWorkflow = await readFile(
+    join(repoRoot, '.github/workflows/hop-desktop.yml'),
+    'utf8',
+  );
+
+  assert.match(releaseWorkflow, /find artifacts -type f -print -quit/);
+  assert.doesNotMatch(releaseWorkflow, /find artifacts -type f \| grep -q/);
 });
 
 test('HOP keeps PDF export menu-only without a stale Ctrl+E label', async () => {

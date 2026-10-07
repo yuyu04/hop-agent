@@ -1,4 +1,4 @@
-import { AboutDialog as UpstreamAboutDialog } from '@upstream/ui/about-dialog';
+import { AboutDialog as UpstreamAboutDialog } from '@/upstream/ui';
 
 export class AboutDialog extends UpstreamAboutDialog {
   protected override createBody(): HTMLElement {

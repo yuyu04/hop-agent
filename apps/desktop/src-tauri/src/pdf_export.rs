@@ -1,10 +1,7 @@
-use pdf_writer::{Finish, Pdf, Ref};
-use rhwp::DocumentCore;
-use std::collections::HashMap;
-use std::path::Path;
+use hop_rhwp_adapter::{searchable_pdf_from_svg_pages, DocumentCore};
+use std::path::{Path, PathBuf};
 
 use crate::commands::PageRange;
-use crate::font_catalog;
 use crate::pdf_font_fallbacks::add_font_fallbacks;
 use crate::state::atomic_write;
 
@@ -12,6 +9,7 @@ pub fn export_core_to_pdf(
     core: &DocumentCore,
     target_path: &Path,
     page_range: Option<PageRange>,
+    font_dirs: Vec<PathBuf>,
     mut on_progress: impl FnMut(&str, u32, u32, String),
 ) -> Result<u32, String> {
     ensure_pdf_path(target_path)?;
@@ -26,7 +24,7 @@ pub fn export_core_to_pdf(
         let svg = core
             .render_page_svg_native(*page)
             .map_err(|e| format!("페이지 {} 렌더링 실패: {}", page + 1, e))?;
-        svg_pages.push(svg);
+        svg_pages.push(add_font_fallbacks(&svg));
         on_progress(
             "render",
             idx as u32 + 1,
@@ -35,7 +33,7 @@ pub fn export_core_to_pdf(
         );
     }
 
-    let pdf_bytes = svgs_to_pdf(&svg_pages)?;
+    let pdf_bytes = searchable_pdf_from_svg_pages(&svg_pages, font_dirs)?;
     atomic_write(target_path, &pdf_bytes)?;
     on_progress("write", total, total, "PDF 파일을 저장했습니다".to_string());
 
@@ -72,135 +70,6 @@ fn resolve_page_range(page_range: Option<PageRange>, page_count: u32) -> Result<
         ));
     }
     Ok((start..=end).collect())
-}
-
-fn conversion_options() -> svg2pdf::ConversionOptions {
-    svg2pdf::ConversionOptions {
-        embed_text: false,
-        ..svg2pdf::ConversionOptions::default()
-    }
-}
-
-fn pdf_usvg_options() -> usvg::Options<'static> {
-    usvg::Options {
-        fontdb: std::sync::Arc::new(font_catalog::create_pdf_font_database()),
-        ..Default::default()
-    }
-}
-
-fn parse_svg_tree_for_pdf(
-    svg_content: &str,
-    options: &usvg::Options<'static>,
-) -> Result<usvg::Tree, String> {
-    let svg_with_fallback = add_font_fallbacks(svg_content);
-    usvg::Tree::from_str(&svg_with_fallback, options).map_err(|e| format!("SVG 파싱 실패: {}", e))
-}
-
-fn svg_to_pdf(svg_content: &str) -> Result<Vec<u8>, String> {
-    let options = pdf_usvg_options();
-    let tree = parse_svg_tree_for_pdf(svg_content, &options)?;
-    svg2pdf::to_pdf(&tree, conversion_options(), svg2pdf::PageOptions::default())
-        .map_err(|e| format!("PDF 변환 실패: {:?}", e))
-}
-
-fn svgs_to_pdf(svg_pages: &[String]) -> Result<Vec<u8>, String> {
-    if svg_pages.is_empty() {
-        return Err("페이지가 없습니다".to_string());
-    }
-    if svg_pages.len() == 1 {
-        return svg_to_pdf(&svg_pages[0]);
-    }
-
-    let options = pdf_usvg_options();
-
-    let mut alloc = Ref::new(1);
-    let catalog_ref = alloc.bump();
-    let page_tree_ref = alloc.bump();
-
-    struct PageData {
-        chunk: pdf_writer::Chunk,
-        svg_ref: Ref,
-        width: f32,
-        height: f32,
-    }
-
-    let mut page_datas: Vec<PageData> = Vec::new();
-
-    for svg in svg_pages {
-        let tree = parse_svg_tree_for_pdf(svg, &options)?;
-
-        let (chunk, svg_ref) = svg2pdf::to_chunk(&tree, conversion_options())
-            .map_err(|e| format!("SVG->chunk 변환 실패: {:?}", e))?;
-
-        let dpi_ratio = 72.0 / 96.0;
-        let w = tree.size().width() * dpi_ratio;
-        let h = tree.size().height() * dpi_ratio;
-
-        page_datas.push(PageData {
-            chunk,
-            svg_ref,
-            width: w,
-            height: h,
-        });
-    }
-
-    let mut page_refs: Vec<Ref> = Vec::new();
-    let mut renumbered_chunks: Vec<pdf_writer::Chunk> = Vec::new();
-    let mut svg_refs_remapped: Vec<Ref> = Vec::new();
-
-    for pd in &page_datas {
-        let page_ref = alloc.bump();
-        page_refs.push(page_ref);
-
-        let mut map = HashMap::new();
-        let renumbered = pd
-            .chunk
-            .renumber(|old| *map.entry(old).or_insert_with(|| alloc.bump()));
-
-        let remapped_svg_ref = map.get(&pd.svg_ref).copied().unwrap_or(pd.svg_ref);
-        svg_refs_remapped.push(remapped_svg_ref);
-        renumbered_chunks.push(renumbered);
-    }
-
-    let mut pdf = Pdf::new();
-    pdf.catalog(catalog_ref).pages(page_tree_ref);
-    pdf.pages(page_tree_ref)
-        .count(page_refs.len() as i32)
-        .kids(page_refs.iter().copied());
-
-    let svg_name = pdf_writer::Name(b"S1");
-
-    for (i, pd) in page_datas.iter().enumerate() {
-        let page_ref = page_refs[i];
-        let content_ref = alloc.bump();
-        let svg_ref = svg_refs_remapped[i];
-
-        let mut page = pdf.page(page_ref);
-        page.media_box(pdf_writer::Rect::new(0.0, 0.0, pd.width, pd.height));
-        page.parent(page_tree_ref);
-        page.contents(content_ref);
-
-        let mut resources = page.resources();
-        resources.x_objects().pair(svg_name, svg_ref);
-        resources.finish();
-        page.finish();
-
-        let mut content = pdf_writer::Content::new();
-        content.transform([pd.width, 0.0, 0.0, pd.height, 0.0, 0.0]);
-        content.x_object(svg_name);
-
-        pdf.stream(content_ref, &content.finish());
-    }
-
-    for chunk in &renumbered_chunks {
-        pdf.extend(chunk);
-    }
-
-    let info_ref = alloc.bump();
-    pdf.document_info(info_ref)
-        .producer(pdf_writer::TextStr("hop-desktop"));
-
-    Ok(pdf.finish())
 }
 
 #[cfg(test)]
@@ -280,7 +149,17 @@ mod tests {
     }
 
     #[test]
-    fn svgs_to_pdf_rejects_empty_pages() {
-        assert_eq!(svgs_to_pdf(&[]).unwrap_err(), "페이지가 없습니다");
+    fn searchable_pdf_contains_a_unicode_text_map() {
+        let font_dir =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../third_party/rhwp/ttfs/opensource");
+        let svg = r#"<svg xmlns="http://www.w3.org/2000/svg" width="320" height="120">
+          <text x="16" y="64" font-family="Noto Sans KR" font-size="24">검색 가능한 PDF</text>
+        </svg>"#;
+
+        let pdf = searchable_pdf_from_svg_pages(&[svg.to_string()], vec![font_dir]).unwrap();
+
+        assert!(pdf
+            .windows(b"/ToUnicode".len())
+            .any(|bytes| bytes == b"/ToUnicode"));
     }
 }

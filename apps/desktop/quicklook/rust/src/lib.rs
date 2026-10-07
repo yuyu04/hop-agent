@@ -3,8 +3,7 @@ mod pdf;
 mod tests;
 
 #[cfg(feature = "native-skia")]
-use rhwp::document_core::queries::rendering::PngExportOptions;
-use rhwp::DocumentCore;
+use hop_rhwp_adapter::{extract_thumbnail_only, DocumentCore, PngExportOptions};
 use std::ffi::c_void;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::ptr;
@@ -133,7 +132,7 @@ pub extern "C" fn hop_ql_extract_embedded_thumbnail(
 ) -> HopQuickLookThumbnailResult {
     ffi_thumbnail_result(|| {
         let bytes = borrowed_bytes(data, len)?;
-        let Some(thumbnail) = rhwp::parser::extract_thumbnail_only(bytes) else {
+        let Some(thumbnail) = extract_thumbnail_only(bytes) else {
             return Err(HOP_QL_NO_THUMBNAIL);
         };
         if thumbnail.data.is_empty() {

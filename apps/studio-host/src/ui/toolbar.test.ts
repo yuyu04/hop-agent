@@ -8,7 +8,7 @@ vi.mock('@/core/font-loader', () => ({
   loadWebFonts: loadWebFontsMock,
 }));
 
-vi.mock('@/core/user-settings', () => ({
+vi.mock('@/upstream/core', () => ({
   userSettings: {
     getAllFontSets: () => [],
   },

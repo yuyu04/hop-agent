@@ -1,5 +1,5 @@
 use crate::pending_open::PendingOpenPaths;
-use rhwp::DocumentCore;
+use hop_rhwp_adapter::{split_paragraph_for_editing, DocumentCore};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -401,12 +401,12 @@ impl DocumentSessionManager {
                 let sec = number_arg(&args, "sec")?;
                 let para = number_arg(&args, "para")?;
                 let char_offset = number_arg(&args, "charOffset")?;
-                Some(parse_json_string(
-                    session
-                        .ensure_core_loaded()?
-                        .split_paragraph_native(sec as usize, para as usize, char_offset as usize)
-                        .map_err(|e| e.to_string())?,
-                )?)
+                Some(parse_json_string(split_paragraph_for_editing(
+                    session.ensure_core_loaded()?,
+                    sec as usize,
+                    para as usize,
+                    char_offset as usize,
+                )?)?)
             }
             "mergeParagraph" => {
                 let sec = number_arg(&args, "sec")?;

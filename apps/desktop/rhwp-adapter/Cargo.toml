@@ -1,0 +1,12 @@
+[package]
+name = "hop-rhwp-adapter"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+rhwp = { path = "../../../third_party/rhwp" }
+
+[features]
+default = []
+native-skia = ["rhwp/native-skia"]
