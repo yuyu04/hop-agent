@@ -442,6 +442,67 @@ body.hop-ai-open #studio-root {
 .hop-ai-stream:empty {
   display: none;
 }
+/* 긴 문서 분할 작성 — 절 목록과 진행 상태(F-866a1c71). */
+.hop-ai-progress:empty {
+  display: none;
+}
+.hop-ai-progress {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--hop-ai-line);
+  border-radius: var(--hop-ai-r-md);
+  background: var(--hop-ai-surface);
+  overflow: hidden;
+}
+.hop-ai-progress-head {
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--hop-ai-line);
+  font-size: 12.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.hop-ai-progress-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  padding: 3px 10px;
+  font-size: 12.5px;
+}
+.hop-ai-progress-item + .hop-ai-progress-item {
+  border-top: 1px solid var(--hop-ai-line);
+}
+.hop-ai-progress-heading {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--hop-ai-ink-2);
+}
+.hop-ai-progress-state {
+  flex: none;
+  font-size: 11.5px;
+  color: var(--hop-ai-hint);
+}
+.hop-ai-progress-run .hop-ai-progress-heading {
+  color: var(--hop-ai-ink);
+  font-weight: 600;
+}
+.hop-ai-progress-run .hop-ai-progress-state {
+  color: var(--hop-ai-ink);
+}
+.hop-ai-progress-done .hop-ai-progress-state {
+  color: var(--hop-ai-add-ink);
+}
+.hop-ai-progress-skip .hop-ai-progress-heading {
+  color: var(--hop-ai-muted);
+  text-decoration: line-through;
+}
+.hop-ai-progress-skip .hop-ai-progress-state {
+  color: var(--hop-ai-del-ink);
+}
+
 /* 따른 글쓰기 지침 — '지침: 공문 · AI 선택'. 누르면 '/' 메뉴에서 바꾼다. */
 .hop-ai-skill:empty {
   display: none;

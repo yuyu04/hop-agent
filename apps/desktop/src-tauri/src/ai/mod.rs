@@ -220,6 +220,8 @@ pub fn ai_request_edit(
     // 리스트만 반환하도록 전용 시스템 프롬프트·스키마를 쓰고, 응답을 form-fill로 검증한다.
     // labels는 소스 양식 표의 필드 라벨(모델이 내용을 라벨로 키잉하게).
     form_fill_labels: Option<Vec<String>>,
+    // true면 긴 문서 분할 작성의 '개요' 요청(F-866a1c71): 제목·절 목록만 받는다.
+    outline: Option<bool>,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
     // 민감 문서는 외부 provider 전송을 차단한다(스펙 6장 — 공문서 보호).
@@ -259,13 +261,14 @@ pub fn ai_request_edit(
 
     // 양식 이어쓰기 모드면 전용 프롬프트·스키마를 쓰고 응답을 form-fill로 검증한다.
     // 그 외(일반 편집/질문/교정)는 기존 Action Script 경로 그대로.
-    let (sys_prompt, out_schema, mode) = match &form_fill_labels {
-        Some(labels) => (
+    let (sys_prompt, out_schema, mode) = match (&form_fill_labels, outline.unwrap_or(false)) {
+        (Some(labels), _) => (
             form_fill_system_prompt(labels),
             schema::form_fill_schema(),
             RequestMode::FormFill,
         ),
-        None => (system_prompt(), schema::action_script_schema(), RequestMode::Edit),
+        (None, true) => (outline_system_prompt(), schema::outline_schema(), RequestMode::Outline),
+        (None, false) => (system_prompt(), schema::action_script_schema(), RequestMode::Edit),
     };
 
     let req = LlmRequest {
@@ -535,6 +538,8 @@ enum RequestMode {
     Edit,
     /// 양식 이어쓰기(F-ae778890) — 내용 전용 form-fill JSON으로 파싱(표/compose 없음).
     FormFill,
+    /// 긴 문서 분할 작성의 개요(F-866a1c71) — 제목·절 목록 JSON으로 파싱(본문 없음).
+    Outline,
 }
 
 async fn run_edit_request(
@@ -564,6 +569,7 @@ async fn run_edit_request(
         Ok(raw) => match mode {
             RequestMode::Edit => emit_validated(&app, &request_id, &raw, &whitelist),
             RequestMode::FormFill => emit_form_fill(&app, &request_id, &raw),
+            RequestMode::Outline => emit_outline(&app, &request_id, &raw),
         },
         Err(error) => emit_failed(&app, &request_id, error.to_string(), error.code()),
     }
@@ -663,6 +669,24 @@ fn emit_form_fill(app: &AppHandle, request_id: &str, raw: &str) {
     }
 }
 
+/// 개요 응답을 검증해 `hop-ai-edit-ready`로 보낸다(F-866a1c71). 화이트리스트 검증이 없다 —
+/// 개요에는 대상 ID가 없고, 본문은 절별 요청이 일반 편집 경로(화이트리스트 검증)로 쓴다.
+fn emit_outline(app: &AppHandle, request_id: &str, raw: &str) {
+    match schema::parse_outline_response(raw) {
+        Ok(outline) => {
+            let canonical = serde_json::to_string(&outline).unwrap_or_else(|_| raw.to_string());
+            let _ = app.emit(
+                "hop-ai-edit-ready",
+                AiEditReady {
+                    request_id: request_id.to_string(),
+                    action_script_json: canonical,
+                },
+            );
+        }
+        Err(message) => emit_failed(app, request_id, message, "PARSE_ERROR"),
+    }
+}
+
 fn emit_failed(app: &AppHandle, request_id: &str, reason: String, code: &str) {
     let _ = app.emit(
         "hop-ai-edit-failed",
@@ -686,6 +710,21 @@ fn select_provider(
     // `base_url`은 openai-compat(커스텀 OpenAI 호환 엔드포인트)에서만 쓰인다.
     let api_key = secrets::get_api_key(provider_id)?;
     adapters::build_provider(provider_id, model_id, api_key, base_url)
+}
+
+/// 긴 문서 분할 작성의 개요 요청 시스템 프롬프트(F-866a1c71) — 본문 없이 제목·절 목록만.
+fn outline_system_prompt() -> String {
+    "당신은 한글(HWP) 문서 기획자입니다. 사용자의 작성 요청을 보고 문서의 제목과 절(장) \
+     목차만 설계하세요 — 본문은 쓰지 않습니다(본문은 절마다 따로 요청합니다). 반드시 제공된 \
+     JSON Schema를 만족하는 JSON만 출력하세요. sections는 문서 순서대로 4~12개이며, 문서 \
+     유형의 표준 구성을 따르세요. 요청 앞에 '[작성 지침 목록]'이 있으면 문서 종류에 맞는 \
+     지침 하나를 의미로 골라 그 구성을 따르고 skill에 그 이름(### 제목 그대로)을 적으세요. \
+     heading은 번호를 포함한 절 제목('1. 사업 개요'), brief는 그 절에 쓸 핵심 내용 1~2문장, \
+     target_chars는 그 절 본문의 목표 글자 수입니다 — 사용자가 'N쪽'을 요청했으면 모든 절의 \
+     합이 N×1,300자 안팎이 되게(표가 있는 절은 표가 차지하는 만큼 줄여서), 없으면 문서 \
+     유형에 맞게 정하세요. table은 그 절에 표(일정·예산·지표·인력 등)가 꼭 필요할 때만 \
+     true입니다. title은 문서 제목, message는 개요를 한 문장으로 요약하세요."
+        .to_string()
 }
 
 fn system_prompt() -> String {
@@ -1460,5 +1499,45 @@ mod tests {
         assert_eq!(script.skill, None);
         let json = serde_json::to_string(&script).unwrap();
         assert!(!json.contains("skill"), "{json}");
+    }
+
+    // ── F-866a1c71 긴 문서 분할 작성 — 개요 요청 시스템 프롬프트(AC-a622a229) ──────
+
+    #[test]
+    fn f_866a1c71_ac_a622a229_outline_prompt_asks_for_title_and_sections_only() {
+        let prompt = outline_system_prompt();
+        assert!(prompt.contains("제목과 절(장)"), "{prompt}");
+        assert!(prompt.contains("본문은 쓰지 않습니다"), "본문 없이 개요만: {prompt}");
+        // 개요 단계는 Action Script(편집)를 내지 않는다 — 편집 프롬프트와 섞이지 않았다.
+        assert!(!prompt.contains("Action Script"), "{prompt}");
+        assert!(prompt.contains("JSON Schema"), "{prompt}");
+    }
+
+    #[test]
+    fn f_866a1c71_ac_a622a229_outline_prompt_asks_for_4_to_12_sections() {
+        let prompt = outline_system_prompt();
+        assert!(prompt.contains("4~12개"), "{prompt}");
+    }
+
+    #[test]
+    fn f_866a1c71_ac_a622a229_outline_prompt_picks_a_skill_from_the_catalog() {
+        let prompt = outline_system_prompt();
+        assert!(prompt.contains("'[작성 지침 목록]'"), "{prompt}");
+        assert!(prompt.contains("skill에 그 이름"), "고른 지침 이름을 skill에 적게 한다: {prompt}");
+    }
+
+    #[test]
+    fn f_866a1c71_ac_a622a229_outline_prompt_budgets_n_pages_times_1300_chars() {
+        let prompt = outline_system_prompt();
+        assert!(prompt.contains("'N쪽'"), "{prompt}");
+        assert!(prompt.contains("N×1,300자"), "{prompt}");
+        assert!(prompt.contains("target_chars"), "{prompt}");
+    }
+
+    #[test]
+    fn f_866a1c71_ac_a622a229_outline_prompt_asks_for_tables_only_when_needed() {
+        let prompt = outline_system_prompt();
+        assert!(prompt.contains("table은"), "{prompt}");
+        assert!(prompt.contains("꼭 필요할 때만 true"), "{prompt}");
     }
 }

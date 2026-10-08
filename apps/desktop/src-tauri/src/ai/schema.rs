@@ -714,6 +714,105 @@ pub fn parse_form_fill_response(raw: &str) -> Result<FormFillResponse, String> {
     ))
 }
 
+/// 긴 문서 분할 작성(F-866a1c71)의 개요 — 제목과 절 목록만(본문 없음).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DocOutline {
+    pub title: String,
+    /// 요청 앞 '작성 지침 목록'에서 고른 지침 이름(없으면 생략).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skill: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    pub sections: Vec<OutlineSection>,
+}
+
+/// 개요의 절 하나.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OutlineSection {
+    /// 번호를 포함한 절 제목(예: "1. 사업 개요").
+    pub heading: String,
+    /// 그 절에 쓸 핵심 내용(1~2문장).
+    #[serde(default)]
+    pub brief: String,
+    /// 그 절 본문의 목표 글자 수.
+    #[serde(default = "default_section_chars")]
+    pub target_chars: u32,
+    /// 표가 꼭 필요한 절인가.
+    #[serde(default)]
+    pub table: bool,
+}
+
+fn default_section_chars() -> u32 {
+    1_300
+}
+
+/// 개요 절 수 상한 — 더 많으면 절 하나가 너무 얇거나 요청이 과하다.
+const MAX_OUTLINE_SECTIONS: usize = 20;
+/// 절 하나의 목표 글자 수 범위(한 번의 응답으로 안전하게 쓸 수 있는 분량).
+const SECTION_CHARS_RANGE: (u32, u32) = (200, 6_000);
+
+/// 개요 응답을 파싱·검증한다. 절이 0개이거나 상한을 넘으면 오류, 목표 글자 수는 범위로 맞춘다.
+pub fn parse_outline_response(raw: &str) -> Result<DocOutline, String> {
+    let cleaned = strip_code_fences(raw).trim();
+    let mut outline: DocOutline = serde_json::from_str(cleaned)
+        .or_else(|_| {
+            extract_braced_object(cleaned)
+                .ok_or_else(|| "개요 JSON을 찾지 못했습니다.".to_string())
+                .and_then(|b| serde_json::from_str(b).map_err(|e| e.to_string()))
+        })
+        .map_err(|e| format!("개요 파싱 실패: {} (받은 응답 일부: {})", e, preview(cleaned, 160)))?;
+    outline.title = outline.title.trim().to_string();
+    outline.sections.retain(|s| !s.heading.trim().is_empty());
+    if outline.sections.is_empty() {
+        return Err("개요에 절이 없습니다.".to_string());
+    }
+    if outline.sections.len() > MAX_OUTLINE_SECTIONS {
+        return Err(format!(
+            "개요의 절이 너무 많습니다({}개 — 최대 {}개).",
+            outline.sections.len(),
+            MAX_OUTLINE_SECTIONS
+        ));
+    }
+    for section in &mut outline.sections {
+        section.heading = section.heading.trim().to_string();
+        section.target_chars = section
+            .target_chars
+            .clamp(SECTION_CHARS_RANGE.0, SECTION_CHARS_RANGE.1);
+    }
+    Ok(outline)
+}
+
+/// 개요 요청의 출력 JSON Schema(F-866a1c71).
+pub fn outline_schema() -> Value {
+    json!({
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+            "title": { "type": "string", "description": "문서 제목." },
+            "skill": {
+                "type": "string",
+                "description": "요청 앞 '작성 지침 목록'에서 골라 따른 지침의 이름(### 제목 그대로). 없으면 빈 문자열."
+            },
+            "message": { "type": "string", "description": "개요를 한 문장으로 요약." },
+            "sections": {
+                "type": "array",
+                "description": "절(장) 목록, 문서 순서대로 4~12개.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "heading": { "type": "string", "description": "번호를 포함한 절 제목(예: 1. 사업 개요)." },
+                        "brief": { "type": "string", "description": "그 절에 쓸 핵심 내용 1~2문장." },
+                        "target_chars": { "type": "integer", "description": "그 절 본문의 목표 글자 수(200~6000)." },
+                        "table": { "type": "boolean", "description": "그 절에 표(일정·예산·지표 등)가 꼭 필요한가." }
+                    },
+                    "required": ["heading", "brief", "target_chars", "table"]
+                }
+            }
+        },
+        "required": ["title", "sections"]
+    })
+}
+
 /// provider에 주입할 양식 이어쓰기 출력 JSON Schema(F-ae778890). 표/compose 구조를
 /// 일절 노출하지 않으므로 AI가 표를 그릴 여지가 없다(AC-0cd01fc1).
 pub fn form_fill_schema() -> Value {
@@ -1986,5 +2085,181 @@ mod tests {
         let script = salvage(&partial);
         assert_eq!(script.edits.len(), 1);
         assert_eq!(script.skill, None);
+    }
+
+    // ── F-866a1c71 긴 문서 분할 작성 — 개요 응답 검증(AC-a622a229) ──────────────
+
+    /// 절 n개짜리 개요 JSON(제목·요점·목표 글자 수·표 여부 모두 채움).
+    fn outline_json(n: usize) -> String {
+        let sections: Vec<String> = (1..=n)
+            .map(|i| {
+                format!(
+                    r#"{{"heading":"{i}. 절 {i}","brief":"요점 {i}","target_chars":1500,"table":false}}"#
+                )
+            })
+            .collect();
+        format!(r#"{{"title":"사업계획서","sections":[{}]}}"#, sections.join(","))
+    }
+
+    #[test]
+    fn f_866a1c71_ac_a622a229_parses_a_full_outline() {
+        let raw = r#"{"title":"  2027 신규 사업계획서 ","skill":"사업계획서","message":"5개 절로 구성",
+            "sections":[
+                {"heading":"1. 사업 개요","brief":"사업 목적과 배경","target_chars":1200,"table":false},
+                {"heading":"2. 추진 일정","brief":"분기별 일정","target_chars":800,"table":true}
+            ]}"#;
+        let outline = parse_outline_response(raw).expect("유효한 개요");
+        assert_eq!(outline.title, "2027 신규 사업계획서", "제목 앞뒤 공백은 잘라낸다");
+        assert_eq!(outline.skill.as_deref(), Some("사업계획서"));
+        assert_eq!(outline.message.as_deref(), Some("5개 절로 구성"));
+        assert_eq!(
+            outline.sections,
+            vec![
+                OutlineSection {
+                    heading: "1. 사업 개요".into(),
+                    brief: "사업 목적과 배경".into(),
+                    target_chars: 1200,
+                    table: false,
+                },
+                OutlineSection {
+                    heading: "2. 추진 일정".into(),
+                    brief: "분기별 일정".into(),
+                    target_chars: 800,
+                    table: true,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn f_866a1c71_ac_a622a229_strips_code_fences() {
+        let raw = format!("```json\n{}\n```", outline_json(4));
+        let outline = parse_outline_response(&raw).expect("코드펜스로 감싼 개요도 읽는다");
+        assert_eq!(outline.title, "사업계획서");
+        assert_eq!(outline.sections.len(), 4);
+        assert_eq!(outline.sections[3].heading, "4. 절 4");
+    }
+
+    #[test]
+    fn f_866a1c71_ac_a622a229_extracts_json_from_surrounding_prose() {
+        let raw = format!("다음과 같이 개요를 설계했습니다.\n{}\n이상입니다.", outline_json(5));
+        let outline = parse_outline_response(&raw).expect("설명 문장 사이의 JSON을 찾아 읽는다");
+        assert_eq!(outline.sections.len(), 5);
+        assert_eq!(outline.sections[0].brief, "요점 1");
+    }
+
+    #[test]
+    fn f_866a1c71_ac_a622a229_trims_headings_and_drops_empty_ones() {
+        let raw = r#"{"title":"보고서","sections":[
+            {"heading":"  1. 서론  ","brief":"a","target_chars":1000,"table":false},
+            {"heading":"   ","brief":"빈 제목","target_chars":1000,"table":false},
+            {"heading":"","brief":"빈 제목 2","target_chars":1000,"table":false},
+            {"heading":"2. 본론","brief":"b","target_chars":1000,"table":false}
+        ]}"#;
+        let outline = parse_outline_response(raw).unwrap();
+        let headings: Vec<&str> = outline.sections.iter().map(|s| s.heading.as_str()).collect();
+        assert_eq!(headings, vec!["1. 서론", "2. 본론"]);
+        assert_eq!(outline.sections[1].brief, "b", "남은 절의 순서·내용은 그대로");
+    }
+
+    #[test]
+    fn f_866a1c71_ac_a622a229_zero_sections_is_an_error() {
+        let empty = parse_outline_response(r#"{"title":"보고서","sections":[]}"#);
+        assert!(empty.is_err(), "절 0개는 오류: {empty:?}");
+        assert!(empty.unwrap_err().contains("절이 없습니다"));
+        // 제목이 모두 비어 걸러지고 나면 0개 — 역시 오류다.
+        let blank = parse_outline_response(
+            r#"{"title":"보고서","sections":[{"heading":"  ","brief":"x","target_chars":500,"table":false}]}"#,
+        );
+        assert!(blank.is_err(), "빈 제목만 있으면 오류: {blank:?}");
+    }
+
+    #[test]
+    fn f_866a1c71_ac_a622a229_more_than_twenty_sections_is_an_error() {
+        let twenty = parse_outline_response(&outline_json(20)).expect("20개는 상한 이내");
+        assert_eq!(twenty.sections.len(), 20);
+        let over = parse_outline_response(&outline_json(21));
+        let err = over.expect_err("21개는 오류");
+        assert!(err.contains("21개"), "몇 개였는지 알린다: {err}");
+        assert!(err.contains("20개"), "상한을 알린다: {err}");
+    }
+
+    #[test]
+    fn f_866a1c71_ac_a622a229_clamps_target_chars_to_200_6000() {
+        let raw = r#"{"title":"t","sections":[
+            {"heading":"1","brief":"","target_chars":50,"table":false},
+            {"heading":"2","brief":"","target_chars":199,"table":false},
+            {"heading":"3","brief":"","target_chars":200,"table":false},
+            {"heading":"4","brief":"","target_chars":1800,"table":false},
+            {"heading":"5","brief":"","target_chars":6000,"table":false},
+            {"heading":"6","brief":"","target_chars":6001,"table":false},
+            {"heading":"7","brief":"","target_chars":90000,"table":false}
+        ]}"#;
+        let outline = parse_outline_response(raw).unwrap();
+        let chars: Vec<u32> = outline.sections.iter().map(|s| s.target_chars).collect();
+        assert_eq!(chars, vec![200, 200, 200, 1800, 6000, 6000, 6000]);
+    }
+
+    #[test]
+    fn f_866a1c71_ac_a622a229_missing_fields_get_defaults() {
+        let raw = r#"{"title":"t","sections":[{"heading":"1. 개요"}]}"#;
+        let outline = parse_outline_response(raw).unwrap();
+        assert_eq!(
+            outline.sections,
+            vec![OutlineSection {
+                heading: "1. 개요".into(),
+                brief: String::new(),
+                target_chars: 1300,
+                table: false,
+            }]
+        );
+        assert_eq!(outline.skill, None);
+        assert_eq!(outline.message, None);
+    }
+
+    #[test]
+    fn f_866a1c71_ac_a622a229_garbage_is_an_error() {
+        let err = parse_outline_response("개요를 만들 수 없습니다.").expect_err("JSON 없음");
+        assert!(err.contains("개요"), "{err}");
+        assert!(parse_outline_response("").is_err());
+        // sections 키가 없으면(필수) 오류다.
+        assert!(parse_outline_response(r#"{"title":"t"}"#).is_err());
+    }
+
+    #[test]
+    fn f_866a1c71_ac_a622a229_canonical_json_omits_absent_skill_and_keeps_normalized_values() {
+        // emit_outline이 프론트로 보내는 정규화 JSON — 앞뒤 공백·범위 보정이 반영되고,
+        // 지침을 고르지 않았으면 skill 키가 없다.
+        let raw = r#"{"title":" t ","sections":[{"heading":" 1. 개요 ","brief":"b","target_chars":10,"table":true}]}"#;
+        let outline = parse_outline_response(raw).unwrap();
+        let json: Value = serde_json::from_str(&serde_json::to_string(&outline).unwrap()).unwrap();
+        assert_eq!(
+            json,
+            json!({
+                "title": "t",
+                "sections": [{ "heading": "1. 개요", "brief": "b", "target_chars": 200, "table": true }]
+            })
+        );
+    }
+
+    #[test]
+    fn f_866a1c71_ac_a622a229_outline_schema_requires_title_sections_and_section_fields() {
+        let schema = outline_schema();
+        assert_eq!(schema["type"], "object");
+        assert_eq!(schema["required"], json!(["title", "sections"]));
+        let props = &schema["properties"];
+        assert_eq!(props["title"]["type"], "string");
+        assert_eq!(props["skill"]["type"], "string");
+        assert_eq!(props["message"]["type"], "string");
+        assert_eq!(props["sections"]["type"], "array");
+        let item = &props["sections"]["items"];
+        assert_eq!(item["type"], "object");
+        assert_eq!(item["required"], json!(["heading", "brief", "target_chars", "table"]));
+        assert_eq!(item["properties"]["heading"]["type"], "string");
+        assert_eq!(item["properties"]["brief"]["type"], "string");
+        assert_eq!(item["properties"]["target_chars"]["type"], "integer");
+        assert_eq!(item["properties"]["table"]["type"], "boolean");
+        // 개요 스키마는 본문 편집(edits)을 노출하지 않는다 — 개요 단계는 본문을 쓰지 않는다.
+        assert!(props.get("edits").is_none());
     }
 }

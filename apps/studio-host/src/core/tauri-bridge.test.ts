@@ -748,6 +748,37 @@ describe('TauriBridge AI commands', () => {
     });
   });
 
+  it('AC-a622a229: aiRequestEdit sends outline: true only for the long-document outline request (F-866a1c71)', async () => {
+    const bridge = new TauriBridge();
+    invokeMock.mockResolvedValue('req-9');
+    const requestArgs = () =>
+      invokeMock.mock.calls.filter((call) => call[0] === 'ai_request_edit').map((call) => call[1]);
+
+    await bridge.aiRequestEdit('doc-1', '개요', 'ollama', 'qwen', null, null, null, null, null, null, null, true);
+    await bridge.aiRequestEdit('doc-1', '절', 'ollama', 'qwen', 'sec[0].p[3]', null, null, null, null, null, null, false);
+    await bridge.aiRequestEdit('doc-1', '일반', 'ollama', 'qwen');
+
+    const [outline, section, normal] = requestArgs();
+    expect(outline).toEqual({
+      docId: 'doc-1',
+      userPrompt: '개요',
+      providerId: 'ollama',
+      modelId: 'qwen',
+      cursorPath: null,
+      baseUrl: null,
+      images: null,
+      documents: null,
+      filePaths: null,
+      targetIds: null,
+      formFillLabels: null,
+      outline: true,
+    });
+    // false·생략이면 키 자체가 없다 — 일반 요청의 인자 모양은 그대로다.
+    expect(Object.keys(section as object)).not.toContain('outline');
+    expect((section as { cursorPath: string }).cursorPath).toBe('sec[0].p[3]');
+    expect(Object.keys(normal as object)).not.toContain('outline');
+  });
+
   it('aiCancelRequest invokes ai_cancel_request', async () => {
     const bridge = new TauriBridge();
     invokeMock.mockResolvedValue(undefined);

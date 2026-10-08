@@ -37,7 +37,7 @@ attested_modules:
   apps/desktop/src-tauri/src/ai/adapters/sse.rs: 753e7d27b87e1537
   apps/desktop/src-tauri/src/ai/docx.rs: 568924b721f1a736
   apps/desktop/src-tauri/src/ai/live_smoke.rs: 82d680e41fe34fbc
-  apps/desktop/src-tauri/src/ai/mod.rs: f685b69ca2545339
+  apps/desktop/src-tauri/src/ai/mod.rs: c04681decb92c521
   apps/desktop/src-tauri/src/ai/pdf_figures.rs: 62beb39f800100fb
   apps/desktop/src-tauri/src/ai/pdf_images.rs: 0fd29c30c916c508
   apps/desktop/src-tauri/src/ai/pdf_pages.rs: 87f26b965922b062
@@ -45,7 +45,7 @@ attested_modules:
   apps/desktop/src-tauri/src/ai/pdf_render.rs: 29025427573384b9
   apps/desktop/src-tauri/src/ai/pdf_structure.rs: c6d55e37053a9a61
   apps/desktop/src-tauri/src/ai/provider.rs: 6df65f351004ca80
-  apps/desktop/src-tauri/src/ai/schema.rs: a2392b3557de3951
+  apps/desktop/src-tauri/src/ai/schema.rs: 3e40bad8e64b4364
   apps/desktop/src-tauri/src/ai/secrets.rs: 17ee2dd8d31128a8
   apps/desktop/src-tauri/src/ai/serialize.rs: 9ddd99aee12ca409
   apps/desktop/src-tauri/src/ai/skills.rs: 93e9b1c9afb89519
@@ -138,6 +138,8 @@ attested_modules:
   apps/studio-host/src/core/form-fill-page-layout.test.ts: a50f1720b1a450f0
   apps/studio-host/src/core/local-fonts.test.ts: 250f4770113df5b5
   apps/studio-host/src/core/local-fonts.ts: 622f7dca934f98ec
+  apps/studio-host/src/core/long-document.test.ts: 7a1c7f294f5e3573
+  apps/studio-host/src/core/long-document.ts: 3ab4d371d4626d5e
   apps/studio-host/src/core/merged-label-value-resolve.test.ts: 4d198417236010a0
   apps/studio-host/src/core/model-catalog.test.ts: 8f96ba432fe1ca14
   apps/studio-host/src/core/model-catalog.ts: 65be78c50851b529
@@ -147,8 +149,8 @@ attested_modules:
   apps/studio-host/src/core/platform.ts: a2176660b3a7d0f6
   apps/studio-host/src/core/skill-select.test.ts: f4bd229957e53e75
   apps/studio-host/src/core/skill-select.ts: bebe19b43fcf2929
-  apps/studio-host/src/core/tauri-bridge.test.ts: 0d667f8455212bdf
-  apps/studio-host/src/core/tauri-bridge.ts: a5e391e44e446c4f
+  apps/studio-host/src/core/tauri-bridge.test.ts: 462becc93b85527a
+  apps/studio-host/src/core/tauri-bridge.ts: 1519edf7a360828a
   apps/studio-host/src/core/toc-page-chunking.test.ts: d33389f8d5470bba
   apps/studio-host/src/core/toc-regenerate-from-docx.test.ts: 84f3348d6b71da9c
   apps/studio-host/src/host/command-runtime.test.ts: 4084271d05b1c7f9
@@ -158,7 +160,7 @@ attested_modules:
   apps/studio-host/src/main.ts: 08e71b4cfa115e8c
   apps/studio-host/src/style.css: 3fbb1a512b18ce5c
   apps/studio-host/src/styles/about-dialog.css: bf6578e99c925484
-  apps/studio-host/src/styles/agent-sidebar.css: 50d1dbb329473406
+  apps/studio-host/src/styles/agent-sidebar.css: 78ca6bffaf796fc4
   apps/studio-host/src/styles/custom-select.css: d14139129fc5256a
   apps/studio-host/src/styles/font-set-dialog.css: f171fd90217f887a
   apps/studio-host/src/styles/home-screen.css: ff091f19297105a2
@@ -171,9 +173,10 @@ attested_modules:
   apps/studio-host/src/ui/about-dialog.ts: 8f3ee0f9f2335947
   apps/studio-host/src/ui/agent-sidebar-authoring.test.ts: 42dbb6e524d3299d
   apps/studio-host/src/ui/agent-sidebar-layout.test.ts: 15d2d5be5ad3ff64
+  apps/studio-host/src/ui/agent-sidebar-long-document.test.ts: 281e72a76a0064f3
   apps/studio-host/src/ui/agent-sidebar-skill.test.ts: c976189faa6da98c
   apps/studio-host/src/ui/agent-sidebar.test.ts: eef5aa45ae15e344
-  apps/studio-host/src/ui/agent-sidebar.ts: e96d3aa432425020
+  apps/studio-host/src/ui/agent-sidebar.ts: 11b94b324436da0e
   apps/studio-host/src/ui/ai-inline-diff.test.ts: 11b73117f06a0cd2
   apps/studio-host/src/ui/ai-inline-diff.ts: e2c69deb5d9071f8
   apps/studio-host/src/ui/custom-select.test.ts: 87582c807f654483
@@ -244,6 +247,7 @@ attested_features:
   F-7a3dbe: ok
   F-85327e55: ok
   F-86317c64: ok
+  F-866a1c71: ok
   F-8eb1f86f: ok
   F-9a5045da: ok
   F-9dbe7a25: ok

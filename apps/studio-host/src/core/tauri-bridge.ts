@@ -130,6 +130,8 @@ export interface AiBridgeApi {
     /** Some이면 '양식 이어쓰기' 모드(F-ae778890): AI가 표를 그리지 않고 라벨→값 내용만
      *  반환하도록 전용 프롬프트·스키마를 쓴다. labels는 소스 양식 표의 필드 라벨. */
     formFillLabels?: string[] | null,
+    /** true면 긴 문서 분할 작성의 개요 요청(F-866a1c71) — 제목·절 목록 JSON만 받는다. */
+    outline?: boolean,
   ): Promise<string>;
   /** HWP/HWPX 파일의 평문 텍스트를 추출한다(첨부용). */
   aiExtractText(path: string): Promise<string>;
@@ -398,6 +400,7 @@ export class TauriBridge extends WasmBridge implements DesktopBridgeApi, AiBridg
     filePaths?: string[] | null,
     targetIds?: string[] | null,
     formFillLabels?: string[] | null,
+    outline?: boolean,
   ): Promise<string> {
     await this.syncNativeDocumentForAi(docId);
     return this.invoke<string>('ai_request_edit', {
@@ -412,6 +415,8 @@ export class TauriBridge extends WasmBridge implements DesktopBridgeApi, AiBridg
       filePaths: filePaths ?? null,
       targetIds: targetIds ?? null,
       formFillLabels: formFillLabels ?? null,
+      // 개요 요청일 때만 싣는다 — 일반 요청의 인자 모양은 그대로 둔다(네이티브는 생략 시 false).
+      ...(outline ? { outline: true } : {}),
     });
   }
 

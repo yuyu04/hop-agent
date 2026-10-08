@@ -74,6 +74,14 @@ import {
 import { clearInlineDiff, showInlineDiff, type InlineDiffEntry } from '@/ui/ai-inline-diff';
 import { AI_PANEL_TOGGLE_EVENT } from '@/command/commands/ai';
 import { buildSkillCatalog, isAuthoringRequest } from '@/core/skill-select';
+import {
+  buildOutlinePrompt,
+  buildSectionPrompt,
+  lastParagraphAnchor,
+  parseOutline,
+  shouldSectionLongDocument,
+  type DocOutline,
+} from '@/core/long-document';
 import type { CursorRect, PageInfo } from '@/upstream/core';
 
 type AgentBridge = AiBridgeApi &
@@ -205,6 +213,8 @@ interface ActiveTurn {
   statusEl: HTMLElement;
   /** 이번 답변이 따른 글쓰기 지침 표시('지침: 공문 · AI 선택'). */
   skillEl: HTMLElement;
+  /** 긴 문서 분할 작성의 절 목록·진행 상태. */
+  progressEl: HTMLElement;
 }
 
 /** 대화 하나(탭 + 스레드). 새 대화를 만들어도 기존이 지워지지 않는다. */
@@ -273,11 +283,18 @@ export class AgentSidebar {
   /** 전송 시점에 고정한 모드(응답 처리에서 사용 — this.mode가 그새 바뀌어도 안전).
    *  'proofread'는 전체 교정 패스(응답을 적용하지 않고 이슈 목록으로 수집).
    *  'form_fill'은 양식 이어쓰기(AI는 항목 내용만, 앱이 표를 결정적 복제 — F-ae778890). */
-  private requestMode: 'edit' | 'ask' | 'proofread' | 'form_fill' = 'edit';
+  private requestMode: 'edit' | 'ask' | 'proofread' | 'form_fill' | 'outline' | 'section' = 'edit';
   /** 교정 패스의 순차 루프가 기다리는 현재 구간 응답 resolver. */
   private proofreadResolve: ((script: ActionScript | null) => void) | null = null;
   /** 양식 이어쓰기 루프가 기다리는 form-fill 응답(원문 JSON) resolver. */
   private formFillResolve: ((rawJson: string | null) => void) | null = null;
+  /** 긴 문서 분할 작성 루프가 기다리는 개요·절 응답(원문 JSON) resolver(F-866a1c71). */
+  private longDocResolve: ((rawJson: string | null) => void) | null = null;
+  /** 긴 문서 분할 작성 중 사용자가 멈췄는가 — 루프가 다음 절로 가지 않게 한다. */
+  private longDocCancelled = false;
+  /** 변경별 승인/거절을 허용하는가. 긴 문서 분할 작성의 검토는 모두 승인/거절만(절마다
+   *  그때의 문서 끝을 기준으로 붙여, 시작 전 문서에서 일부만 다시 적용할 수 없다). */
+  private perEditReview = true;
   private readonly modeEditBtn: HTMLButtonElement;
   private readonly modeAskBtn: HTMLButtonElement;
   private readonly modeTrigger: HTMLButtonElement;
@@ -1336,6 +1353,18 @@ export class AgentSidebar {
     if (!guard) return;
     const { docId, provider, baseUrl } = guard;
 
+    // 빈 문서에 쓰는 긴 문서(6쪽 이상·사업계획서 등)는 개요 → 절별로 나눠 쓴다(F-866a1c71).
+    // 한 번에 쓰게 하면 출력 한도·시간 초과로 전부 잃는다. 첨부 기반 작성은 기존 경로.
+    if (
+      !this.attachments.length &&
+      (this.mode === 'edit' || isAuthoringRequest(prompt)) &&
+      shouldSectionLongDocument(prompt, this.isDocumentBlank())
+    ) {
+      if (this.mode !== 'edit') this.setMode('edit');
+      await this.runLongDocument(prompt, docId, provider, baseUrl);
+      return;
+    }
+
     // 위에서 기다렸지만, 가드 대기 중 새로 붙은 첨부가 있을 수 있다.
     await this.awaitAttachmentExtraction();
 
@@ -1609,6 +1638,8 @@ export class AgentSidebar {
     this.setRequesting(false);
     this.resolveProofread(null);
     this.resolveFormFill(null);
+    if (this.longDocResolve) this.longDocCancelled = true;
+    this.resolveLongDoc(null);
     this.setActiveStatus('취소했습니다.');
   }
 
@@ -1637,6 +1668,13 @@ export class AgentSidebar {
       this.active.streamEl.textContent = '';
       this.session.complete();
       this.resolveFormFill(ready.actionScriptJson);
+      return;
+    }
+    // 긴 문서 분할 작성: 개요·절 응답은 루프(runLongDocument)가 파싱·적용한다(F-866a1c71).
+    if (this.requestMode === 'outline' || this.requestMode === 'section') {
+      this.active.streamEl.textContent = '';
+      this.session.complete();
+      this.resolveLongDoc(ready.actionScriptJson);
       return;
     }
     // 교정 패스는 구간 루프가 끝날 때까지 요청 중 상태(취소 버튼)를 유지한다.
@@ -1749,6 +1787,7 @@ export class AgentSidebar {
     this.setActiveStatus(`${interpretAiFailure(failed.code)} (${failed.reason})`, 'error');
     this.resolveProofread(null);
     this.resolveFormFill(null);
+    this.resolveLongDoc(null);
   }
 
   /** 교정 루프가 기다리는 구간 응답을 풀어준다(완료/실패/취소 공통). */
@@ -1762,6 +1801,13 @@ export class AgentSidebar {
   private resolveFormFill(rawJson: string | null): void {
     const resolve = this.formFillResolve;
     this.formFillResolve = null;
+    resolve?.(rawJson);
+  }
+
+  /** 긴 문서 분할 작성 루프가 기다리는 개요·절 응답을 풀어준다(완료/실패/취소 공통). */
+  private resolveLongDoc(rawJson: string | null): void {
+    const resolve = this.longDocResolve;
+    this.longDocResolve = null;
     resolve?.(rawJson);
   }
 
@@ -2102,6 +2148,227 @@ export class AgentSidebar {
       if (createdForm && !previewReady) this.revertToSnapshot();
       this.setRequesting(false);
     }
+  }
+
+  /** 문서가 빈 새 문서(구역 1개, 빈 문단 1개)인가. 판단할 수 없으면 false. */
+  private isDocumentBlank(): boolean {
+    const doc = this.deps.bridge as unknown as WasmEditing & { getSectionCount?(): number };
+    try {
+      if ((doc.getSectionCount?.() ?? 1) !== 1) return false;
+      return doc.getParagraphCount?.(0) === 1 && doc.getParagraphLength(0, 0) === 0;
+    } catch {
+      return false;
+    }
+  }
+
+  /** 긴 문서 분할 작성의 개요·절 요청 하나. 응답 원문(JSON)을, 실패·취소면 null을 준다. */
+  private requestLongDocPart(
+    docId: string,
+    provider: string,
+    model: string,
+    baseUrl: string | null,
+    prompt: string,
+    cursorPath: string | null,
+    outline: boolean,
+  ): Promise<string | null> {
+    return new Promise((resolve) => {
+      this.longDocResolve = resolve;
+      this.requestMode = outline ? 'outline' : 'section';
+      this.streamBuffer = '';
+      this.setRequesting(true);
+      if (this.active) this.showThinking(this.active);
+      this.session.startRequest();
+      this.deps.bridge
+        .aiRequestEdit(docId, prompt, provider, model, cursorPath, baseUrl, null, null, null, null, null, outline)
+        .then((requestId) => {
+          this.requestId = requestId;
+        })
+        .catch((error) => {
+          this.session.onFailed();
+          this.log(`긴 문서 요청 실패: ${String(error)}`);
+          this.resolveLongDoc(null);
+        });
+    });
+  }
+
+  /** 절 목록·진행 상태를 그린다(대기 · 작성 중 · 완료 · 건너뜀). */
+  private renderLongDocProgress(
+    turn: ActiveTurn,
+    outline: DocOutline,
+    states: ('wait' | 'run' | 'done' | 'skip')[],
+  ): void {
+    turn.progressEl.replaceChildren();
+    const done = states.filter((s) => s === 'done').length;
+    turn.progressEl.appendChild(
+      textSpan('hop-ai-progress-head', `개요 ${outline.sections.length}개 절 — ${done}개 작성`),
+    );
+    const labels = { wait: '대기', run: '작성 중', done: '완료', skip: '건너뜀' } as const;
+    outline.sections.forEach((section, i) => {
+      const row = el('div', `hop-ai-progress-item hop-ai-progress-${states[i]}`);
+      row.append(
+        textSpan('hop-ai-progress-heading', section.heading),
+        textSpan('hop-ai-progress-state', labels[states[i]]),
+      );
+      turn.progressEl.appendChild(row);
+    });
+  }
+
+  /**
+   * 긴 문서 분할 작성(F-866a1c71) — 개요를 받고, 제목을 넣고, 절마다 따로 요청해 받은 즉시
+   * 문서 끝에 이어 붙인 뒤, 시작 전 스냅샷을 기준으로 전체를 한 번에 검토하게 한다.
+   */
+  private async runLongDocument(
+    prompt: string,
+    docId: string,
+    provider: string,
+    baseUrl: string | null,
+  ): Promise<void> {
+    const model = this.currentModel();
+    if (this.session.isPending) this.session.cancel();
+    this.appendUserTurn(prompt, []);
+    this.recordMessage('user', prompt);
+    const turn = this.appendAssistantTurn();
+    this.active = turn;
+    this.promptInput.value = '';
+    this.setStatus('');
+    this.longDocCancelled = false;
+    this.log('긴 문서 분할 작성 시작');
+
+    if (!this.snapshotDocument()) {
+      this.setActiveStatus('이 환경에서는 긴 문서를 나눠 쓸 수 없습니다(되돌릴 스냅샷을 만들 수 없음).', 'warn');
+      return;
+    }
+    const doc = this.deps.bridge as unknown as WasmEditing;
+
+    // 1) 개요 — 스킬 목록을 함께 보내 AI가 문서 종류에 맞는 지침을 고르게 한다.
+    const skillPart = this.skillPrefixFor(prompt);
+    this.requestSkill = { offered: skillPart.offered, forced: skillPart.forced };
+    this.setActiveStatus('개요를 만드는 중…');
+    const outlineJson = await this.requestLongDocPart(
+      docId,
+      provider,
+      model,
+      baseUrl,
+      `${skillPart.prefix}${buildOutlinePrompt(prompt)}`,
+      null,
+      true,
+    );
+    const outline = outlineJson ? parseOutline(outlineJson) : null;
+    if (!outline) {
+      this.snapshot = null;
+      this.setRequesting(false);
+      if (!this.longDocCancelled) this.setActiveStatus('개요를 받지 못해 문서를 쓰지 않았습니다.', 'warn');
+      return;
+    }
+    this.renderSkillChip(turn, outline.skill);
+    const chosen =
+      skillPart.forced ??
+      this.skills.find((s) => s.name.replace(/\s+/g, '') === (outline.skill ?? '').replace(/\s+/g, ''))?.name ??
+      null;
+    const chosenSkill = chosen ? this.skills.find((s) => s.name === chosen) : undefined;
+    const sectionSkillPrefix = chosenSkill ? `[작성 스킬: ${chosenSkill.name}]\n${chosenSkill.body}\n\n---\n\n` : '';
+    const states: ('wait' | 'run' | 'done' | 'skip')[] = outline.sections.map(() => 'wait');
+    this.renderLongDocProgress(turn, outline, states);
+    this.log(`개요: ${outline.title} — 절 ${outline.sections.length}개${chosen ? `, 지침 ${chosen}` : ''}`);
+
+    // 2) 제목 — 앱이 바로 넣는다(빈 첫 문단을 제목으로).
+    const combined: ActionScript = { edits: [] };
+    const changed: ChangedPara[] = [];
+    const skipped: ApplyResult['skipped'] = [];
+    let applied = 0;
+    const take = (script: ActionScript, result: ApplyResult): void => {
+      const offset = combined.edits.length;
+      combined.edits.push(...script.edits);
+      for (const c of result.changed) {
+        changed.push({ ...c, editIndex: c.editIndex === undefined ? undefined : c.editIndex + offset });
+      }
+      skipped.push(...result.skipped);
+      applied += result.applied;
+    };
+    if (outline.title) {
+      const titleScript: ActionScript = {
+        edits: [{ command: 'REPLACE', target_id: 'sec[0].p[0]', payload: { text: outline.title, style: 'title' } }],
+      };
+      take(titleScript, applyActionScript(this.deps.bridge, titleScript, [], this.compiledTheme));
+      this.reflowAndRender();
+    }
+
+    // 3) 절마다 — 받은 즉시 문서 끝에 이어 붙인다. 실패한 절은 한 번 더 시도하고 건너뛴다.
+    let written = 0;
+    for (let i = 0; i < outline.sections.length && !this.longDocCancelled; i += 1) {
+      states[i] = 'run';
+      this.renderLongDocProgress(turn, outline, states);
+      this.setActiveStatus(`절 ${i + 1}/${outline.sections.length} 작성 중 — ${outline.sections[i].heading}`);
+      let ok = false;
+      for (let attempt = 0; attempt < 2 && !ok && !this.longDocCancelled; attempt += 1) {
+        // 다시 시도할 때 앞선 실패 문구(onFailed)가 남지 않게 진행 상태를 다시 적는다.
+        if (attempt > 0) {
+          this.setActiveStatus(
+            `절 ${i + 1}/${outline.sections.length} 작성 중 — 다시 시도 · ${outline.sections[i].heading}`,
+          );
+        }
+        const anchorId = lastParagraphAnchor(doc.getParagraphCount?.(0) ?? 1);
+        const raw = await this.requestLongDocPart(
+          docId,
+          provider,
+          model,
+          baseUrl,
+          `${sectionSkillPrefix}${buildSectionPrompt({ userPrompt: prompt, outline, index: i, anchorId, skipped: states.map((st) => st === 'skip') })}`,
+          anchorId,
+          false,
+        );
+        const script = raw ? parseActionScript(raw) : null;
+        if (!script?.edits.length) continue;
+        const result = applyActionScript(this.deps.bridge, script, this.pendingInsertImages, this.compiledTheme);
+        this.reflowAndRender();
+        if (result.applied === 0) {
+          this.log(`절 ${i + 1} 적용 실패: ${result.skipped[0]?.reason ?? '알 수 없음'}`);
+          continue;
+        }
+        take(script, result);
+        ok = true;
+      }
+      states[i] = ok ? 'done' : this.longDocCancelled ? 'wait' : 'skip';
+      if (ok) written += 1;
+      this.renderLongDocProgress(turn, outline, states);
+    }
+    this.requestId = null;
+    this.setRequesting(false);
+
+    // 4) 검토 — 하나도 못 썼으면 시작 전 문서로 되돌리고 끝낸다.
+    if (written === 0) {
+      this.revertToSnapshot();
+      this.snapshot = null;
+      const reason = this.longDocCancelled
+        ? '멈췄습니다 — 쓴 절이 없어 문서를 바꾸지 않았습니다.'
+        : '절을 하나도 쓰지 못해 문서를 바꾸지 않았습니다.';
+      turn.msgEl.textContent = reason;
+      this.recordMessage('assistant', reason);
+      this.setActiveStatus(reason, 'warn');
+      return;
+    }
+    const total = outline.sections.length;
+    const skippedSections = states.filter((s) => s === 'skip').length;
+    const summary =
+      `${outline.message ? `${outline.message} ` : ''}` +
+      `'${outline.title || '문서'}'를 ${total}개 절 중 ${written}개 써서 넣었습니다` +
+      (skippedSections ? ` (${skippedSections}개 절은 쓰지 못해 건너뜀)` : '') +
+      (this.longDocCancelled ? ' — 중간에 멈춰 나머지 절은 쓰지 않았습니다' : '') +
+      '.';
+    turn.msgEl.textContent = summary;
+    this.recordMessage('assistant', summary);
+    this.pendingScript = combined;
+    this.applied = { applied, skipped, changed };
+    this.rejectedEdits = new Set();
+    this.resolvedEdits = new Set();
+    this.inlineFocus = 0;
+    this.session.startRequest();
+    if (!this.session.onReady()) return;
+    this.perEditReview = false;
+    this.renderDiff(combined);
+    this.renderDecisionBar(combined, changed);
+    this.setPreviewEnabled(true);
+    this.setActiveStatus(`${written}개 절을 미리 넣었습니다 — 모두 승인 또는 모두 거절하세요.`);
   }
 
   /**
@@ -2614,7 +2881,8 @@ export class AgentSidebar {
     acceptBtn.addEventListener('click', () => this.accept());
     rejectBtn.addEventListener('click', () => this.reject());
     const skillEl = el('div', 'hop-ai-skill');
-    bubble.append(streamEl, skillEl, msgEl, bodyEl, decision, statusEl);
+    const progressEl = el('div', 'hop-ai-progress');
+    bubble.append(streamEl, skillEl, msgEl, progressEl, bodyEl, decision, statusEl);
     this.thread.appendChild(bubble);
     this.scrollThreadToEnd();
     const turn: ActiveTurn = {
@@ -2626,6 +2894,7 @@ export class AgentSidebar {
       rejectBtn,
       statusEl,
       skillEl,
+      progressEl,
     };
     this.setPreviewEnabledFor(turn, false);
     this.showThinking(turn);
@@ -3106,7 +3375,7 @@ export class AgentSidebar {
     );
     // 변경 블록이 2건 이상이면 행마다 개별 포함(✓)/제외(✗) 토글을 단다(1건은 전체
     // 승인/거부 버튼과 중복이라 생략). 인덱스는 pendingScript.edits와 1:1이다.
-    const perEdit = script.edits.length >= 2;
+    const perEdit = this.perEditReview && script.edits.length >= 2;
     this.active.bodyEl.appendChild(renderDiffSummary(items));
     items.forEach((item, index) => {
       const row = renderDiffItem(item);
@@ -3234,12 +3503,14 @@ export class AgentSidebar {
     return showInlineDiff(
       { scrollContent: this.deps.scrollContent, scrollContainer: this.deps.scrollContainer },
       entries,
-      {
-        onAccept: () => this.accept(),
-        onReject: () => this.reject(),
-        onAcceptOne: (index) => this.resolveEdit(index, 'accept'),
-        onRejectOne: (index) => this.resolveEdit(index, 'reject'),
-      },
+      this.perEditReview
+        ? {
+            onAccept: () => this.accept(),
+            onReject: () => this.reject(),
+            onAcceptOne: (index) => this.resolveEdit(index, 'accept'),
+            onRejectOne: (index) => this.resolveEdit(index, 'reject'),
+          }
+        : { onAccept: () => this.accept(), onReject: () => this.reject() },
       { focusIndex: this.inlineFocus, scroll, onFocusChange: (index) => (this.inlineFocus = index) },
     );
   }
@@ -3533,6 +3804,7 @@ export class AgentSidebar {
   }
 
   private clearPreview(): void {
+    this.perEditReview = true;
     this.pendingScript = null;
     this.rejectedEdits = new Set();
     this.resolvedEdits = new Set();

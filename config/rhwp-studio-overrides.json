@@ -114,6 +114,11 @@
       "reason": "Picks the writing skill for an AI request by trigger specificity (auto mode)."
     },
     {
+      "id": "core/long-document",
+      "strategy": "contribution",
+      "reason": "Decides when to write a long document section by section and builds the outline/section prompts."
+    },
+    {
       "id": "command/shortcut-map",
       "strategy": "extension",
       "reason": "Adds HOP desktop shortcuts while preserving upstream shortcut assignments."

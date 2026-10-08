@@ -1,0 +1,44 @@
+id: F-866a1c71
+slug: ai-long-document-sections
+title: "긴 문서는 개요부터 만들고 절마다 나눠 써서 끝까지 완성한다 — 출력 한도·시간 초과로 통째로 잃지 않는다"
+status: done
+modules:
+  - apps/studio-host/src/core/long-document.ts
+  - apps/studio-host/src/ui/agent-sidebar.ts
+  - apps/studio-host/src/core/tauri-bridge.ts
+  - apps/studio-host/src/core/ai-bridge.ts
+  - apps/desktop/src-tauri/src/ai/mod.rs
+  - apps/desktop/src-tauri/src/ai/schema.rs
+  - apps/studio-host/src/core/long-document.test.ts
+  - apps/studio-host/src/ui/agent-sidebar-long-document.test.ts
+acceptance_criteria:
+  - id: AC-5c6d1ea3
+    ears: event
+    condition: "When 편집 모드에서 빈 문서에 작성 요청을 보내고, 그 요청이 6쪽 이상('N쪽'·'N페이지')이거나 사업계획서·제안서·계획서·보고서·백서 같은 긴 문서 유형일 때"
+    text: "The system shall 한 번에 다 쓰게 하지 않고 '긴 문서 분할 작성'으로 처리한다(질문 모드라도 작성 요청이면 편집 모드로 바꿔 — F-a7b2c7ba AC-19a5d929와 같게). 6쪽 미만을 명시했거나 내용이 있는 문서·첨부 기반 작성·작성 요청이 아닌 질문·짧은 문서(공문 등)는 기존 한 번 요청 경로를 쓴다."
+    test_refs:
+      - apps/studio-host/src/core/long-document.test.ts
+    notes: |
+      ## Why
+      2026-10-08 작성 E2E: 10쪽 사업계획서가 출력 2만 토큰·CLI 6분 남짓으로 한도에 근접했고,
+      15쪽 이상이면 한도·시간 초과로 전부 잃는다. 사용자가 남은 과제로 처리를 요청했다.
+  - id: AC-a622a229
+    ears: event
+    condition: "When 긴 문서 분할 작성을 시작할 때"
+    text: "The system shall 먼저 개요만 요청해(문서 제목, 4~12개 절의 제목·요점·목표 글자 수·표 필요 여부, 따를 작성 지침 이름) 답변에 절 목록과 진행 상태를 보이고, 개요 응답은 전용 스키마로 검증한다(절 0개·20개 초과는 오류, 목표 글자 수는 200~6,000으로 맞춤)."
+    test_refs:
+      - apps/desktop/src-tauri/src/ai/schema.rs
+      - apps/studio-host/src/core/long-document.test.ts
+  - id: AC-d156df37
+    ears: state
+    condition: "While 절별로 작성하는 동안"
+    text: "The system shall 제목은 앱이 바로 넣고, 각 절을 따로 요청해(개요 전체 — 이미 쓴 절·건너뛴 절 표시, 이 절의 요점·목표 분량·표 여부, 앞 절 끝 문단 뒤에 INSERT_AFTER) 받은 즉시 문서 끝에 이어 붙이며, '절 i/N 작성 중'을 보이고(다시 시도하는 동안에도 앞선 실패 문구를 남기지 않는다), 실패한 절은 한 번 다시 시도한 뒤 건너뛰고 다음 절로 간다."
+    test_refs:
+      - apps/studio-host/src/core/long-document.test.ts
+      - apps/studio-host/src/ui/agent-sidebar-long-document.test.ts
+  - id: AC-8cc6b557
+    ears: event
+    condition: "When 모든 절을 다 썼거나 사용자가 중간에 멈췄을 때"
+    text: "The system shall 시작 전 스냅샷을 기준으로 지금까지 쓴 내용 전체를 한 번에 검토(모두 승인·모두 거절, 문서 위 변경 표시)하게 하고, 거절하면 시작 전 문서로 되돌린다. 하나도 못 썼으면 문서를 바꾸지 않는다."
+    test_refs:
+      - apps/studio-host/src/ui/agent-sidebar-long-document.test.ts

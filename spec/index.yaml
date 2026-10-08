@@ -35,6 +35,7 @@ features:
   F-7a3dbe: {slug: table-structure-editing, status: done, modules: 4}
   F-85327e55: {slug: toc-page-chunking, status: done, modules: 4}
   F-86317c64: {slug: research-note-body-fill, status: done, modules: 5}
+  F-866a1c71: {slug: ai-long-document-sections, status: done, modules: 8}
   F-8eb1f86f: {slug: ai-table-formula, status: done, modules: 4}
   F-9a5045da: {slug: toc-regenerate-from-docx, status: done, modules: 3}
   F-9dbe7a25: {slug: keyless-provider-guidance, status: done, modules: 2}
