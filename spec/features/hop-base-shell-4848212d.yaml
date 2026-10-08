@@ -94,6 +94,9 @@ modules:
   - apps/studio-host/src/styles/update-notice.css
   - site/index.html
   - site/styles.css
+  - site/report.html
+  - site/report.js
+  - site/stats.js
 acceptance_criteria:
   - id: AC-ccd24bee
     ears: ubiquitous

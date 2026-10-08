@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 문제 알리기 페이지
+    url: https://yuyu04.github.io/hop-agent/report.html
+    about: 항목을 채우면 이슈 내용이 자동으로 들어갑니다.
+  - name: HWP 엔진(rhwp) 문제
+    url: https://github.com/edwardkim/rhwp/issues
+    about: rhwp 데모에서도 똑같이 생기는 열기·표시 문제는 rhwp에 알려 주세요.

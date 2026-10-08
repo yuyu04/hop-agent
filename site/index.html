@@ -40,6 +40,7 @@
                 <nav class="nav-links" aria-label="페이지 안내">
                     <a href="#features">기능</a>
                     <a href="#download">다운로드</a>
+                    <a href="report.html">문제 알리기</a>
                     <a href="https://github.com/yuyu04/hop-agent">GitHub</a>
                 </nav>
                 <a class="version-pill" href="https://github.com/yuyu04/hop-agent/releases/latest" data-release-version>
@@ -319,6 +320,41 @@
         </main>
 
         <footer class="footer">
+            <section class="stats" aria-labelledby="stats-title">
+                <div class="stats-inner">
+                    <h2 class="stats-title" id="stats-title">숫자로 보는 HOP AI</h2>
+                    <dl class="stats-list">
+                        <div class="stat">
+                            <dt>오늘 방문</dt>
+                            <dd data-stat="today">—</dd>
+                        </div>
+                        <div class="stat">
+                            <dt>누적 방문</dt>
+                            <dd data-stat="total">—</dd>
+                        </div>
+                        <div class="stat">
+                            <dt>누적 다운로드</dt>
+                            <dd data-stat="downloads">—</dd>
+                        </div>
+                        <div class="stat stat-split">
+                            <dt>운영체제별 다운로드</dt>
+                            <dd>
+                                <div class="split-bar" aria-hidden="true">
+                                    <i data-os="mac"></i><i data-os="windows"></i><i data-os="linux"></i>
+                                </div>
+                                <ul class="split-legend">
+                                    <li data-os="mac">macOS <b data-split="mac">—</b></li>
+                                    <li data-os="windows">Windows <b data-split="windows">—</b></li>
+                                    <li data-os="linux">Linux <b data-split="linux">—</b></li>
+                                </ul>
+                            </dd>
+                        </div>
+                    </dl>
+                    <p class="stats-note" data-stats-note>
+                        방문은 이 페이지를 연 횟수, 다운로드는 GitHub 릴리스에 올린 설치 파일을 받은 횟수입니다.
+                    </p>
+                </div>
+            </section>
             <div class="footer-inner">
                 <p>
                     HOP AI는 <a href="https://github.com/golbin/hop">HOP</a>과
@@ -328,11 +364,13 @@
                 <p class="footer-links">
                     <a href="https://github.com/yuyu04/hop-agent">소스 코드</a>
                     <a href="https://github.com/yuyu04/hop-agent/releases">릴리스 노트</a>
+                    <a href="report.html">문제 알리기</a>
                     <a href="https://github.com/yuyu04/hop-agent/blob/main/LICENSE">MIT 라이선스</a>
                 </p>
             </div>
         </footer>
 
         <script src="downloads.js" defer></script>
+        <script src="stats.js" defer></script>
     </body>
 </html>

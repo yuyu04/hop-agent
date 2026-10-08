@@ -18,6 +18,10 @@
     --del-soft: #fbe9e6;
     --paper: #ffffff;
     --paper-ink: #1a1c1b;
+    /* 통계 막대의 운영체제 색 */
+    --os-mac: #0d1411;
+    --os-win: #179456;
+    --os-linux: #c98a12;
     --grid: rgba(23, 148, 86, 0.07);
     --shadow: 0 1px 2px rgba(13, 20, 17, 0.06), 0 12px 32px -12px rgba(13, 20, 17, 0.18);
     --shadow-lg: 0 2px 4px rgba(13, 20, 17, 0.05), 0 32px 64px -24px rgba(13, 20, 17, 0.28);
@@ -49,6 +53,9 @@
         --del: #ff8a7d;
         --del-soft: #3a1d1b;
         --grid: rgba(54, 201, 127, 0.06);
+        --os-mac: #edf3ef;
+        --os-win: #36c97f;
+        --os-linux: #e8b54a;
         --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 16px 40px -16px rgba(0, 0, 0, 0.6);
         --shadow-lg: 0 2px 6px rgba(0, 0, 0, 0.4), 0 40px 80px -24px rgba(0, 0, 0, 0.7);
         color-scheme: dark;
@@ -76,6 +83,11 @@ body {
     -webkit-font-smoothing: antialiased;
     word-break: keep-all;
     overflow-wrap: break-word;
+}
+
+/* display를 준 요소에도 hidden이 이기게 한다(문제 알리기의 종류별 칸 전환). */
+[hidden] {
+    display: none !important;
 }
 
 img {
@@ -181,8 +193,13 @@ p {
     text-decoration: none;
 }
 
-.nav-links a:hover {
+.nav-links a:hover,
+.nav-links a[aria-current="page"] {
     color: var(--ink);
+}
+
+.nav-links a[aria-current="page"] {
+    font-weight: 700;
 }
 
 .version-pill {
@@ -1098,6 +1115,552 @@ p {
 .footer a {
     color: var(--ink-2);
     text-underline-offset: 3px;
+}
+
+/* ── 바닥글 통계 ─────────────────────────────────────── */
+
+.stats {
+    border-bottom: 1px solid var(--line);
+}
+
+.stats-inner {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    max-width: var(--max);
+    margin: 0 auto;
+    padding-block: clamp(32px, 5vw, 48px);
+    padding-inline: var(--gutter);
+}
+
+.stats-title {
+    font-size: 0.82rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    color: var(--accent-ink);
+}
+
+/* 칸 사이 1px 틈으로 머리카락 선을 낸다 — 몇 줄로 접혀도 선이 이어진다. */
+.stats-list {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(0, 1.7fr);
+    gap: 1px;
+    margin: 0;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--line);
+    overflow: hidden;
+}
+
+.stat {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 20px 22px;
+    background: var(--bg-elev);
+}
+
+.stat dt {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--muted);
+}
+
+.stat dd {
+    margin: 0;
+    font-size: clamp(1.5rem, 3vw, 2.1rem);
+    font-weight: 800;
+    line-height: 1.15;
+    letter-spacing: -0.03em;
+    font-variant-numeric: tabular-nums;
+}
+
+.stat-split dd {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-top: 6px;
+    font-size: 1rem;
+    font-weight: 500;
+    letter-spacing: 0;
+}
+
+.split-bar {
+    display: flex;
+    height: 10px;
+    border-radius: 999px;
+    background: var(--line);
+    overflow: hidden;
+}
+
+.split-bar i {
+    display: block;
+    width: 0;
+    height: 100%;
+    transition: width 0.6s ease;
+}
+
+.split-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 16px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    font-size: 0.85rem;
+    color: var(--ink-2);
+}
+
+.split-legend li {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.split-legend li::before {
+    content: "";
+    width: 9px;
+    height: 9px;
+    border-radius: 3px;
+}
+
+.split-legend b {
+    color: var(--ink);
+    font-variant-numeric: tabular-nums;
+}
+
+.split-bar [data-os="mac"],
+.split-legend [data-os="mac"]::before {
+    background: var(--os-mac);
+}
+
+.split-bar [data-os="windows"],
+.split-legend [data-os="windows"]::before {
+    background: var(--os-win);
+}
+
+.split-bar [data-os="linux"],
+.split-legend [data-os="linux"]::before {
+    background: var(--os-linux);
+}
+
+.stats-note {
+    font-size: 0.8rem;
+    color: var(--muted);
+}
+
+/* ── 문제 알리기 ─────────────────────────────────────── */
+
+.report {
+    display: flex;
+    flex-direction: column;
+    gap: clamp(28px, 4vw, 44px);
+    max-width: var(--max);
+    margin: 0 auto;
+    padding-block: clamp(40px, 6vw, 80px) clamp(56px, 8vw, 104px);
+    padding-inline: var(--gutter);
+}
+
+.report-head {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    max-width: 46em;
+}
+
+.report-head h1 {
+    font-size: clamp(2rem, 4.4vw, 3.1rem);
+    line-height: 1.15;
+    font-weight: 800;
+    letter-spacing: -0.035em;
+}
+
+.report-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
+    gap: clamp(20px, 3vw, 32px);
+    align-items: start;
+}
+
+.report-form {
+    display: flex;
+    flex-direction: column;
+    gap: 22px;
+    padding: clamp(20px, 3vw, 32px);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--bg-elev);
+}
+
+.report-form fieldset {
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+}
+
+.report-form legend {
+    margin-bottom: 10px;
+    padding: 0;
+    font-size: 0.92rem;
+    font-weight: 700;
+}
+
+.kind-group {
+    display: flex;
+    flex-direction: column;
+    gap: 22px;
+}
+
+.field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.field label {
+    font-size: 0.92rem;
+    font-weight: 600;
+}
+
+.req {
+    margin-left: 6px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: var(--accent-ink);
+}
+
+.field input,
+.field select,
+.field textarea {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--line-strong);
+    border-radius: 12px;
+    background: var(--bg);
+    color: var(--ink);
+    font: inherit;
+    font-size: 0.97rem;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.field select {
+    appearance: none;
+    padding-right: 38px;
+    background-image:
+        linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+        linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+    background-position:
+        calc(100% - 19px) 52%,
+        calc(100% - 14px) 52%;
+    background-size: 5px 5px;
+    background-repeat: no-repeat;
+    cursor: pointer;
+}
+
+.field textarea {
+    min-height: 4.6em;
+    line-height: 1.6;
+    resize: vertical;
+}
+
+.field input::placeholder,
+.field textarea::placeholder {
+    color: var(--muted);
+    opacity: 0.85;
+}
+
+.field input:focus-visible,
+.field select:focus-visible,
+.field textarea:focus-visible {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.hint {
+    font-size: 0.82rem;
+    color: var(--muted);
+}
+
+/* 종류 선택 — 라디오 두 개를 한 줄 스위치로 */
+.segmented {
+    position: relative;
+    display: inline-flex;
+    gap: 4px;
+    padding: 4px;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: var(--bg);
+}
+
+.segmented input {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.segmented label {
+    padding: 8px 18px;
+    border-radius: 10px;
+    font-size: 0.92rem;
+    font-weight: 600;
+    color: var(--ink-2);
+    cursor: pointer;
+}
+
+.segmented input:checked + label {
+    background: var(--bg-elev);
+    color: var(--ink);
+    box-shadow: var(--shadow);
+}
+
+.segmented input:focus-visible + label {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+.env-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+}
+
+.consent {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 12px 14px;
+    border-radius: 12px;
+    background: var(--accent-soft);
+    color: var(--ink-2);
+    font-size: 0.9rem;
+    cursor: pointer;
+}
+
+.consent input {
+    flex: none;
+    width: 16px;
+    height: 16px;
+    margin: 4px 0 0;
+    accent-color: var(--accent);
+}
+
+.form-foot {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px 16px;
+}
+
+.submit {
+    padding: 13px 22px;
+    border: 0;
+    border-radius: 14px;
+    background: var(--ink);
+    color: var(--bg);
+    font: 700 1rem/1.3 var(--font-ui);
+    box-shadow: var(--shadow);
+    cursor: pointer;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.submit:hover {
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-lg);
+}
+
+.submit:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+}
+
+.form-note {
+    flex: 1 1 16em;
+    font-size: 0.88rem;
+    color: var(--muted);
+}
+
+.form-note[data-tone="error"] {
+    color: var(--del);
+}
+
+.form-note[data-tone="ok"] {
+    color: var(--accent-ink);
+}
+
+.form-note[data-tone="warn"] {
+    color: var(--ink-2);
+}
+
+.report-aside {
+    position: sticky;
+    top: calc(env(safe-area-inset-top, 0px) + 80px);
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.aside-card {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding: 22px 24px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--bg-elev);
+}
+
+.aside-card h2 {
+    font-size: 1.05rem;
+    font-weight: 800;
+}
+
+.aside-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.aside-head a {
+    font-size: 0.85rem;
+    color: var(--accent-ink);
+    text-underline-offset: 3px;
+}
+
+.checklist {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    font-size: 0.92rem;
+    line-height: 1.65;
+    color: var(--ink-2);
+}
+
+.checklist li {
+    position: relative;
+    padding-left: 24px;
+}
+
+.checklist li::before {
+    content: "✓";
+    position: absolute;
+    top: 0;
+    left: 0;
+    color: var(--accent);
+    font-weight: 800;
+}
+
+.checklist b {
+    display: block;
+    color: var(--ink);
+}
+
+.checklist a {
+    color: var(--accent-ink);
+    text-underline-offset: 3px;
+}
+
+.issues {
+    display: flex;
+    flex-direction: column;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.issues li {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 2px 10px;
+    padding: 11px 0;
+    border-top: 1px solid var(--line);
+    font-size: 0.92rem;
+}
+
+.issues li:first-child {
+    padding-top: 0;
+    border-top: 0;
+}
+
+.issues a {
+    font-weight: 600;
+    text-decoration: none;
+    overflow-wrap: anywhere;
+}
+
+.issues a:hover {
+    text-decoration: underline;
+}
+
+.issues small {
+    grid-column: 2;
+    font-size: 0.8rem;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+}
+
+.issues .issues-empty {
+    display: block;
+    padding: 0;
+    border: 0;
+    color: var(--muted);
+}
+
+.issue-state {
+    align-self: start;
+    margin-top: 2px;
+    padding: 1px 8px;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 700;
+}
+
+.issue-state.is-open {
+    background: var(--accent-soft);
+    color: var(--accent-ink);
+}
+
+.issue-state.is-closed {
+    border: 1px solid var(--line);
+    background: var(--bg);
+    color: var(--muted);
+}
+
+@media (max-width: 980px) {
+    .stats-list {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .stat-split {
+        grid-column: 1 / -1;
+    }
+
+    .report-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .report-aside {
+        position: static;
+    }
+}
+
+@media (max-width: 640px) {
+    .stat {
+        padding: 16px 14px;
+    }
+
+    .env-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .submit {
+        width: 100%;
+    }
 }
 
 /* ── 움직임 ──────────────────────────────────────────── */

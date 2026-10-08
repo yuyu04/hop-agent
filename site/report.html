@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="ko">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+        <title>HOP AI 문제 알리기</title>
+        <meta name="description" content="HOP AI에서 생긴 버그나 바라는 기능을 GitHub 이슈로 알려 주세요." />
+        <meta name="theme-color" content="#f3f6f3" media="(prefers-color-scheme: light)" />
+        <meta name="theme-color" content="#0b100e" media="(prefers-color-scheme: dark)" />
+        <link rel="icon" href="../assets/logo/favicon.ico" />
+        <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
+        <link
+            rel="stylesheet"
+            href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css"
+        />
+        <link rel="stylesheet" href="styles.css" />
+    </head>
+    <body>
+        <header class="nav">
+            <div class="nav-inner">
+                <a class="brand" href="./" aria-label="HOP AI 처음으로">
+                    <img src="../assets/logo/logo.svg" alt="" width="30" height="30" />
+                    <span>HOP <em>AI</em></span>
+                </a>
+                <nav class="nav-links" aria-label="페이지 안내">
+                    <a href="./#features">기능</a>
+                    <a href="./#download">다운로드</a>
+                    <a href="report.html" aria-current="page">문제 알리기</a>
+                    <a href="https://github.com/yuyu04/hop-agent">GitHub</a>
+                </nav>
+                <a class="version-pill" href="https://github.com/yuyu04/hop-agent/releases/latest" data-release-version>
+                    최신 버전
+                </a>
+            </div>
+        </header>
+
+        <main class="report" id="top">
+            <div class="report-head">
+                <p class="eyebrow">문제 알리기</p>
+                <h1>무엇이 잘 안 됐나요?</h1>
+                <p class="lede">
+                    아래 칸을 채우고 <b>GitHub에서 이슈 열기</b>를 누르면, 내용이 채워진 이슈 작성 화면이
+                    새 창으로 열립니다. 거기서 <b>Create</b>를 누르면 접수됩니다. GitHub 계정(무료)이 필요합니다.
+                </p>
+            </div>
+
+            <div class="report-grid">
+                <form class="report-form" id="report-form" novalidate>
+                    <fieldset class="kind">
+                        <legend>종류</legend>
+                        <div class="segmented">
+                            <input type="radio" name="kind" id="kind-bug" value="bug" checked />
+                            <label for="kind-bug">버그 신고</label>
+                            <input type="radio" name="kind" id="kind-feature" value="feature" />
+                            <label for="kind-feature">기능 제안</label>
+                        </div>
+                    </fieldset>
+
+                    <div class="field">
+                        <label for="title">제목 <span class="req">필수</span></label>
+                        <input id="title" name="title" type="text" maxlength="120" required
+                            placeholder="예: 사업계획서를 쓰다가 '시간 초과'로 멈춰요" />
+                    </div>
+
+                    <div class="field">
+                        <label for="area">어디서 생겼나요?</label>
+                        <select id="area" name="area">
+                            <option>AI 작성·편집</option>
+                            <option>AI 질문(묻기)</option>
+                            <option>AI 설정·모델 연결</option>
+                            <option>문서 열기·저장</option>
+                            <option>표·서식·편집기</option>
+                            <option>화면 표시</option>
+                            <option>설치·업데이트</option>
+                            <option>기타</option>
+                        </select>
+                    </div>
+
+                    <div class="kind-group" data-kind="bug">
+                        <div class="field">
+                            <label for="what">무슨 일이 있었나요? <span class="req">필수</span></label>
+                            <textarea id="what" name="what" rows="4"
+                                placeholder="화면에 보인 오류 문구가 있으면 그대로 적어 주세요."></textarea>
+                        </div>
+                        <div class="field">
+                            <label for="steps">다시 일으키는 방법</label>
+                            <textarea id="steps" name="steps" rows="4"
+                                placeholder="1. 빈 문서에서 AI 패널을 열고&#10;2. '스마트공장 사업계획서 써줘'라고 보냄&#10;3. 절 3/9에서 멈춤"></textarea>
+                            <p class="hint">AI에 보낸 지시문도 함께 적어 주시면 같은 상황을 만들기 쉽습니다.</p>
+                        </div>
+                        <div class="field">
+                            <label for="expected">기대한 동작</label>
+                            <textarea id="expected" name="expected" rows="2"></textarea>
+                        </div>
+                    </div>
+
+                    <div class="kind-group" data-kind="feature" hidden>
+                        <div class="field">
+                            <label for="problem">어떤 점이 불편한가요? <span class="req">필수</span></label>
+                            <textarea id="problem" name="problem" rows="4"
+                                placeholder="지금 무엇을 하려다 막히는지 적어 주세요."></textarea>
+                        </div>
+                        <div class="field">
+                            <label for="solution">원하는 기능</label>
+                            <textarea id="solution" name="solution" rows="4"
+                                placeholder="어떻게 동작하면 좋을지 적어 주세요."></textarea>
+                        </div>
+                    </div>
+
+                    <fieldset class="env" data-kind="bug">
+                        <legend>사용 환경</legend>
+                        <div class="env-grid">
+                            <div class="field">
+                                <label for="os">운영체제</label>
+                                <select id="os" name="os">
+                                    <option>macOS (Apple Silicon)</option>
+                                    <option>macOS (Intel)</option>
+                                    <option>Windows</option>
+                                    <option>Linux</option>
+                                </select>
+                            </div>
+                            <div class="field">
+                                <label for="version">HOP AI 버전</label>
+                                <input id="version" name="version" type="text" inputmode="decimal" maxlength="20"
+                                    placeholder="예: 0.5.1" />
+                            </div>
+                            <div class="field">
+                                <label for="provider">AI 공급자</label>
+                                <select id="provider" name="provider">
+                                    <option>Claude Code (로컬 CLI)</option>
+                                    <option>agy CLI (로컬)</option>
+                                    <option>Anthropic API</option>
+                                    <option>OpenAI</option>
+                                    <option>Gemini</option>
+                                    <option>Ollama</option>
+                                    <option>OpenAI 호환 (Groq 등)</option>
+                                    <option>해당 없음 (AI를 쓰지 않음)</option>
+                                </select>
+                            </div>
+                            <div class="field">
+                                <label for="model">모델</label>
+                                <input id="model" name="model" type="text" maxlength="60"
+                                    placeholder="예: sonnet, gpt-5" />
+                            </div>
+                        </div>
+                    </fieldset>
+
+                    <div class="field">
+                        <label for="extra">추가 정보</label>
+                        <textarea id="extra" name="extra" rows="3"
+                            placeholder="오류 로그, 문서 종류(HWP/HWPX), 표·그림이 있는지 등"></textarea>
+                        <p class="hint">스크린샷은 이슈 화면이 열린 뒤 본문에 끌어다 놓으면 올라갑니다.</p>
+                    </div>
+
+                    <label class="consent" for="privacy">
+                        <input id="privacy" name="privacy" type="checkbox" />
+                        <span>회사·개인 정보가 담긴 문서 내용을 적지 않았습니다. 이슈는 누구나 볼 수 있습니다.</span>
+                    </label>
+
+                    <div class="form-foot">
+                        <button type="submit" class="submit">GitHub에서 이슈 열기</button>
+                        <p class="form-note" id="form-note" role="status" aria-live="polite"></p>
+                    </div>
+                </form>
+
+                <aside class="report-aside" aria-label="신고 전 안내">
+                    <section class="aside-card">
+                        <h2>보내기 전에</h2>
+                        <ul class="checklist">
+                            <li>
+                                <b>민감한 내용은 빼 주세요.</b>
+                                재현할 문서가 필요하면 내용을 지운 샘플로 만들어 주세요.
+                            </li>
+                            <li>
+                                <b>HWP 열기·표시 문제라면</b>
+                                <a href="https://edwardkim.github.io/rhwp/">rhwp 데모</a>에서도 똑같은지 봐
+                                주세요. 같다면 HWP 엔진 쪽 문제입니다.
+                            </li>
+                            <li>
+                                <b>이미 올라온 문제인지</b>
+                                아래 최근 이슈나 <a href="https://github.com/yuyu04/hop-agent/issues?q=is%3Aissue">이슈 검색</a>에서
+                                확인해 주세요.
+                            </li>
+                        </ul>
+                    </section>
+
+                    <section class="aside-card">
+                        <div class="aside-head">
+                            <h2>최근 이슈</h2>
+                            <a href="https://github.com/yuyu04/hop-agent/issues?q=is%3Aissue">전체 보기</a>
+                        </div>
+                        <ol class="issues" id="recent-issues">
+                            <li class="issues-empty">최근 이슈를 불러오는 중입니다.</li>
+                        </ol>
+                    </section>
+                </aside>
+            </div>
+        </main>
+
+        <footer class="footer">
+            <div class="footer-inner">
+                <p>
+                    HOP AI는 <a href="https://github.com/golbin/hop">HOP</a>과
+                    <a href="https://github.com/edwardkim/rhwp">rhwp</a> 위에 만들었습니다.
+                </p>
+                <p class="footer-links">
+                    <a href="./">처음으로</a>
+                    <a href="https://github.com/yuyu04/hop-agent">소스 코드</a>
+                    <a href="https://github.com/yuyu04/hop-agent/releases">릴리스 노트</a>
+                </p>
+            </div>
+        </footer>
+
+        <script src="report.js" defer></script>
+    </body>
+</html>

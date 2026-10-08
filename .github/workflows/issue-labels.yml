@@ -1,0 +1,27 @@
+name: Issue labels
+
+# 사이트의 '문제 알리기'로 연 이슈는 템플릿을 거치지 않아 라벨이 없다 — 제목 머리말로 붙인다.
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  issues: write
+
+jobs:
+  label:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Label by title prefix
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TITLE: ${{ github.event.issue.title }}
+          NUMBER: ${{ github.event.issue.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          case "$TITLE" in
+            "[버그]"*) label=bug ;;
+            "[제안]"*) label=enhancement ;;
+            *) exit 0 ;;
+          esac
+          gh issue edit "$NUMBER" --repo "$REPO" --add-label "$label"

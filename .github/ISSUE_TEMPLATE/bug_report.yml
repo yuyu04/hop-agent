@@ -1,125 +1,116 @@
-name: Bug Report
-description: Report a bug in HOP
+name: 버그 신고
+description: HOP AI에서 생긴 문제를 알려 주세요
+title: "[버그] "
 labels: ["bug"]
 body:
   - type: markdown
     attributes:
       value: |
-        Before filing a HOP bug, please test the same document and steps in the upstream rhwp demo:
+        이슈는 누구나 볼 수 있는 공개 게시판입니다. **회사·개인 정보가 담긴 문서 내용이나 파일은 올리지 마세요.**
+        재현용 문서가 필요하면 내용을 지운 샘플로 만들어 주세요.
 
-        https://edwardkim.github.io/rhwp/
-
-        If the same problem also happens in rhwp, please report it to rhwp instead:
-
-        https://github.com/edwardkim/rhwp/issues
-
-  - type: checkboxes
-    id: rhwp-check
-    attributes:
-      label: Upstream rhwp check
-      description: HOP issues should be filed after checking whether the same problem reproduces in upstream rhwp.
-      options:
-        - label: I tested the same document and steps in the upstream rhwp demo.
-          required: true
-    validations:
-      required: true
+        HWP 화면 표시·열기 문제는 HWP 엔진(rhwp) 데모 https://edwardkim.github.io/rhwp/ 에서도 생기는지 확인해 주시면 원인을 빨리 찾을 수 있습니다.
 
   - type: dropdown
-    id: rhwp-result
+    id: area
     attributes:
-      label: rhwp demo result
+      label: 어디서 생겼나요?
       options:
-        - The problem does not happen in rhwp.
-        - The same problem happens in rhwp, and I opened or found an upstream rhwp issue.
-    validations:
-      required: true
-
-  - type: input
-    id: rhwp-issue
-    attributes:
-      label: rhwp issue link
-      description: If the same problem happens in rhwp, link the upstream rhwp issue here.
-      placeholder: "https://github.com/edwardkim/rhwp/issues/..."
-    validations:
-      required: false
-
-  - type: dropdown
-    id: os
-    attributes:
-      label: Operating System
-      options:
-        - macOS (Apple Silicon)
-        - macOS (Intel)
-        - Windows
-        - Linux (Ubuntu/Debian)
-        - Linux (Fedora/RHEL)
-        - Linux (Arch/Manjaro)
-        - Linux (other)
-    validations:
-      required: true
-
-  - type: input
-    id: os-version
-    attributes:
-      label: OS Version
-      placeholder: "e.g. macOS 15.4, Windows 11 24H2, Ubuntu 24.04"
-    validations:
-      required: true
-
-  - type: dropdown
-    id: package
-    attributes:
-      label: Install Package
-      options:
-        - DMG (macOS)
-        - Homebrew (macOS)
-        - MSI (Windows)
-        - AppImage (Linux)
-        - DEB (Linux)
-        - RPM (Linux)
-    validations:
-      required: true
-
-  - type: input
-    id: hop-version
-    attributes:
-      label: HOP Version
-      placeholder: "e.g. 0.1.8"
+        - AI 작성·편집
+        - AI 질문(묻기)
+        - AI 설정·모델 연결
+        - 문서 열기·저장
+        - 표·서식·편집기
+        - 화면 표시
+        - 설치·업데이트
+        - 기타
     validations:
       required: true
 
   - type: textarea
-    id: description
+    id: what
     attributes:
-      label: What happened?
-      description: Describe the bug clearly. Include screenshots if possible.
+      label: 무슨 일이 있었나요?
+      description: 화면에 보인 오류 문구가 있으면 그대로 적어 주세요. 스크린샷은 여기에 붙여 넣을 수 있습니다.
     validations:
       required: true
 
   - type: textarea
     id: steps
     attributes:
-      label: Steps to reproduce
-      description: Step-by-step instructions to reproduce the issue.
+      label: 다시 일으키는 방법
+      description: 어떤 순서로 하면 같은 문제가 생기나요? AI에 보낸 지시문도 적어 주세요.
       value: |
         1.
         2.
         3.
     validations:
-      required: true
+      required: false
 
   - type: textarea
     id: expected
     attributes:
-      label: Expected behavior
+      label: 기대한 동작
+    validations:
+      required: false
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: 운영체제
+      options:
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Windows
+        - Linux
     validations:
       required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: HOP AI 버전
+      description: 앱 정보 또는 다운로드한 릴리스 번호
+      placeholder: "예: 0.5.1"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: provider
+    attributes:
+      label: AI 공급자
+      options:
+        - 해당 없음 (AI를 쓰지 않음)
+        - Claude Code (로컬 CLI)
+        - agy CLI (로컬)
+        - Anthropic API
+        - OpenAI
+        - Gemini
+        - Ollama
+        - OpenAI 호환 (Groq 등)
+    validations:
+      required: false
+
+  - type: input
+    id: model
+    attributes:
+      label: 모델
+      placeholder: "예: sonnet, gpt-5, qwen3.8:27b"
+    validations:
+      required: false
 
   - type: textarea
     id: extra
     attributes:
-      label: Additional context
-      description: |
-        Terminal error output, HWP sample file, IME name (for input issues), display setup (for rendering issues), etc.
+      label: 추가 정보
+      description: 오류 로그, 문서 종류(HWP/HWPX), 표·그림이 있는지 등
     validations:
       required: false
+
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: 확인
+      options:
+        - label: 회사·개인 정보가 담긴 문서 내용이나 파일을 올리지 않았습니다.
+          required: true

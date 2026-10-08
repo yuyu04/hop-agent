@@ -1,42 +1,44 @@
-name: Feature Request
-description: Suggest a new feature or improvement
+name: 기능 제안
+description: 있었으면 하는 기능이나 고쳤으면 하는 점을 알려 주세요
+title: "[제안] "
 labels: ["enhancement"]
 body:
+  - type: dropdown
+    id: area
+    attributes:
+      label: 어느 부분인가요?
+      options:
+        - AI 작성·편집
+        - AI 질문(묻기)
+        - AI 설정·모델 연결
+        - 문서 열기·저장
+        - 표·서식·편집기
+        - 화면 표시
+        - 설치·업데이트
+        - 기타
+    validations:
+      required: true
+
   - type: textarea
     id: problem
     attributes:
-      label: Problem or motivation
-      description: What problem does this feature solve? Why is it needed?
+      label: 어떤 점이 불편한가요?
+      description: 지금 무엇을 하려다 막히는지 적어 주세요.
     validations:
       required: true
 
   - type: textarea
     id: solution
     attributes:
-      label: Proposed solution
-      description: Describe the feature or change you'd like to see.
-    validations:
-      required: true
-
-  - type: dropdown
-    id: area
-    attributes:
-      label: Area
-      options:
-        - Editor / Rendering
-        - File handling (open/save/export)
-        - Fonts
-        - Printing
-        - Packaging / Installation
-        - UI / UX
-        - Other
+      label: 원하는 기능
+      description: 어떻게 동작하면 좋을지 적어 주세요.
     validations:
       required: true
 
   - type: textarea
     id: extra
     attributes:
-      label: Additional context
-      description: Screenshots, mockups, sample files, or links to related issues.
+      label: 추가 정보
+      description: 참고할 화면, 다른 프로그램의 비슷한 기능, 관련 이슈 링크 등
     validations:
       required: false
