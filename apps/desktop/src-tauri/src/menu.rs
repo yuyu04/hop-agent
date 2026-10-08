@@ -65,7 +65,7 @@ pub fn install(app: &mut App) -> tauri::Result<()> {
     let fit_page = MenuItemBuilder::with_id("view:zoom-fit-page", "Fit Page").build(app)?;
     let fit_width = MenuItemBuilder::with_id("view:zoom-fit-width", "Fit Width").build(app)?;
 
-    let app_menu = SubmenuBuilder::new(app, "HOP")
+    let app_menu = SubmenuBuilder::new(app, "HOP AI")
         .item(&app_about)
         .separator()
         .services()

@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "HOP",
-  "version": "0.4.4",
-  "identifier": "net.golbin.hop",
+  "productName": "HOP AI",
+  "version": "0.5.0",
+  "identifier": "net.yuyu04.hop-ai",
   "build": {
     "beforeDevCommand": "cd ../.. && pnpm --filter @golbin/hop-studio-host dev",
     "beforeBuildCommand": "cd ../.. && pnpm run build:before-tauri",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "HOP",
+        "title": "HOP AI",
         "label": "main",
         "url": "index.html",
         "width": 1280,
@@ -29,9 +29,9 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "publisher": "golbin.net",
+    "publisher": "yuyu04",
     "shortDescription": "Open desktop editor for HWP and HWPX documents",
-    "longDescription": "HOP is Open HWP. HOP opens, edits, saves, and exports HWP/HWPX documents.",
+    "longDescription": "HOP AI is HOP (Open HWP) with an AI editing assistant. It opens, edits, writes, saves, and exports HWP/HWPX documents.",
     "category": "Productivity",
     "copyright": "Copyright (c) 2026 HOP contributors",
     "icon": [
@@ -55,12 +55,13 @@
         "role": "Editor",
         "rank": "Owner",
         "contentTypes": [
+          "net.yuyu04.hop-ai.hwp",
           "net.golbin.hop.hwp",
           "com.hancom.hwp",
           "com.haansoft.hancomofficeviewer.mac.hwp"
         ],
         "exportedType": {
-          "identifier": "net.golbin.hop.hwp",
+          "identifier": "net.yuyu04.hop-ai.hwp",
           "conformsTo": ["public.data"]
         }
       },
@@ -72,12 +73,13 @@
         "role": "Editor",
         "rank": "Owner",
         "contentTypes": [
+          "net.yuyu04.hop-ai.hwpx",
           "net.golbin.hop.hwpx",
           "com.hancom.hwpx",
           "com.haansoft.hancomofficeviewer.mac.hwpx"
         ],
         "exportedType": {
-          "identifier": "net.golbin.hop.hwpx",
+          "identifier": "net.yuyu04.hop-ai.hwpx",
           "conformsTo": ["public.data", "public.zip-archive"]
         }
       }
@@ -97,9 +99,9 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEZGQzA1Qzc3QkQ0ODhFM0YKUldRL2praTlkMXpBL3pTcUFUczdzWFBFSjV3QnBPczhJTy8zMG5OcVhYNi9sbDJtRS9JY2wxN00K",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEEwOTg0QTg0Njg1NUE3RDYKUldUV3AxVm9oRXFZb0M5SXJyU0Rqbnh1L0xJZFdMQ1h6SDFiVWowQVZGNTdBVmJ0L25vYXB6cEoK",
       "endpoints": [
-        "https://github.com/golbin/hop/releases/latest/download/latest.json"
+        "https://github.com/yuyu04/hop-agent/releases/latest/download/latest.json"
       ],
       "windows": {
         "installMode": "passive"

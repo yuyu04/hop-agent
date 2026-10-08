@@ -120,6 +120,35 @@ h1 {
     line-height: 1.72;
 }
 
+/* 한국어 제목·본문이 낱말 중간에서 끊기지 않게 한다. */
+h1,
+.summary,
+.feature-list {
+    word-break: keep-all;
+}
+
+.feature-list {
+    display: grid;
+    gap: 10px;
+    max-width: 610px;
+    margin: 22px 0 0;
+    padding: 0;
+    list-style: none;
+    color: var(--muted);
+    font-size: 1rem;
+    line-height: 1.6;
+}
+
+.feature-list li {
+    padding-left: 14px;
+    border-left: 2px solid var(--line, rgba(17, 21, 18, 0.16));
+}
+
+.feature-list strong {
+    color: var(--ink);
+    font-weight: 650;
+}
+
 .credit-note {
     max-width: 560px;
     margin: 24px 0 0;

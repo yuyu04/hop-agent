@@ -9,7 +9,7 @@
 	<key>CFBundleExecutable</key>
 	<string>HopQuickLookThumbnail</string>
 	<key>CFBundleIdentifier</key>
-	<string>net.golbin.hop.quicklook.thumbnail</string>
+	<string>net.yuyu04.hop-ai.quicklook.thumbnail</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
@@ -17,7 +17,7 @@
 	<key>CFBundlePackageType</key>
 	<string>XPC!</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.4.4</string>
+	<string>0.5.0</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
 	<key>LSMinimumSystemVersion</key>
@@ -28,7 +28,9 @@
 		<dict>
 			<key>QLSupportedContentTypes</key>
 			<array>
+				<string>net.yuyu04.hop-ai.hwp</string>
 				<string>net.golbin.hop.hwp</string>
+				<string>net.yuyu04.hop-ai.hwpx</string>
 				<string>net.golbin.hop.hwpx</string>
 				<string>com.hancom.hwp</string>
 				<string>com.hancom.hwpx</string>

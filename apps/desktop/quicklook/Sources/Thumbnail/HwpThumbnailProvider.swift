@@ -7,7 +7,7 @@ import UniformTypeIdentifiers
 
 final class HwpThumbnailProvider: QLThumbnailProvider {
     private static let logger = Logger(
-        subsystem: Bundle.main.bundleIdentifier ?? "net.golbin.hop.quicklook.thumbnail",
+        subsystem: Bundle.main.bundleIdentifier ?? "net.yuyu04.hop-ai.quicklook.thumbnail",
         category: "ThumbnailProvider"
     )
 

@@ -5,7 +5,7 @@ import UniformTypeIdentifiers
 
 final class HwpPreviewProvider: QLPreviewProvider, QLPreviewingController {
     private static let logger = Logger(
-        subsystem: Bundle.main.bundleIdentifier ?? "net.golbin.hop.quicklook.preview",
+        subsystem: Bundle.main.bundleIdentifier ?? "net.yuyu04.hop-ai.quicklook.preview",
         category: "PreviewProvider"
     )
 

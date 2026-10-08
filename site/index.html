@@ -3,19 +3,19 @@
     <head>
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <title>HOP is Open HWP</title>
+        <title>HOP AI</title>
         <meta
             name="description"
-            content="HOP는 HWP/HWPX 문서를 보고 편집할 수 있는 오픈소스 데스크톱 앱입니다."
+            content="HOP AI는 오픈소스 HWP 편집기 HOP에 AI 편집 도우미를 더한 데스크톱 앱입니다. 말로 지시하면 AI가 한글 문서를 쓰고 고칩니다."
         />
-        <meta property="og:title" content="HOP is Open HWP" />
+        <meta property="og:title" content="HOP AI" />
         <meta
             property="og:description"
-            content="HWP/HWPX 문서를 보고 편집할 수 있는 오픈소스 데스크톱 앱"
+            content="AI와 함께 HWP/HWPX 문서를 쓰고 고치는 데스크톱 앱"
         />
         <meta
             property="og:image"
-            content="../assets/screenshots/hop-editor.webp"
+            content="../assets/screenshots/hop-ai-editor.webp"
         />
         <link rel="icon" href="../assets/logo/favicon.ico" />
         <link rel="stylesheet" href="styles.css" />
@@ -31,16 +31,34 @@
                         width="48"
                         height="48"
                     />
-                    <span>HOP is Open HWP</span>
+                    <span>HOP AI</span>
                 </div>
 
                 <div class="intro-grid">
                     <div class="copy">
-                        <h1 id="title">오픈소스 HWP 앱</h1>
+                        <h1 id="title">AI와 함께 쓰는 HWP 편집기</h1>
                         <p class="summary">
-                            HOP는 HWP/HWPX 문서를 보고 편집할 수 있는 오픈소스
-                            macOS, Windows, Linux용 데스크톱 앱입니다.
+                            HOP AI는 오픈소스 HWP 편집기
+                            <a class="text-link" href="https://github.com/golbin/hop">HOP</a>에
+                            AI 편집 도우미를 더한 macOS, Windows, Linux용
+                            데스크톱 앱입니다.
                         </p>
+                        <ul class="feature-list">
+                            <li>
+                                <strong>말로 쓰고 고치기</strong> — "사업계획서
+                                초안 써줘", "표의 합계 행 추가해줘"처럼 지시하면
+                                본문·표·서식을 HWP 문서에 바로 씁니다.
+                            </li>
+                            <li>
+                                <strong>문서 위에서 검토</strong> — 바뀐 문단이
+                                강조되고, 변경마다 승인하거나 거절합니다.
+                            </li>
+                            <li>
+                                <strong>원하는 모델로</strong> — Claude·GPT·Gemini
+                                API 키, 로컬 Ollama, 또는 이미 쓰는 Claude Code
+                                구독(키 없이)으로 동작합니다.
+                            </li>
+                        </ul>
                         <section
                             class="download-panel"
                             aria-labelledby="download-title"
@@ -58,7 +76,7 @@
                                     <div class="download-options two-columns">
                                         <a
                                             class="download-link"
-                                            href="https://github.com/golbin/hop/releases/latest/download/HOP-macos-arm64.dmg"
+                                            href="https://github.com/yuyu04/hop-agent/releases/latest/download/HOP-macos-arm64.dmg"
                                             data-download-asset="HOP-macos-arm64.dmg"
                                         >
                                             <span>Apple Silicon</span>
@@ -66,7 +84,7 @@
                                         </a>
                                         <a
                                             class="download-link"
-                                            href="https://github.com/golbin/hop/releases/latest/download/HOP-macos-x64.dmg"
+                                            href="https://github.com/yuyu04/hop-agent/releases/latest/download/HOP-macos-x64.dmg"
                                             data-download-asset="HOP-macos-x64.dmg"
                                         >
                                             <span>Intel</span>
@@ -90,16 +108,17 @@
                                             />
                                         </svg>
                                         <span class="download-callout-copy">
-                                            Homebrew로도 설치할 수 있습니다.
+                                            개발자 서명 없이 배포하는 앱이라 처음
+                                            열 때 경고가 뜹니다. 응용 프로그램
+                                            폴더로 옮긴 뒤
+                                            <strong>시스템 설정 → 개인정보 보호 및
+                                            보안</strong>에서
+                                            <strong>그래도 열기</strong>를 눌러
+                                            주세요. "손상되었기 때문에 열 수
+                                            없습니다"가 뜨면 터미널에서 아래를
+                                            한 번 실행하면 됩니다.
                                             <code class="code-block"
-                                                >brew install hop</code
-                                            >
-                                            <br />
-                                            버전이 자주 업데이트되므로,
-                                            주기적으로 최신 버전으로 업그레이드
-                                            해 주세요.
-                                            <code class="code-block"
-                                                >brew upgrade hop</code
+                                                >xattr -dr com.apple.quarantine "/Applications/HOP AI.app"</code
                                             >
                                         </span>
                                     </p>
@@ -113,7 +132,7 @@
                                     <div class="download-options two-columns">
                                         <a
                                             class="download-link"
-                                            href="https://github.com/golbin/hop/releases/latest/download/HOP-windows-x64.msi"
+                                            href="https://github.com/yuyu04/hop-agent/releases/latest/download/HOP-windows-x64.msi"
                                             data-download-asset="HOP-windows-x64.msi"
                                         >
                                             <span>x64</span>
@@ -121,7 +140,7 @@
                                         </a>
                                         <a
                                             class="download-link"
-                                            href="https://github.com/golbin/hop/releases/latest/download/HOP-windows-x64.exe"
+                                            href="https://github.com/yuyu04/hop-agent/releases/latest/download/HOP-windows-x64.exe"
                                             data-download-asset="HOP-windows-x64.exe"
                                         >
                                             <span>x64</span>
@@ -145,8 +164,11 @@
                                             />
                                         </svg>
                                         <span class="download-callout-copy">
-                                            아직 서명되지 않아 다운로드나 실행
+                                            서명되지 않은 앱이라 다운로드나 실행
                                             중 보안 경고가 표시될 수 있습니다.
+                                            "Windows의 PC 보호" 창이 뜨면
+                                            <strong>추가 정보</strong> →
+                                            <strong>실행</strong>을 눌러 주세요.
                                             Edge에서 "일반적으로 다운로드되지
                                             않습니다"가 표시되면 다운로드 항목의
                                             <strong>...</strong> 메뉴에서
@@ -164,7 +186,7 @@
                                     <div class="download-options two-columns">
                                         <a
                                             class="download-link"
-                                            href="https://github.com/golbin/hop/releases/latest/download/HOP-linux-x64.deb"
+                                            href="https://github.com/yuyu04/hop-agent/releases/latest/download/HOP-linux-x64.deb"
                                             data-download-asset="HOP-linux-x64.deb"
                                         >
                                             <span>x64 .deb (권장)</span>
@@ -172,7 +194,7 @@
                                         </a>
                                         <a
                                             class="download-link"
-                                            href="https://github.com/golbin/hop/releases/latest/download/HOP-linux-x64.rpm"
+                                            href="https://github.com/yuyu04/hop-agent/releases/latest/download/HOP-linux-x64.rpm"
                                             data-download-asset="HOP-linux-x64.rpm"
                                         >
                                             <span>x64 .rpm</span>
@@ -180,7 +202,7 @@
                                         </a>
                                         <a
                                             class="download-link"
-                                            href="https://github.com/golbin/hop/releases/latest/download/HOP-linux-arm64.deb"
+                                            href="https://github.com/yuyu04/hop-agent/releases/latest/download/HOP-linux-arm64.deb"
                                             data-download-asset="HOP-linux-arm64.deb"
                                         >
                                             <span>arm64 .deb</span>
@@ -188,7 +210,7 @@
                                         </a>
                                         <a
                                             class="download-link"
-                                            href="https://github.com/golbin/hop/releases/latest/download/HOP-linux-x64.AppImage"
+                                            href="https://github.com/yuyu04/hop-agent/releases/latest/download/HOP-linux-x64.AppImage"
                                             data-download-asset="HOP-linux-x64.AppImage"
                                         >
                                             <span>AppImage</span>
@@ -220,19 +242,6 @@
                                             지원합니다. AppImage는 독립 실행형
                                             배포물이며, 일부 Linux 환경에서는
                                             작동이 불안정할 수 있습니다.
-                                            <br /><br />
-                                            Arch 계열은
-                                            <a
-                                                class="text-link"
-                                                href="https://aur.archlinux.org/packages/hop-openhwp-bin"
-                                                >AUR 패키지</a
-                                            >로 설치할 수 있습니다.
-                                            <code class="code-block"
-                                                >yay -S hop-openhwp-bin</code
-                                            >
-                                            <code class="code-block"
-                                                >paru -S hop-openhwp-bin</code
-                                            >
                                         </span>
                                     </p>
                                 </section>
@@ -243,20 +252,30 @@
                             aria-labelledby="project-links-title"
                         >
                             <p class="credit-note">
-                                HOP는
+                                HOP AI는
+                                <a
+                                    class="text-link"
+                                    href="https://github.com/golbin/hop"
+                                    >HOP</a
+                                >와
                                 <a
                                     class="text-link"
                                     href="https://github.com/edwardkim/rhwp"
                                     >rhwp</a
-                                >를 기반으로 합니다. HWP 엔진을 공개해 주신
-                                개발자분께 감사드립니다.
+                                >를 기반으로 합니다. 앱과 HWP 엔진을 공개해
+                                주신 개발자분들께 감사드립니다.
                             </p>
 
                             <div class="utility-actions" aria-label="보조 링크">
                                 <a
                                     class="button primary"
+                                    href="https://github.com/yuyu04/hop-agent"
+                                    >HOP AI GitHub</a
+                                >
+                                <a
+                                    class="button utility"
                                     href="https://github.com/golbin/hop"
-                                    >HOP GitHub</a
+                                    >원본 HOP</a
                                 >
                                 <a
                                     class="button utility"
@@ -269,8 +288,8 @@
 
                     <figure class="screenshot-wrap">
                         <img
-                            src="../assets/screenshots/hop-editor.webp"
-                            alt="HOP에서 HWP 문서를 연 화면"
+                            src="../assets/screenshots/hop-ai-editor.webp"
+                            alt="HOP AI에서 AI가 사업계획서 초안을 쓰고 바뀐 문단을 문서 위에 표시한 화면"
                         />
                     </figure>
                 </div>

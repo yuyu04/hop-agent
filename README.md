@@ -1,45 +1,44 @@
-# HOP
+# HOP AI
 
-**HOP is Open HWP**
+**HOP is Open HWP — 그리고 AI가 함께 씁니다.**
 
-HOP는 HWP/HWPX 문서를 보고 편집할 수 있는 오픈소스 macOS, Windows, Linux용 데스크탑 앱입니다.
+HOP AI는 오픈소스 HWP 편집기 [HOP](https://github.com/golbin/hop)에 AI 편집 도우미를 더한 macOS, Windows, Linux용 데스크톱 앱입니다. 문서를 열어 두고 말로 지시하면 AI가 본문·표·서식을 HWP 문서에 직접 쓰고 고치며, 바뀐 곳을 문서 위에서 확인한 뒤 승인합니다.
 
-문서 파싱과 렌더링의 기반은 [rhwp](https://github.com/edwardkim/rhwp)를 사용합니다. HOP는 그 위에 얇게 껍데기를 씌운 앱입니다. rhwp가 제공하는 기능을 바탕으로 파일 열기, 저장, PDF 내보내기, 인쇄, 파일 연결 같은 OS 통합 기능을 제공합니다.
+문서 파싱과 렌더링은 [rhwp](https://github.com/edwardkim/rhwp)를, 앱 껍데기는 [HOP](https://github.com/golbin/hop)를 기반으로 합니다.
 
-![HOP editor](assets/screenshots/hop-editor.webp)
+![HOP AI editor](assets/screenshots/hop-ai-editor.webp)
+
+다운로드 페이지: https://yuyu04.github.io/hop-agent/
 
 ## 할 수 있는 일
 
-현재 HOP는 다음 흐름을 지원합니다.
-
-* HWP/HWPX 문서 열기
-* HWP 문서 저장, 다른 이름으로 저장
-* PDF로 내보내기
-* 인쇄 다이얼로그 열기
-* 파일 드래그 앤 드롭으로 열기
-* `.hwp`, `.hwpx` 파일 연결
-* 여러 창에서 문서 열기
+* AI로 문서 쓰기·고치기 — "사업계획서 초안 써줘", "표의 합계 행 추가해줘", "이 문단 더 격식 있게"
+* 문서 위 검토 — 바뀐 문단 강조, 변경마다 승인/거절, 모두 승인(⌘⏎)/모두 거절(⌘⌫)
+* 문서 유형에 맞는 작성 지침(사업계획서·보고서·공문 등)을 AI가 스스로 골라 적용
+* Claude·GPT·Gemini API 키, 로컬 Ollama, 또는 Claude Code 구독(키 없이)으로 동작
+* HWP/HWPX 열기·저장, PDF 내보내기, 인쇄, 파일 연결, 여러 창 (HOP 기본 기능)
 
 ## 다운로드
 
 최신 릴리즈는 아래 링크에서 받을 수 있습니다.
 
-* [macOS Apple Silicon (.dmg)](https://github.com/golbin/hop/releases/latest/download/HOP-macos-arm64.dmg)
-* [macOS Intel (.dmg)](https://github.com/golbin/hop/releases/latest/download/HOP-macos-x64.dmg)
-* [Windows x64 (.msi)](https://github.com/golbin/hop/releases/latest/download/HOP-windows-x64.msi)
-* [Linux x64 (.deb, Ubuntu/Debian 계열 권장)](https://github.com/golbin/hop/releases/latest/download/HOP-linux-x64.deb)
-* [Linux x64 (.rpm, Fedora/openSUSE 계열)](https://github.com/golbin/hop/releases/latest/download/HOP-linux-x64.rpm)
-* [Linux x64 (AppImage, portable)](https://github.com/golbin/hop/releases/latest/download/HOP-linux-x64.AppImage)
-* [Linux arm64 (.deb, Ubuntu/Debian 계열)](https://github.com/golbin/hop/releases/latest/download/HOP-linux-arm64.deb)
-* [Arch Linux AUR (`hop-openhwp-bin`)](https://aur.archlinux.org/packages/hop-openhwp-bin)
+* [macOS Apple Silicon (.dmg)](https://github.com/yuyu04/hop-agent/releases/latest/download/HOP-macos-arm64.dmg)
+* [macOS Intel (.dmg)](https://github.com/yuyu04/hop-agent/releases/latest/download/HOP-macos-x64.dmg)
+* [Windows x64 (.msi)](https://github.com/yuyu04/hop-agent/releases/latest/download/HOP-windows-x64.msi)
+* [Linux x64 (.deb, Ubuntu/Debian 계열 권장)](https://github.com/yuyu04/hop-agent/releases/latest/download/HOP-linux-x64.deb)
+* [Linux x64 (.rpm, Fedora/openSUSE 계열)](https://github.com/yuyu04/hop-agent/releases/latest/download/HOP-linux-x64.rpm)
+* [Linux x64 (AppImage, portable)](https://github.com/yuyu04/hop-agent/releases/latest/download/HOP-linux-x64.AppImage)
+* [Linux arm64 (.deb, Ubuntu/Debian 계열)](https://github.com/yuyu04/hop-agent/releases/latest/download/HOP-linux-arm64.deb)
 
-macOS 빌드는 signed/notarized `.dmg`입니다. Homebrew를 통해서 설치할 수도 있습니다. Homebrew 패키지는 [daeho-ro](https://github.com/daeho-ro)님이 올려주셨습니다.
+개발자 서명 없이 배포합니다. macOS는 처음 열 때 **시스템 설정 → 개인정보 보호 및 보안 → 그래도 열기**를 누르고, "손상되었기 때문에 열 수 없습니다"가 뜨면 터미널에서 한 번 실행하세요.
 
 ```sh
-brew install hop
+xattr -dr com.apple.quarantine "/Applications/HOP AI.app"
 ```
 
-전체 릴리즈는 [GitHub Releases](https://github.com/golbin/hop/releases)에서 확인할 수 있습니다.
+Windows에서 "Windows의 PC 보호" 창이 뜨면 **추가 정보 → 실행**을 누르세요. HOP AI는 원본 HOP와 이름·식별자가 달라 함께 설치해 쓸 수 있습니다.
+
+전체 릴리즈는 [GitHub Releases](https://github.com/yuyu04/hop-agent/releases)에서 확인할 수 있습니다.
 
 ## 설치 유의사항
 

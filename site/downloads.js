@@ -1,4 +1,4 @@
-const repository = "golbin/hop";
+const repository = "yuyu04/hop-agent";
 const releasesUrl = `https://github.com/${repository}/releases`;
 const latestReleaseApiUrl = `https://api.github.com/repos/${repository}/releases/latest`;
 
