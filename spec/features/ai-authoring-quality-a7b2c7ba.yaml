@@ -1,7 +1,7 @@
 id: F-a7b2c7ba
 slug: ai-authoring-quality
 title: "AI가 새 문서를 쓸 때 긴 문서도 끝까지 오고, 문서 유형에 맞는 지침·분량·한국 문서 관례로 쓴다"
-status: in_progress
+status: done
 modules:
   - apps/studio-host/src/core/skill-select.ts
   - apps/studio-host/src/ui/agent-sidebar.ts

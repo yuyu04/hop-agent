@@ -1,7 +1,7 @@
 id: F-21ca4efe
 slug: ai-inline-review
 title: "문서 위에서 AI 변경을 커서처럼 검토한다 — 바뀐 문단 강조, 변경마다 승인/거절, 아래쪽 탐색 바"
-status: in_progress
+status: done
 modules:
   - apps/studio-host/src/ui/ai-inline-diff.ts
   - apps/studio-host/src/ui/agent-sidebar.ts

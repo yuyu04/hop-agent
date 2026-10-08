@@ -1,7 +1,7 @@
 id: F-73cbb137
 slug: ai-provider-current-models
 title: "최신 모델(Claude 5.5·GPT-6·Gemini 3.8)에서도 AI 편집 요청이 거부·잘림·글자깨짐 없이 끝까지 온다"
-status: in_progress
+status: done
 modules:
   - apps/desktop/src-tauri/src/ai/adapters/anthropic.rs
   - apps/desktop/src-tauri/src/ai/adapters/gemini.rs

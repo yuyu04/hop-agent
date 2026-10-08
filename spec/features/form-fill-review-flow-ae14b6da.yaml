@@ -1,7 +1,7 @@
 id: F-ae14b6da
 slug: form-fill-review-flow
 title: "연구노트·양식 채우기 결과를 승인/거절할 수 있고, 실패·거절 시 앱이 만든 빈 양식이 남지 않는다"
-status: in_progress
+status: done
 modules:
   - apps/studio-host/src/ui/agent-sidebar.ts
 acceptance_criteria:

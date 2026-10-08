@@ -1,7 +1,7 @@
 id: F-4848212d
 slug: hop-base-shell
 title: "원본 HOP에서 이어받은 데스크톱 앱 셸이 HOP AI에서도 그대로 동작한다 — 문서 파일·명령·창·최근 문서·글꼴·PDF·Quick Look·저장 보정·rhwp 경계"
-status: in_progress
+status: done
 modules:
   - apps/desktop/src-tauri/src/main.rs
   - apps/desktop/src-tauri/src/app_quit.rs

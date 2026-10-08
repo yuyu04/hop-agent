@@ -1,7 +1,7 @@
 id: F-54b0d1ea
 slug: ai-runtime-foundation
 title: "AI 편집 런타임 기반 — 제공자 공통 계약, API 키는 OS 키체인에만, 디자인 테마 파일, PDF 첨부 인제스트, 대화 기록 보관"
-status: in_progress
+status: done
 modules:
   - apps/desktop/src-tauri/src/ai/provider.rs
   - apps/desktop/src-tauri/src/ai/secrets.rs

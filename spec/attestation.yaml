@@ -1,73 +1,257 @@
-# Cladding · Tier C — verification attestation (v2). Written ONLY by a GREEN
-# `clad check --tier=pre-push --strict` gate — the file's one honest author.
+# Cladding · Tier C — verification attestation. Legacy module rows retain byte compatibility;
+# schema 0.1 feature rows need a GREEN strict pre-push gate; v3 replaces a schema 0.2 feature row only after an authoritative profile-complete GREEN result.
 # Do not edit by hand.
 #
+#   policy:             verifier identity: Cladding version, strict blocking,
+#                       and SHA-256 of the ordered detector catalog.
 #   attested_modules:  one line per module file across all done features,
 #                      value = sha256 of that file's bytes (16 hex). Editing a
 #                      file moves exactly its own line — not every co-owning
 #                      feature's — so parallel work rarely conflicts here.
-#   attested_features: one constant `ok` marker per done feature with modules.
-#                      STALE_ATTESTATION calls a feature fresh only when its
-#                      marker is present AND every module hash still matches.
+#   attested_features: legacy constant `ok` markers for done features not
+#                      replaced by a v3 row. STALE_ATTESTATION reads the v3
+#                      closure seal first, otherwise this marker + modules.
 #
 # Merge conflict here? NEVER hand-resolve the hashes — keep either side and run
 # `clad check --tier=pre-push --strict`; the GREEN gate rewrites the truth.
 # Content-anchored: survives fresh clones and squash/rebase.
+policy:
+  cladding: "0.10.1"
+  blocking: strict
+  detectors_sha256: 133c1ab691da7642223bcfe93ecdf4dc253f1aba08ee4e1bad865e427a2c37db
 attested_modules:
-  apps/desktop/src-tauri/src/ai/adapters/models.rs: 222f32ae62ac2724
+  HOP_AI_Agent_Spec.md: 13b688ae5c19e9f3
+  apps/desktop/quicklook/Sources/Preview/HwpPreviewProvider.swift: a9cb884285fd1b00
+  apps/desktop/quicklook/Sources/Shared/HopQuickLookFFI.swift: 44ff78e19ed973ae
+  apps/desktop/quicklook/Sources/Thumbnail/HwpThumbnailProvider.swift: 76409728abf149d1
+  apps/desktop/quicklook/rust/src/lib.rs: 17637d0901d90636
+  apps/desktop/quicklook/rust/src/pdf.rs: c91c516dbf2c300f
+  apps/desktop/quicklook/rust/src/tests.rs: fcb089fd9712e5f2
+  apps/desktop/rhwp-adapter/src/lib.rs: 857546f9ecc157ff
+  apps/desktop/src-tauri/src/ai/adapters/anthropic.rs: b5ac63fa0984ff81
+  apps/desktop/src-tauri/src/ai/adapters/cli.rs: 556e2ee2e261a32d
+  apps/desktop/src-tauri/src/ai/adapters/gemini.rs: 2755a13ac27ac4b2
+  apps/desktop/src-tauri/src/ai/adapters/mod.rs: 5679635b534b091c
+  apps/desktop/src-tauri/src/ai/adapters/models.rs: ae8c7dbe06cd65eb
+  apps/desktop/src-tauri/src/ai/adapters/openai.rs: a022645ffd132e78
+  apps/desktop/src-tauri/src/ai/adapters/sse.rs: 753e7d27b87e1537
   apps/desktop/src-tauri/src/ai/docx.rs: 568924b721f1a736
-  apps/desktop/src-tauri/src/ai/mod.rs: 171c47b5398535a0
+  apps/desktop/src-tauri/src/ai/live_smoke.rs: 82d680e41fe34fbc
+  apps/desktop/src-tauri/src/ai/mod.rs: f685b69ca2545339
+  apps/desktop/src-tauri/src/ai/pdf_figures.rs: 62beb39f800100fb
+  apps/desktop/src-tauri/src/ai/pdf_images.rs: 0fd29c30c916c508
   apps/desktop/src-tauri/src/ai/pdf_pages.rs: 87f26b965922b062
   apps/desktop/src-tauri/src/ai/pdf_pdfium.rs: 7fd2cbc41e92c72b
-  apps/desktop/src-tauri/src/ai/pdf_render.rs: 5391f3d93c2c2ac9
-  apps/desktop/src-tauri/src/ai/schema.rs: 676533b949e4747e
-  apps/desktop/src-tauri/src/ai/serialize.rs: 013d17dd9bf54d79
-  apps/desktop/src-tauri/src/commands.rs: 1377b34010fc7f56
-  apps/desktop/src-tauri/src/docx_export.rs: cbfa5c5889e8bfd3
-  apps/desktop/src-tauri/src/hwp_table_fix.rs: e70c3701e9f64545
-  apps/desktop/src-tauri/src/lib.rs: 074a4c6fc592cd47
-  apps/studio-host/src/core/ai-apply.ts: f99f9515ed096b4d
-  apps/studio-host/src/core/ai-bridge.ts: 850590545f8b3f5c
-  apps/studio-host/src/core/ai-diff.ts: a5692921ffdb80cb
+  apps/desktop/src-tauri/src/ai/pdf_render.rs: 29025427573384b9
+  apps/desktop/src-tauri/src/ai/pdf_structure.rs: c6d55e37053a9a61
+  apps/desktop/src-tauri/src/ai/provider.rs: 6df65f351004ca80
+  apps/desktop/src-tauri/src/ai/schema.rs: a2392b3557de3951
+  apps/desktop/src-tauri/src/ai/secrets.rs: 17ee2dd8d31128a8
+  apps/desktop/src-tauri/src/ai/serialize.rs: 9ddd99aee12ca409
+  apps/desktop/src-tauri/src/ai/skills.rs: 93e9b1c9afb89519
+  apps/desktop/src-tauri/src/ai/skills_default/gongmun.md: 52ab42e05aff1dcb
+  apps/desktop/src-tauri/src/ai/skills_default/hwp_edit.md: 96d726b41c1aba99
+  apps/desktop/src-tauri/src/ai/skills_default/proposal.md: f5bc7f3718fa4810
+  apps/desktop/src-tauri/src/ai/skills_default/report.md: e2ca13a7ed972ff7
+  apps/desktop/src-tauri/src/ai/skills_default/style.md: 6b49bb02cd19d554
+  apps/desktop/src-tauri/src/ai/themes.rs: 55ba45c62358e3c9
+  apps/desktop/src-tauri/src/ai/themes_default/airy.json: aaaf09eabb9974d9
+  apps/desktop/src-tauri/src/ai/themes_default/compact.json: ef250c17fc5bd883
+  apps/desktop/src-tauri/src/ai/themes_default/default.json: 1187166ef11ed8a1
+  apps/desktop/src-tauri/src/ai/themes_default/docstyle.json: b042e53f6d27a165
+  apps/desktop/src-tauri/src/ai/themes_default/match-document.json: 045fa8eb27a807aa
+  apps/desktop/src-tauri/src/app_quit.rs: be49ca972c6f3184
+  apps/desktop/src-tauri/src/commands.rs: d36f08b7a61b00f1
+  apps/desktop/src-tauri/src/docx_export.rs: 50971c48988e6105
+  apps/desktop/src-tauri/src/font_catalog.rs: cf7640db9c1eafac
+  apps/desktop/src-tauri/src/hwp_lineseg_fix.rs: 39c0860108131541
+  apps/desktop/src-tauri/src/hwp_table_fix.rs: 27b4fdac50d3817e
+  apps/desktop/src-tauri/src/lib.rs: e3337d96d786444c
+  apps/desktop/src-tauri/src/linux_runtime.rs: 64536f3341919bba
+  apps/desktop/src-tauri/src/linux_runtime_tests.rs: 52dc658c3d5c231a
+  apps/desktop/src-tauri/src/linux_runtime_tests/graphics.rs: 9c4f83d3a406c501
+  apps/desktop/src-tauri/src/linux_runtime_tests/ime.rs: 7969bd4335e57db6
+  apps/desktop/src-tauri/src/macos_recent_documents.rs: db1d485440764cfa
+  apps/desktop/src-tauri/src/main.rs: 3800063ec3a9779c
+  apps/desktop/src-tauri/src/menu.rs: 64c5a9750fbba8f9
+  apps/desktop/src-tauri/src/pdf_export.rs: 3c5a21e85505962e
+  apps/desktop/src-tauri/src/pdf_font_fallbacks.rs: 941d51bd53a51118
+  apps/desktop/src-tauri/src/pending_open.rs: fa564cc622538a5c
+  apps/desktop/src-tauri/src/recent_documents.rs: 28bed7b2cc7056e1
+  apps/desktop/src-tauri/src/state.rs: 2337b16f7d12df93
+  apps/desktop/src-tauri/src/updates.rs: 9629fce492305f46
+  apps/desktop/src-tauri/src/windows.rs: e73683362d428ba2
+  apps/studio-host/index.html: ecef67cc9a3f65e1
+  apps/studio-host/src/command/commands/ai.ts: d17c346e7cc1a064
+  apps/studio-host/src/command/commands/edit.test.ts: 0f062efdf1bc5c18
+  apps/studio-host/src/command/commands/edit.ts: d1227b73f062824b
+  apps/studio-host/src/command/commands/file.test.ts: 42bf7afa2bf05d34
+  apps/studio-host/src/command/commands/file.ts: 22b8f7847c845ba8
+  apps/studio-host/src/command/replace-upstream-commands.test.ts: fa7d61ebdd92ffeb
+  apps/studio-host/src/command/replace-upstream-commands.ts: c281fece4ad0a0b3
+  apps/studio-host/src/command/shortcut-map.test.ts: a55dde1ce7116b3a
+  apps/studio-host/src/command/shortcut-map.ts: 268848dd1dae42b4
+  apps/studio-host/src/core/ai-apply-form-fill.test.ts: 735c849aef13409f
+  apps/studio-host/src/core/ai-apply-table-trail.test.ts: 0974c771cd3d99e3
+  apps/studio-host/src/core/ai-apply.F-220afd.test.ts: 7893d04d42dae4b7
+  apps/studio-host/src/core/ai-apply.test.ts: 079c16db62a3da5f
+  apps/studio-host/src/core/ai-apply.ts: dd825c7e2572ffc7
+  apps/studio-host/src/core/ai-bridge.test.ts: ab880161a5b7df03
+  apps/studio-host/src/core/ai-bridge.ts: 777a5a785f4f520e
+  apps/studio-host/src/core/ai-diff.test.ts: 7d1b1f94449bf981
+  apps/studio-host/src/core/ai-diff.ts: def5f3db89e79ce2
+  apps/studio-host/src/core/ai-doc-format-commands.test.ts: a8f58c6100b4dbc9
+  apps/studio-host/src/core/ai-find-replace.test.ts: 3b283b0f5c915b7f
+  apps/studio-host/src/core/ai-footnote.test.ts: 9ea0130516200357
+  apps/studio-host/src/core/ai-paste-html.test.ts: a28de4c5c4d657e2
+  apps/studio-host/src/core/ai-session.test.ts: ae4b5e00bcfba77e
   apps/studio-host/src/core/ai-session.ts: 5534edd7c7e36ec3
+  apps/studio-host/src/core/ai-table-formula.test.ts: 9f642087e8a846e4
+  apps/studio-host/src/core/ai-table-split-cell.test.ts: b9e73a9653e16528
+  apps/studio-host/src/core/auto-create-document.test.ts: aaded2a203d22212
+  apps/studio-host/src/core/auto-create-entry-form.test.ts: acd53e090534ee06
+  apps/studio-host/src/core/bridge-factory.ts: 68fbf470218e726d
+  apps/studio-host/src/core/chart-render.test.ts: a9d5e5bef2128c1d
   apps/studio-host/src/core/chart-render.ts: 48b8c91bdf1a2430
-  apps/studio-host/src/core/model-catalog.ts: 04e6f8be28172e28
-  apps/studio-host/src/core/tauri-bridge.ts: 8bb53d4c0f3dd425
-  apps/studio-host/src/styles/agent-sidebar.css: 0ac2c3ec4ad79dd0
-  apps/studio-host/src/ui/agent-sidebar.ts: 543d3e5b1527b189
-  apps/studio-host/src/ui/ai-inline-diff.ts: bb8e2d0f24bec827
+  apps/studio-host/src/core/chunked-fs.test.ts: 1cf8bf0b7921eca4
+  apps/studio-host/src/core/chunked-fs.ts: d5bfde92ab7090c1
+  apps/studio-host/src/core/conversation-store.ts: 58519480d83883c9
+  apps/studio-host/src/core/cover-fill.test.ts: d93b659304e708dd
+  apps/studio-host/src/core/desktop-chrome.test.ts: d81b35f24a2fef39
+  apps/studio-host/src/core/desktop-chrome.ts: ff432469785196f6
+  apps/studio-host/src/core/desktop-events.test.ts: 68e5e4aa9ebeb8d6
+  apps/studio-host/src/core/desktop-events.ts: fe63e4e711ba2de0
+  apps/studio-host/src/core/desktop-local-fonts.ts: 637830ae72b026bb
+  apps/studio-host/src/core/doc-theme.test.ts: 66c800a2609d395e
+  apps/studio-host/src/core/doc-theme.ts: f8d13cf5e9631651
+  apps/studio-host/src/core/document-files.test.ts: 49732a8b8b3b3c85
+  apps/studio-host/src/core/document-files.ts: 9334d449129b9d24
+  apps/studio-host/src/core/docx-batch-form-fill.test.ts: d88d8da0d7ae2802
+  apps/studio-host/src/core/docx-image-into-cell.test.ts: f91d8d163da01401
+  apps/studio-host/src/core/entry-selection.test.ts: f1d486f9cf591fc5
+  apps/studio-host/src/core/font-authoring-policy.test.ts: 439ad3867e9fb6c2
+  apps/studio-host/src/core/font-authoring-policy.ts: b62632087e093e52
+  apps/studio-host/src/core/font-catalog.ts: 2765340eb0ea8791
+  apps/studio-host/src/core/font-loader.test.ts: 8b9c073da1088778
+  apps/studio-host/src/core/font-loader.ts: a1f09308df8bb4b8
+  apps/studio-host/src/core/form-body-block-fill.test.ts: 4313f7a42639433b
+  apps/studio-host/src/core/form-fill-page-layout.test.ts: a50f1720b1a450f0
+  apps/studio-host/src/core/local-fonts.test.ts: 250f4770113df5b5
+  apps/studio-host/src/core/local-fonts.ts: 622f7dca934f98ec
+  apps/studio-host/src/core/merged-label-value-resolve.test.ts: 4d198417236010a0
+  apps/studio-host/src/core/model-catalog.test.ts: 8f96ba432fe1ca14
+  apps/studio-host/src/core/model-catalog.ts: 65be78c50851b529
+  apps/studio-host/src/core/note-from-any-attachment.test.ts: 86138c85f189c458
+  apps/studio-host/src/core/overwrite-prefilled-value-cells.test.ts: 7d727e2e65d7d1f2
+  apps/studio-host/src/core/platform.test.ts: fc5f6cf1007355ac
+  apps/studio-host/src/core/platform.ts: a2176660b3a7d0f6
+  apps/studio-host/src/core/skill-select.test.ts: f4bd229957e53e75
+  apps/studio-host/src/core/skill-select.ts: bebe19b43fcf2929
+  apps/studio-host/src/core/tauri-bridge.test.ts: 0d667f8455212bdf
+  apps/studio-host/src/core/tauri-bridge.ts: a5e391e44e446c4f
+  apps/studio-host/src/core/toc-page-chunking.test.ts: d33389f8d5470bba
+  apps/studio-host/src/core/toc-regenerate-from-docx.test.ts: 84f3348d6b71da9c
+  apps/studio-host/src/host/command-runtime.test.ts: 4084271d05b1c7f9
+  apps/studio-host/src/host/command-runtime.ts: e4b927ff0aed3bb5
+  apps/studio-host/src/host/renderer-session.test.ts: ae95fd634ebba1a7
+  apps/studio-host/src/host/renderer-session.ts: e8c8d2e3b1a06156
+  apps/studio-host/src/main.ts: 08e71b4cfa115e8c
+  apps/studio-host/src/style.css: 3fbb1a512b18ce5c
+  apps/studio-host/src/styles/about-dialog.css: bf6578e99c925484
+  apps/studio-host/src/styles/agent-sidebar.css: 50d1dbb329473406
+  apps/studio-host/src/styles/custom-select.css: d14139129fc5256a
+  apps/studio-host/src/styles/font-set-dialog.css: f171fd90217f887a
+  apps/studio-host/src/styles/home-screen.css: ff091f19297105a2
+  apps/studio-host/src/styles/recent-documents-dialog.css: 8258dd33c74aad03
+  apps/studio-host/src/styles/update-notice.css: 86f1d8e1b715145f
+  apps/studio-host/src/tools/clad-smoke.smoke.ts: eaf2314e2713f14b
+  apps/studio-host/src/tools/docx-batch-convert.batch.ts: 3467e93b2148a1ed
+  apps/studio-host/src/tools/research-note-fill.smoke.ts: ff93791517832a03
+  apps/studio-host/src/tools/wasm-form-tables.ts: 792425a3a64438b5
+  apps/studio-host/src/ui/about-dialog.ts: 8f3ee0f9f2335947
+  apps/studio-host/src/ui/agent-sidebar-authoring.test.ts: 42dbb6e524d3299d
+  apps/studio-host/src/ui/agent-sidebar-layout.test.ts: 15d2d5be5ad3ff64
+  apps/studio-host/src/ui/agent-sidebar-skill.test.ts: c976189faa6da98c
+  apps/studio-host/src/ui/agent-sidebar.test.ts: eef5aa45ae15e344
+  apps/studio-host/src/ui/agent-sidebar.ts: e96d3aa432425020
+  apps/studio-host/src/ui/ai-inline-diff.test.ts: 11b73117f06a0cd2
+  apps/studio-host/src/ui/ai-inline-diff.ts: e2c69deb5d9071f8
+  apps/studio-host/src/ui/custom-select.test.ts: 87582c807f654483
+  apps/studio-host/src/ui/custom-select.ts: 833ec4779c2c0c5d
+  apps/studio-host/src/ui/dialog.test.ts: bb3ab7e03151259a
+  apps/studio-host/src/ui/dialog.ts: 9187d676244cbfae
+  apps/studio-host/src/ui/drop-point-over-rect.test.ts: 0f46382bc5738a05
+  apps/studio-host/src/ui/home-screen.ts: 9a96fb6529c7ac54
+  apps/studio-host/src/ui/preview-svg.ts: 9e041a8822c19cbf
+  apps/studio-host/src/ui/print-dialog.test.ts: a29af2232bee8d9f
+  apps/studio-host/src/ui/print-dialog.ts: 02ab982df1914880
+  apps/studio-host/src/ui/recent-documents-dialog.ts: 05a71a432895a217
+  apps/studio-host/src/ui/toolbar.test.ts: a6f00358d7215124
+  apps/studio-host/src/ui/toolbar.ts: 60d61591da8bb78f
+  apps/studio-host/src/ui/update-notice.test.ts: 8d16fb8dddb8643d
+  apps/studio-host/src/ui/update-notice.ts: b3e7a6eb452fec2a
+  apps/studio-host/src/upstream/clipboard.test.ts: 8e9c7e1a2e386842
+  apps/studio-host/src/upstream/clipboard.ts: 1f3d838052266d24
+  apps/studio-host/src/upstream/commands.ts: 8e68e51d2f3a27a5
+  apps/studio-host/src/upstream/core.ts: 582fe523539bc608
+  apps/studio-host/src/upstream/editor.ts: 931753d917f71776
+  apps/studio-host/src/upstream/local-fonts.ts: 1dbc85960871a582
+  apps/studio-host/src/upstream/shortcuts.ts: 3b24d648fbffa692
+  apps/studio-host/src/upstream/ui.ts: 9ea3534bb85247fc
+  apps/studio-host/src/upstream/view.ts: 8de90f717dd6a77d
+  apps/studio-host/src/vite-env.d.ts: b50898b691184033
+  scripts/build-quicklook-macos.mjs: c79ee8e0669fce8f
+  scripts/generate-app-icons.mjs: b77a7014cb587665
+  scripts/hwp_lineseg_dump.py: 5e10a0ebfb4bb272
+  scripts/lib/rhwp-upstream.mjs: 34d796312033c582
+  scripts/test-quicklook-macos.mjs: bc309a11d719e81a
+  scripts/update-rhwp-upstream.mjs: 7fd4a38c07ada26a
+  scripts/verify-rhwp-upstream.mjs: dfad814fe1f3db1c
+  site/downloads.js: 47423a30357a7ad9
+  site/index.html: 0bb47d88bfb8bb41
+  site/styles.css: 2e19cb8b4709d471
 attested_features:
   F-04a91c: ok
   F-075bdb05: ok
   F-0858f2: ok
   F-10a6a5: ok
+  F-15098e10: ok
   F-157aa77d: ok
   F-191fd6: ok
   F-1e6d84d6: ok
   F-21a81b: ok
+  F-21ca4efe: ok
   F-220afd: ok
   F-293e8c99: ok
   F-32a1a7d2: ok
   F-3e2d0f9a: ok
   F-403700d8: ok
+  F-45cee3df: ok
   F-46554fae: ok
   F-466f8e: ok
+  F-4848212d: ok
   F-4bdf23a4: ok
   F-4d5d3e00: ok
   F-4e2261: ok
   F-4f6d826e: ok
+  F-54b0d1ea: ok
   F-55a6a4: ok
   F-5dc6297e: ok
   F-5e9c6033: ok
+  F-6c323309: ok
   F-6daa56b3: ok
+  F-73cbb137: ok
   F-7a3dbe: ok
   F-85327e55: ok
   F-86317c64: ok
   F-8eb1f86f: ok
   F-9a5045da: ok
   F-9dbe7a25: ok
+  F-a7b2c7ba: ok
   F-addf13c1: ok
+  F-ae14b6da: ok
   F-ae778890: ok
+  F-bae302c6: ok
   F-beb35fbb: ok
   F-c63c3a91: ok
   F-d0dce3: ok
@@ -75,4 +259,5 @@ attested_features:
   F-dc4b99: ok
   F-ec1f3481: ok
   F-f6c643d1: ok
+  F-fb6592e9: ok
   F-ffa7449b: ok

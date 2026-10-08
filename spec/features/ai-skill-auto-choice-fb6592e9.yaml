@@ -1,7 +1,7 @@
 id: F-fb6592e9
 slug: ai-skill-auto-choice
 title: "글쓰기 스킬은 사용자가 고르지 않는다 — AI가 요청에 맞는 지침을 의미로 골라 따르고, 무엇을 골랐는지 답변에 보인다"
-status: in_progress
+status: done
 modules:
   - apps/studio-host/src/core/skill-select.ts
   - apps/studio-host/src/core/ai-bridge.ts

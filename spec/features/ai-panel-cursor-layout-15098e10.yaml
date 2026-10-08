@@ -1,7 +1,7 @@
 id: F-15098e10
 slug: ai-panel-cursor-layout
 title: "AI 패널이 커서 채팅처럼 보이고 동작한다 — 앱 테마 색, 입력 카드 하나, 한 줄 변경 목록, 고정 검토 바"
-status: in_progress
+status: done
 modules:
   - apps/studio-host/src/ui/agent-sidebar.ts
   - apps/studio-host/src/styles/agent-sidebar.css

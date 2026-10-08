@@ -1,7 +1,7 @@
 id: F-bae302c6
 slug: ai-generation-resilience
 title: "자동 문서 생성 결과가 일부 잘못돼도 나머지는 살리고, 새 문서·쪽나눔에서 빈 문단을 남기지 않는다"
-status: in_progress
+status: done
 modules:
   - apps/desktop/src-tauri/src/ai/schema.rs
   - apps/desktop/src-tauri/src/ai/mod.rs

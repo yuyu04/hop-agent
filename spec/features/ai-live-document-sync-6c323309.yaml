@@ -1,7 +1,7 @@
 id: F-6c323309
 slug: ai-live-document-sync
 title: "AI가 저장하지 않은 화면의 문서(직전 AI 결과 포함)를 그대로 본다"
-status: in_progress
+status: done
 modules:
   - apps/desktop/src-tauri/src/ai/mod.rs
   - apps/desktop/src-tauri/src/state.rs

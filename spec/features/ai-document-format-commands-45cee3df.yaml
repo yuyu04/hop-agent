@@ -1,7 +1,7 @@
 id: F-45cee3df
 slug: ai-document-format-commands
 title: "AI가 문단 번호·정렬·줄간격, 쪽 방향·여백, 자동 쪽 번호, 글꼴·형광펜까지 직접 지정한다"
-status: in_progress
+status: done
 modules:
   - apps/desktop/src-tauri/src/ai/schema.rs
   - apps/desktop/src-tauri/src/ai/mod.rs
