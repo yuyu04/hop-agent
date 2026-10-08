@@ -2,299 +2,337 @@
 <html lang="ko">
     <head>
         <meta charset="utf-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
         <title>HOP AI</title>
         <meta
             name="description"
-            content="HOP AI는 오픈소스 HWP 편집기 HOP에 AI 편집 도우미를 더한 데스크톱 앱입니다. 말로 지시하면 AI가 한글 문서를 쓰고 고칩니다."
+            content="말하면 한글 문서가 써집니다. HOP AI는 HWP 편집기에 AI 글쓰기 도우미를 붙인 무료 오픈소스 데스크톱 앱입니다."
         />
-        <meta property="og:title" content="HOP AI" />
+        <meta name="theme-color" content="#f3f6f3" media="(prefers-color-scheme: light)" />
+        <meta name="theme-color" content="#0b100e" media="(prefers-color-scheme: dark)" />
+        <meta property="og:title" content="HOP AI — 말하면, 한글 문서가 써집니다" />
         <meta
             property="og:description"
-            content="AI와 함께 HWP/HWPX 문서를 쓰고 고치는 데스크톱 앱"
+            content="사업계획서 초안부터 표·서식 수정까지, 지시하면 HWP 문서에 바로 쓰고 문서 위에서 검토합니다."
         />
-        <meta
-            property="og:image"
-            content="../assets/screenshots/hop-ai-editor.webp"
-        />
+        <meta property="og:image" content="../assets/screenshots/hop-ai-editor.webp" />
         <link rel="icon" href="../assets/logo/favicon.ico" />
+        <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+        <link
+            rel="stylesheet"
+            href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css"
+        />
+        <link
+            rel="stylesheet"
+            href="https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@400;600;700&display=swap"
+        />
         <link rel="stylesheet" href="styles.css" />
     </head>
     <body>
-        <main class="page-shell">
-            <section class="intro" aria-labelledby="title">
-                <div class="brand-row">
-                    <img
-                        class="logo"
-                        src="../assets/logo/logo.svg"
-                        alt=""
-                        width="48"
-                        height="48"
-                    />
-                    <span>HOP AI</span>
+        <header class="nav">
+            <div class="nav-inner">
+                <a class="brand" href="#top" aria-label="HOP AI 처음으로">
+                    <img src="../assets/logo/logo.svg" alt="" width="30" height="30" />
+                    <span>HOP <em>AI</em></span>
+                </a>
+                <nav class="nav-links" aria-label="페이지 안내">
+                    <a href="#features">기능</a>
+                    <a href="#download">다운로드</a>
+                    <a href="https://github.com/yuyu04/hop-agent">GitHub</a>
+                </nav>
+                <a class="version-pill" href="https://github.com/yuyu04/hop-agent/releases/latest" data-release-version>
+                    최신 버전
+                </a>
+            </div>
+        </header>
+
+        <main id="top">
+            <section class="hero" aria-labelledby="hero-title">
+                <div class="hero-copy">
+                    <p class="eyebrow">무료 · 오픈소스 · HWP/HWPX</p>
+                    <h1 id="hero-title">말하면,<br />한글 문서가<br />써집니다</h1>
+                    <p class="lede">
+                        HOP AI는 HWP 편집기에 AI 글쓰기 도우미를 붙인 데스크톱 앱입니다.
+                        사업계획서 초안부터 표·서식 수정까지 지시하면 문서에 바로 쓰고,
+                        바뀐 곳은 문서 위에서 확인한 뒤 승인합니다.
+                    </p>
+                    <div class="cta-row">
+                        <a class="cta-primary" href="#download" data-primary-download>
+                            <span class="cta-label" data-primary-label>내 컴퓨터용 다운로드</span>
+                            <span class="cta-sub" data-primary-sub>macOS · Windows · Linux</span>
+                        </a>
+                        <a class="cta-secondary" href="#download">다른 운영체제</a>
+                    </div>
+                    <p class="cta-note" data-primary-note>
+                        Claude·GPT·Gemini API 키, 로컬 Ollama, 또는 Claude Code 구독으로 동작합니다.
+                    </p>
                 </div>
 
-                <div class="intro-grid">
-                    <div class="copy">
-                        <h1 id="title">AI와 함께 쓰는 HWP 편집기</h1>
-                        <p class="summary">
-                            HOP AI는 오픈소스 HWP 편집기
-                            <a class="text-link" href="https://github.com/golbin/hop">HOP</a>에
-                            AI 편집 도우미를 더한 macOS, Windows, Linux용
-                            데스크톱 앱입니다.
-                        </p>
-                        <ul class="feature-list">
-                            <li>
-                                <strong>말로 쓰고 고치기</strong> — "사업계획서
-                                초안 써줘", "표의 합계 행 추가해줘"처럼 지시하면
-                                본문·표·서식을 HWP 문서에 바로 씁니다.
-                            </li>
-                            <li>
-                                <strong>문서 위에서 검토</strong> — 바뀐 문단이
-                                강조되고, 변경마다 승인하거나 거절합니다.
-                            </li>
-                            <li>
-                                <strong>원하는 모델로</strong> — Claude·GPT·Gemini
-                                API 키, 로컬 Ollama, 또는 이미 쓰는 Claude Code
-                                구독(키 없이)으로 동작합니다.
-                            </li>
-                        </ul>
-                        <section
-                            class="download-panel"
-                            aria-labelledby="download-title"
-                        >
-                            <h2 id="download-title">최신 버전 다운로드</h2>
-                            <p class="download-note" id="download-status">
-                                최신 릴리즈 파일로 연결됩니다.
-                            </p>
-                            <div class="download-platforms">
-                                <section
-                                    class="download-group"
-                                    aria-labelledby="download-macos"
-                                >
-                                    <h3 id="download-macos">macOS</h3>
-                                    <div class="download-options two-columns">
-                                        <a
-                                            class="download-link"
-                                            href="https://github.com/yuyu04/hop-agent/releases/latest/download/HOP-macos-arm64.dmg"
-                                            data-download-asset="HOP-macos-arm64.dmg"
-                                        >
-                                            <span>Apple Silicon</span>
-                                            <small>.dmg</small>
-                                        </a>
-                                        <a
-                                            class="download-link"
-                                            href="https://github.com/yuyu04/hop-agent/releases/latest/download/HOP-macos-x64.dmg"
-                                            data-download-asset="HOP-macos-x64.dmg"
-                                        >
-                                            <span>Intel</span>
-                                            <small>.dmg</small>
-                                        </a>
-                                    </div>
-                                    <p class="download-callout">
-                                        <svg
-                                            class="download-callout-icon"
-                                            aria-hidden="true"
-                                            viewBox="0 0 20 20"
-                                            focusable="false"
-                                        >
-                                            <circle cx="10" cy="10" r="8" />
-                                            <path d="M10 9v5" />
-                                            <circle
-                                                class="download-callout-dot"
-                                                cx="10"
-                                                cy="6"
-                                                r="0.9"
-                                            />
-                                        </svg>
-                                        <span class="download-callout-copy">
-                                            개발자 서명 없이 배포하는 앱이라 처음
-                                            열 때 경고가 뜹니다. 응용 프로그램
-                                            폴더로 옮긴 뒤
-                                            <strong>시스템 설정 → 개인정보 보호 및
-                                            보안</strong>에서
-                                            <strong>그래도 열기</strong>를 눌러
-                                            주세요. "손상되었기 때문에 열 수
-                                            없습니다"가 뜨면 터미널에서 아래를
-                                            한 번 실행하면 됩니다.
-                                            <code class="code-block"
-                                                >xattr -dr com.apple.quarantine "/Applications/HOP AI.app"</code
-                                            >
-                                        </span>
-                                    </p>
-                                </section>
-
-                                <section
-                                    class="download-group"
-                                    aria-labelledby="download-windows"
-                                >
-                                    <h3 id="download-windows">Windows</h3>
-                                    <div class="download-options two-columns">
-                                        <a
-                                            class="download-link"
-                                            href="https://github.com/yuyu04/hop-agent/releases/latest/download/HOP-windows-x64.msi"
-                                            data-download-asset="HOP-windows-x64.msi"
-                                        >
-                                            <span>x64</span>
-                                            <small>.msi</small>
-                                        </a>
-                                        <a
-                                            class="download-link"
-                                            href="https://github.com/yuyu04/hop-agent/releases/latest/download/HOP-windows-x64.exe"
-                                            data-download-asset="HOP-windows-x64.exe"
-                                        >
-                                            <span>x64</span>
-                                            <small>.exe setup</small>
-                                        </a>
-                                    </div>
-                                    <p class="download-callout">
-                                        <svg
-                                            class="download-callout-icon"
-                                            aria-hidden="true"
-                                            viewBox="0 0 20 20"
-                                            focusable="false"
-                                        >
-                                            <circle cx="10" cy="10" r="8" />
-                                            <path d="M10 9v5" />
-                                            <circle
-                                                class="download-callout-dot"
-                                                cx="10"
-                                                cy="6"
-                                                r="0.9"
-                                            />
-                                        </svg>
-                                        <span class="download-callout-copy">
-                                            서명되지 않은 앱이라 다운로드나 실행
-                                            중 보안 경고가 표시될 수 있습니다.
-                                            "Windows의 PC 보호" 창이 뜨면
-                                            <strong>추가 정보</strong> →
-                                            <strong>실행</strong>을 눌러 주세요.
-                                            Edge에서 "일반적으로 다운로드되지
-                                            않습니다"가 표시되면 다운로드 항목의
-                                            <strong>...</strong> 메뉴에서
-                                            <strong>유지</strong>를 선택해
-                                            주세요.
-                                        </span>
-                                    </p>
-                                </section>
-
-                                <section
-                                    class="download-group"
-                                    aria-labelledby="download-linux"
-                                >
-                                    <h3 id="download-linux">Linux</h3>
-                                    <div class="download-options two-columns">
-                                        <a
-                                            class="download-link"
-                                            href="https://github.com/yuyu04/hop-agent/releases/latest/download/HOP-linux-x64.deb"
-                                            data-download-asset="HOP-linux-x64.deb"
-                                        >
-                                            <span>x64 .deb (권장)</span>
-                                            <small>Debian/Ubuntu</small>
-                                        </a>
-                                        <a
-                                            class="download-link"
-                                            href="https://github.com/yuyu04/hop-agent/releases/latest/download/HOP-linux-x64.rpm"
-                                            data-download-asset="HOP-linux-x64.rpm"
-                                        >
-                                            <span>x64 .rpm</span>
-                                            <small>Fedora/openSUSE</small>
-                                        </a>
-                                        <a
-                                            class="download-link"
-                                            href="https://github.com/yuyu04/hop-agent/releases/latest/download/HOP-linux-arm64.deb"
-                                            data-download-asset="HOP-linux-arm64.deb"
-                                        >
-                                            <span>arm64 .deb</span>
-                                            <small>Debian/Ubuntu</small>
-                                        </a>
-                                        <a
-                                            class="download-link"
-                                            href="https://github.com/yuyu04/hop-agent/releases/latest/download/HOP-linux-x64.AppImage"
-                                            data-download-asset="HOP-linux-x64.AppImage"
-                                        >
-                                            <span>AppImage</span>
-                                            <small>독립 실행형</small>
-                                        </a>
-                                    </div>
-                                    <p class="download-callout">
-                                        <svg
-                                            class="download-callout-icon"
-                                            aria-hidden="true"
-                                            viewBox="0 0 20 20"
-                                            focusable="false"
-                                        >
-                                            <circle cx="10" cy="10" r="8" />
-                                            <path d="M10 9v5" />
-                                            <circle
-                                                class="download-callout-dot"
-                                                cx="10"
-                                                cy="6"
-                                                r="0.9"
-                                            />
-                                        </svg>
-                                        <span class="download-callout-copy">
-                                            한글 IME 안정성을 위해 배포판에 맞는
-                                            <strong>.deb</strong> 또는
-                                            <strong>.rpm</strong> 패키지를 먼저
-                                            사용해 주세요. arm64 Linux는
-                                            Debian/Ubuntu 계열 .deb를 먼저
-                                            지원합니다. AppImage는 독립 실행형
-                                            배포물이며, 일부 Linux 환경에서는
-                                            작동이 불안정할 수 있습니다.
-                                        </span>
-                                    </p>
-                                </section>
-                            </div>
-                        </section>
-                        <section
-                            class="project-links"
-                            aria-labelledby="project-links-title"
-                        >
-                            <p class="credit-note">
-                                HOP AI는
-                                <a
-                                    class="text-link"
-                                    href="https://github.com/golbin/hop"
-                                    >HOP</a
-                                >와
-                                <a
-                                    class="text-link"
-                                    href="https://github.com/edwardkim/rhwp"
-                                    >rhwp</a
-                                >를 기반으로 합니다. 앱과 HWP 엔진을 공개해
-                                주신 개발자분들께 감사드립니다.
-                            </p>
-
-                            <div class="utility-actions" aria-label="보조 링크">
-                                <a
-                                    class="button primary"
-                                    href="https://github.com/yuyu04/hop-agent"
-                                    >HOP AI GitHub</a
-                                >
-                                <a
-                                    class="button utility"
-                                    href="https://github.com/golbin/hop"
-                                    >원본 HOP</a
-                                >
-                                <a
-                                    class="button utility"
-                                    href="https://github.com/edwardkim/rhwp"
-                                    >rhwp GitHub</a
-                                >
-                            </div>
-                        </section>
+                <div class="stage" aria-hidden="true">
+                    <div class="prompt-card">
+                        <span class="prompt-avatar">나</span>
+                        <p>스마트공장 품질검사 사업계획서 15쪽으로 써줘</p>
                     </div>
 
-                    <figure class="screenshot-wrap">
-                        <img
-                            src="../assets/screenshots/hop-ai-editor.webp"
-                            alt="HOP AI에서 AI가 사업계획서 초안을 쓰고 바뀐 문단을 문서 위에 표시한 화면"
-                        />
-                    </figure>
+                    <div class="sheet">
+                        <p class="sheet-title">2027년 AI 스마트공장 품질검사 시스템 구축 사업계획서</p>
+                        <p class="sheet-h">1. 사업 개요</p>
+                        <p class="sheet-p is-new">
+                            본 사업은 제조 중소기업의 육안 검사를 AI 비전 검사로 전환해 불량 유출을
+                            줄이고, 검사 인력의 부담을 덜어 생산성을 높이는 것을 목표로 한다.
+                            <span class="mini"><i class="mini-no">✕</i><i class="mini-ok">✓</i></span>
+                        </p>
+                        <p class="sheet-caption is-new">&lt;표 1&gt; 사업 개요</p>
+                        <div class="sheet-table is-new">
+                            <span>사업 기간</span><span>2027. 3. ~ 2028. 2. (12개월)</span>
+                            <span>총사업비</span><span>4억 8천만 원</span>
+                            <span>주관 기관</span><span>○○정밀(주)</span>
+                        </div>
+                        <p class="sheet-h is-writing">2. 추진 배경 및 필요성<span class="caret"></span></p>
+                        <div class="sheet-skeleton"><i></i><i></i><i></i></div>
+                    </div>
+
+                    <div class="progress-card">
+                        <p class="progress-head">개요 9개 절 <b>· 2개 작성</b></p>
+                        <ol>
+                            <li class="done">1. 사업 개요</li>
+                            <li class="run">2. 추진 배경 및 필요성</li>
+                            <li>3. 기술 동향 및 차별성</li>
+                            <li>4. 개발 목표</li>
+                        </ol>
+                        <p class="skill-chip">✦ 지침: 사업계획서 · AI 선택</p>
+                    </div>
+
+                    <div class="review-bar">
+                        <span class="review-count">변경 1 / 9</span>
+                        <span class="review-nav">↑ ↓</span>
+                        <span class="review-sep"></span>
+                        <span class="review-btn">모두 거절</span>
+                        <span class="review-btn is-primary">모두 승인</span>
+                    </div>
                 </div>
             </section>
+
+            <section class="features" id="features" aria-labelledby="features-title">
+                <div class="section-head">
+                    <p class="eyebrow">무엇을 하나요</p>
+                    <h2 id="features-title">한글 문서 작업을 말로 시킵니다</h2>
+                </div>
+
+                <div class="bento">
+                    <article class="tile tile-wide">
+                        <div class="tile-copy">
+                            <h3>말로 쓰고 고치기</h3>
+                            <p>
+                                본문·표·서식을 HWP 구조 그대로 고칩니다. 선택한 부분만 다듬거나,
+                                입력창에 <kbd>/</kbd>를 눌러 자주 쓰는 작업을 바로 꺼냅니다.
+                            </p>
+                        </div>
+                        <ul class="chips" aria-label="지시 예시">
+                            <li>"표의 합계 행 추가해줘"</li>
+                            <li>"이 문단 더 격식 있게"</li>
+                            <li>"쪽 번호를 가운데 아래에"</li>
+                            <li>"맞춤법만 교정해줘"</li>
+                            <li>"예산 표를 차트로"</li>
+                        </ul>
+                    </article>
+
+                    <article class="tile">
+                        <div class="tile-copy">
+                            <h3>문서 위에서 검토</h3>
+                            <p>바뀐 문단이 초록으로 표시되고, 변경마다 승인하거나 거절합니다.</p>
+                        </div>
+                        <div class="mini-doc">
+                            <p class="del">기존 사업비는 5억 2,500만 원이다.</p>
+                            <p class="add">총사업비는 10억 원으로 증액한다.<span class="mini"><i class="mini-no">✕</i><i class="mini-ok">✓</i></span></p>
+                            <p class="keys"><kbd>⌘</kbd><kbd>⏎</kbd> 모두 승인 · <kbd>⌘</kbd><kbd>⌫</kbd> 모두 거절</p>
+                        </div>
+                    </article>
+
+                    <article class="tile">
+                        <div class="tile-copy">
+                            <h3>긴 문서도 끝까지</h3>
+                            <p>15쪽 사업계획서도 개요부터 만들고 절마다 나눠 써서, 중간에 끊겨 잃지 않습니다.</p>
+                        </div>
+                        <ol class="mini-progress">
+                            <li class="done">1. 사업 개요<span>완료</span></li>
+                            <li class="done">2. 추진 배경<span>완료</span></li>
+                            <li class="run">3. 기술 동향<span>작성 중</span></li>
+                            <li>4. 개발 목표<span>대기</span></li>
+                        </ol>
+                    </article>
+
+                    <article class="tile">
+                        <div class="tile-copy">
+                            <h3>문서 종류를 알아서</h3>
+                            <p>공문·보고서·사업계획서 — 요청을 읽고 맞는 작성 지침을 AI가 고릅니다. 고를 필요가 없습니다.</p>
+                        </div>
+                        <div class="stack">
+                            <p class="skill-chip">✦ 지침: 공문 · AI 선택</p>
+                            <p class="skill-line">수신 · 제목 · 1. 가. 1) · 붙임 · 끝.</p>
+                        </div>
+                    </article>
+
+                    <article class="tile">
+                        <div class="tile-copy">
+                            <h3>원하는 모델로</h3>
+                            <p>API 키로, 내 컴퓨터의 로컬 모델로, 또는 이미 쓰는 Claude Code 구독으로.</p>
+                        </div>
+                        <ul class="chips chips-tight" aria-label="지원 모델">
+                            <li>Claude</li>
+                            <li>GPT</li>
+                            <li>Gemini</li>
+                            <li>Ollama (로컬)</li>
+                            <li>Claude Code 구독</li>
+                        </ul>
+                    </article>
+
+                    <article class="tile tile-ink">
+                        <div class="tile-copy">
+                            <h3>HWP 그대로</h3>
+                            <p>
+                                HWP/HWPX 열기·저장, PDF 내보내기, 인쇄, 파일 연결. 오픈소스
+                                <a href="https://github.com/golbin/hop">HOP</a>과
+                                <a href="https://github.com/edwardkim/rhwp">rhwp</a> 엔진 위에 만들었습니다.
+                            </p>
+                        </div>
+                        <p class="formats"><span>.hwp</span><span>.hwpx</span><span>.pdf</span></p>
+                    </article>
+                </div>
+            </section>
+
+            <section class="showcase" aria-labelledby="showcase-title">
+                <div class="section-head">
+                    <p class="eyebrow">실제 화면</p>
+                    <h2 id="showcase-title">편집기 옆에 AI가 앉아 있습니다</h2>
+                </div>
+                <figure class="window">
+                    <div class="window-bar" aria-hidden="true"><i></i><i></i><i></i><span>HOP AI</span></div>
+                    <img
+                        src="../assets/screenshots/hop-ai-editor.webp"
+                        alt="HOP AI에서 AI가 사업계획서 초안을 쓰고, 바뀐 문단을 문서 위에 초록으로 표시한 화면"
+                        width="1440"
+                        height="900"
+                        loading="lazy"
+                    />
+                </figure>
+            </section>
+
+            <section class="download" id="download" aria-labelledby="download-title">
+                <div class="section-head">
+                    <p class="eyebrow">다운로드</p>
+                    <h2 id="download-title">내 컴퓨터에 설치</h2>
+                    <p class="download-status" id="download-status">최신 릴리스 파일로 연결됩니다.</p>
+                </div>
+
+                <div class="platforms">
+                    <article class="platform" data-platform="mac">
+                        <h3>macOS</h3>
+                        <p class="platform-req">macOS 12 이상</p>
+                        <div class="files">
+                            <a
+                                class="file"
+                                href="https://github.com/yuyu04/hop-agent/releases/latest/download/HOP-macos-arm64.dmg"
+                                data-download-asset="HOP-macos-arm64.dmg"
+                            ><span>Apple Silicon</span><small>.dmg · M1 이후</small></a>
+                            <a
+                                class="file"
+                                href="https://github.com/yuyu04/hop-agent/releases/latest/download/HOP-macos-x64.dmg"
+                                data-download-asset="HOP-macos-x64.dmg"
+                            ><span>Intel</span><small>.dmg</small></a>
+                        </div>
+                    </article>
+
+                    <article class="platform" data-platform="windows">
+                        <h3>Windows</h3>
+                        <p class="platform-req">Windows 10 이상 · x64</p>
+                        <div class="files">
+                            <a
+                                class="file"
+                                href="https://github.com/yuyu04/hop-agent/releases/latest/download/HOP-windows-x64.msi"
+                                data-download-asset="HOP-windows-x64.msi"
+                            ><span>MSI 설치 파일</span><small>.msi · 권장</small></a>
+                            <a
+                                class="file"
+                                href="https://github.com/yuyu04/hop-agent/releases/latest/download/HOP-windows-x64.exe"
+                                data-download-asset="HOP-windows-x64.exe"
+                            ><span>EXE 설치 마법사</span><small>.exe</small></a>
+                        </div>
+                    </article>
+
+                    <article class="platform" data-platform="linux">
+                        <h3>Linux</h3>
+                        <p class="platform-req">한글 입력은 .deb·.rpm 권장</p>
+                        <div class="files">
+                            <a
+                                class="file"
+                                href="https://github.com/yuyu04/hop-agent/releases/latest/download/HOP-linux-x64.deb"
+                                data-download-asset="HOP-linux-x64.deb"
+                            ><span>Debian·Ubuntu</span><small>.deb · x64</small></a>
+                            <a
+                                class="file"
+                                href="https://github.com/yuyu04/hop-agent/releases/latest/download/HOP-linux-x64.rpm"
+                                data-download-asset="HOP-linux-x64.rpm"
+                            ><span>Fedora·openSUSE</span><small>.rpm · x64</small></a>
+                            <a
+                                class="file"
+                                href="https://github.com/yuyu04/hop-agent/releases/latest/download/HOP-linux-x64.AppImage"
+                                data-download-asset="HOP-linux-x64.AppImage"
+                            ><span>AppImage</span><small>x64 · 설치 없이</small></a>
+                            <a
+                                class="file"
+                                href="https://github.com/yuyu04/hop-agent/releases/latest/download/HOP-linux-arm64.deb"
+                                data-download-asset="HOP-linux-arm64.deb"
+                            ><span>Debian·Ubuntu</span><small>.deb · arm64</small></a>
+                        </div>
+                    </article>
+                </div>
+
+                <details class="install-help">
+                    <summary>처음 열 때 경고가 뜨나요?</summary>
+                    <div class="install-body">
+                        <p>
+                            개발자 서명 없이 배포하는 앱이라 운영체제가 한 번 확인을 요청합니다.
+                            원본 HOP와 이름이 달라 함께 설치해도 됩니다.
+                        </p>
+                        <h4>macOS</h4>
+                        <p>
+                            응용 프로그램 폴더로 옮긴 뒤 <b>시스템 설정 → 개인정보 보호 및 보안</b>에서
+                            <b>그래도 열기</b>를 누르세요. "손상되었기 때문에 열 수 없습니다"가 뜨면
+                            터미널에서 아래를 한 번 실행하세요.
+                        </p>
+                        <div class="code">
+                            <code id="quarantine-cmd">xattr -dr com.apple.quarantine "/Applications/HOP AI.app"</code>
+                            <button type="button" class="copy" data-copy-target="quarantine-cmd">복사</button>
+                        </div>
+                        <h4>Windows</h4>
+                        <p>
+                            "Windows의 PC 보호" 창이 뜨면 <b>추가 정보 → 실행</b>을 누르세요. Edge에서
+                            "일반적으로 다운로드되지 않습니다"가 보이면 다운로드 항목의 <b>…</b> 메뉴에서
+                            <b>유지</b>를 고르세요.
+                        </p>
+                    </div>
+                </details>
+            </section>
         </main>
+
+        <footer class="footer">
+            <div class="footer-inner">
+                <p>
+                    HOP AI는 <a href="https://github.com/golbin/hop">HOP</a>과
+                    <a href="https://github.com/edwardkim/rhwp">rhwp</a> 위에 만들었습니다. 앱과 HWP 엔진을
+                    공개해 주신 개발자분들께 감사드립니다.
+                </p>
+                <p class="footer-links">
+                    <a href="https://github.com/yuyu04/hop-agent">소스 코드</a>
+                    <a href="https://github.com/yuyu04/hop-agent/releases">릴리스 노트</a>
+                    <a href="https://github.com/yuyu04/hop-agent/blob/main/LICENSE">MIT 라이선스</a>
+                </p>
+            </div>
+        </footer>
+
         <script src="downloads.js" defer></script>
     </body>
 </html>
