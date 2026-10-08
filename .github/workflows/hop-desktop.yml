@@ -211,7 +211,7 @@ jobs:
               exit 1
             fi
 
-            release_name="HOP $release_tag"
+            release_name="HOP AI $release_tag"
           else
             release_name=""
           fi
@@ -907,7 +907,7 @@ jobs:
 
           VERSION="${RELEASE_TAG#v}" \
           UPDATER_PLATFORMS_JSONL="$updater_platforms_jsonl" \
-            node -e "const fs = require('node:fs'); const lines = fs.readFileSync(process.env.UPDATER_PLATFORMS_JSONL, 'utf8').trim().split(/\n+/).filter(Boolean); const platforms = {}; for (const line of lines) { const { key, url, signature } = JSON.parse(line); platforms[key] = { url, signature }; } const manifest = { version: process.env.VERSION, notes: 'Desktop installers for HOP.', pub_date: new Date().toISOString(), platforms }; fs.writeFileSync('release-assets/latest.json', JSON.stringify(manifest, null, 2) + '\n');"
+            node -e "const fs = require('node:fs'); const lines = fs.readFileSync(process.env.UPDATER_PLATFORMS_JSONL, 'utf8').trim().split(/\n+/).filter(Boolean); const platforms = {}; for (const line of lines) { const { key, url, signature } = JSON.parse(line); platforms[key] = { url, signature }; } const manifest = { version: process.env.VERSION, notes: 'Desktop installers for HOP AI.', pub_date: new Date().toISOString(), platforms }; fs.writeFileSync('release-assets/latest.json', JSON.stringify(manifest, null, 2) + '\n');"
 
           if [[ "$release_asset_count" -eq 0 ]]; then
             echo "::error::No supported release assets were found. Expected at least one macOS .dmg, Windows .msi/.exe, or Linux AppImage/.deb/.rpm artifact."
