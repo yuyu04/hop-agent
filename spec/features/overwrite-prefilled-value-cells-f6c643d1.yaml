@@ -4,6 +4,7 @@ title: "채워진 양식의 값칸도 덮어쓰기 — 값칸 판정을 텍스�
 status: done
 modules:
   - apps/studio-host/src/core/ai-apply.ts
+  - apps/studio-host/src/core/overwrite-prefilled-value-cells.test.ts
 acceptance_criteria:
   - id: AC-361cac4d
     ears: event

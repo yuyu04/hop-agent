@@ -9,6 +9,8 @@ modules:
   - apps/studio-host/src/styles/agent-sidebar.css
   - apps/desktop/src-tauri/src/ai/schema.rs
   - apps/desktop/src-tauri/src/ai/mod.rs
+  - apps/studio-host/src/core/skill-select.test.ts
+  - apps/studio-host/src/ui/agent-sidebar-skill.test.ts
 acceptance_criteria:
   - id: AC-cee73e04
     ears: event

@@ -9,6 +9,10 @@ modules:
   - apps/studio-host/src/ui/agent-sidebar.ts
   - apps/desktop/src-tauri/src/ai/mod.rs
   - apps/desktop/src-tauri/src/lib.rs
+  - apps/studio-host/src/core/docx-batch-form-fill.test.ts
+  - apps/studio-host/src/core/entry-selection.test.ts
+  - apps/studio-host/src/tools/docx-batch-convert.batch.ts
+  - apps/studio-host/src/tools/wasm-form-tables.ts
 acceptance_criteria:
   - id: AC-262d6d09
     ears: event

@@ -6,6 +6,7 @@ modules:
   - apps/studio-host/src/core/ai-apply.ts
   - apps/studio-host/src/core/ai-bridge.ts
   - apps/studio-host/src/ui/agent-sidebar.ts
+  - apps/studio-host/src/core/toc-page-chunking.test.ts
 acceptance_criteria:
   - id: AC-cd78052c
     ears: ubiquitous

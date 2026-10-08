@@ -4,6 +4,7 @@ title: "문서 첨부 = 네이티브 open 다이얼로그(경로 확보) + 드�
 status: done
 modules:
   - apps/studio-host/src/ui/agent-sidebar.ts
+  - apps/studio-host/src/ui/drop-point-over-rect.test.ts
 acceptance_criteria:
   - id: AC-49bfdc5e
     ears: event

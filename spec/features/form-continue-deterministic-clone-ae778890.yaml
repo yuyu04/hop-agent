@@ -8,6 +8,7 @@ modules:
   - apps/desktop/src-tauri/src/ai/schema.rs
   - apps/desktop/src-tauri/src/ai/mod.rs
   - apps/desktop/src-tauri/src/ai/serialize.rs
+  - apps/studio-host/src/core/ai-apply-form-fill.test.ts
 acceptance_criteria:
   - id: AC-0cd01fc1
     ears: event

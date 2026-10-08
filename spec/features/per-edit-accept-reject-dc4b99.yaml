@@ -8,6 +8,7 @@ modules:
   - apps/studio-host/src/core/ai-apply.ts
   - apps/studio-host/src/ui/agent-sidebar.ts
   - apps/studio-host/src/ui/ai-inline-diff.ts
+  - apps/studio-host/src/core/ai-session.test.ts
 acceptance_criteria:
   - id: AC-8d733a
     ears: event

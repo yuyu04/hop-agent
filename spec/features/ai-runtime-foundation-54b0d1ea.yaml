@@ -1,0 +1,41 @@
+id: F-54b0d1ea
+slug: ai-runtime-foundation
+title: "AI 편집 런타임 기반 — 제공자 공통 계약, API 키는 OS 키체인에만, 디자인 테마 파일, PDF 첨부 인제스트, 대화 기록 보관"
+status: in_progress
+modules:
+  - apps/desktop/src-tauri/src/ai/provider.rs
+  - apps/desktop/src-tauri/src/ai/secrets.rs
+  - apps/desktop/src-tauri/src/ai/themes.rs
+  - apps/desktop/src-tauri/src/ai/pdf_structure.rs
+  - apps/desktop/src-tauri/src/ai/pdf_figures.rs
+  - apps/desktop/src-tauri/src/ai/pdf_images.rs
+  - apps/desktop/src-tauri/src/ai/live_smoke.rs
+  - apps/studio-host/src/core/conversation-store.ts
+  - apps/desktop/src-tauri/src/ai/themes_default/airy.json
+  - apps/desktop/src-tauri/src/ai/themes_default/compact.json
+  - apps/desktop/src-tauri/src/ai/themes_default/docstyle.json
+  - apps/desktop/src-tauri/src/ai/themes_default/match-document.json
+acceptance_criteria:
+  - id: AC-46eec7e2
+    ears: ubiquitous
+    text: "The system shall 모든 AI 제공자 어댑터가 같은 요청·스트리밍·취소 계약을 따르고, 실패를 취소·시간 초과·제공자 오류의 안정된 코드로 프런트에 알린다."
+    test_refs:
+      - apps/desktop/src-tauri/src/ai/provider.rs
+  - id: AC-15965942
+    ears: ubiquitous
+    text: "The system shall API 키를 OS 키체인에만 저장·조회·삭제하고 디스크 파일이나 프런트 저장소에 남기지 않는다."
+    test_refs:
+      - apps/desktop/src-tauri/src/ai/secrets.rs
+  - id: AC-bd5b555f
+    ears: ubiquitous
+    text: "The system shall 디자인 테마를 번들 기본 파일과 사용자 테마 폴더(themes/*.json)에서 읽어 목록으로 준다."
+    test_refs:
+      - apps/desktop/src-tauri/src/ai/themes.rs
+  - id: AC-8baa9896
+    ears: event
+    condition: "When 사용자가 PDF를 첨부할 때"
+    text: "The system shall PDF의 텍스트 구조(항목·목차)와 그림·표 영역을 뽑아 AI 요청에 실을 수 있게 한다."
+    test_refs:
+      - apps/desktop/src-tauri/src/ai/pdf_structure.rs
+      - apps/desktop/src-tauri/src/ai/pdf_figures.rs
+      - apps/desktop/src-tauri/src/ai/pdf_images.rs

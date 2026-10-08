@@ -5,6 +5,7 @@ status: done
 modules:
   - apps/studio-host/src/core/ai-apply.ts
   - apps/studio-host/src/ui/agent-sidebar.ts
+  - apps/studio-host/src/core/auto-create-document.test.ts
 acceptance_criteria:
   - id: AC-3ecda9cf
     ears: event

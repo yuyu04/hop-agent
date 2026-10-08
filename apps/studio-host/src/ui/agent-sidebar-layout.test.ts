@@ -774,6 +774,8 @@ describe('F-15098e10: AI 패널 커서 레이아웃', () => {
   // ─────────────────────────────────────────────────────────
   describe('AC-c20c4990', () => {
     it('AC-c20c4990: the header row is [title][tabs][new chat][history][menu][close] and each button is an SVG icon', async () => {
+      // 단축키 표기는 실행 플랫폼을 따른다(macOS ⌘J / 그 밖 Ctrl+J) — CI(Linux)와 맥에서 같게 돌도록 고정한다.
+      vi.stubGlobal('navigator', { platform: 'MacIntel' });
       build();
       await flush();
       const header = q('hop-ai-header');
@@ -805,6 +807,15 @@ describe('F-15098e10: AI 패널 커서 레이아웃', () => {
         // 아이콘만 있는 버튼 — 글자 기호를 버튼 글자로 쓰지 않는다.
         expect(button.textContent).toBe('');
       }
+      vi.unstubAllGlobals();
+    });
+
+    it('AC-c20c4990: the close button names the Ctrl+J shortcut on non-mac platforms', async () => {
+      vi.stubGlobal('navigator', { platform: 'Win32' });
+      build();
+      await flush();
+      expect(q('hop-ai-close').getAttribute('aria-label')).toBe('패널 닫기 (Ctrl+J)');
+      vi.unstubAllGlobals();
     });
 
     it('AC-c20c4990: no panel button text uses emoji or glyph symbols, in idle, proposal and open-menu states', async () => {

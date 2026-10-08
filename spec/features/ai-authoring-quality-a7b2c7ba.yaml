@@ -16,6 +16,14 @@ modules:
   - apps/desktop/src-tauri/src/ai/adapters/anthropic.rs
   - apps/desktop/src-tauri/src/ai/adapters/gemini.rs
   - apps/desktop/src-tauri/src/ai/adapters/cli.rs
+  - apps/studio-host/src/core/ai-apply-table-trail.test.ts
+  - apps/studio-host/src/core/ai-apply.test.ts
+  - apps/studio-host/src/core/doc-theme.test.ts
+  - apps/studio-host/src/ui/agent-sidebar-authoring.test.ts
+  - apps/studio-host/src/ui/agent-sidebar.test.ts
+  - apps/desktop/src-tauri/src/ai/skills_default/proposal.md
+  - apps/desktop/src-tauri/src/ai/skills_default/report.md
+  - apps/desktop/src-tauri/src/ai/skills_default/style.md
 acceptance_criteria:
   - id: AC-8790cc2f
     ears: event

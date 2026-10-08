@@ -6,6 +6,7 @@ modules:
   - apps/desktop/src-tauri/src/ai/schema.rs
   - apps/studio-host/src/core/ai-bridge.ts
   - apps/studio-host/src/core/ai-apply.ts
+  - apps/studio-host/src/core/ai-table-formula.test.ts
 acceptance_criteria:
   - id: AC-32888b59
     ears: event

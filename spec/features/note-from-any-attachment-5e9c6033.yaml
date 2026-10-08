@@ -4,6 +4,7 @@ title: "연구노트형이 아닌 첨부도 연구노트로 — 구조 파싱 �
 status: done
 modules:
   - apps/studio-host/src/ui/agent-sidebar.ts
+  - apps/studio-host/src/core/note-from-any-attachment.test.ts
 acceptance_criteria:
   - id: AC-d4ab799d
     ears: event

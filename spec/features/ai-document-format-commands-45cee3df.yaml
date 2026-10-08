@@ -8,6 +8,8 @@ modules:
   - apps/studio-host/src/core/ai-apply.ts
   - apps/studio-host/src/core/ai-bridge.ts
   - apps/studio-host/src/core/doc-theme.ts
+  - apps/studio-host/src/core/ai-bridge.test.ts
+  - apps/studio-host/src/core/ai-doc-format-commands.test.ts
 acceptance_criteria:
   - id: AC-bce2505c
     ears: event

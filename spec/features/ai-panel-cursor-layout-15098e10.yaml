@@ -10,6 +10,11 @@ modules:
   - apps/studio-host/src/main.ts
   - apps/studio-host/src/command/shortcut-map.ts
   - apps/studio-host/src/host/command-runtime.ts
+  - apps/studio-host/src/command/commands/ai.ts
+  - apps/studio-host/src/command/shortcut-map.test.ts
+  - apps/studio-host/src/core/ai-diff.test.ts
+  - apps/studio-host/src/host/command-runtime.test.ts
+  - apps/studio-host/src/ui/agent-sidebar-layout.test.ts
 acceptance_criteria:
   - id: AC-a0e24ea5
     ears: ubiquitous

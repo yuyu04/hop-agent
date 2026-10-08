@@ -7,6 +7,7 @@ modules:
   - apps/desktop/src-tauri/src/state.rs
   - apps/desktop/src-tauri/src/lib.rs
   - apps/studio-host/src/core/tauri-bridge.ts
+  - apps/studio-host/src/core/tauri-bridge.test.ts
 acceptance_criteria:
   - id: AC-35e27d90
     ears: event

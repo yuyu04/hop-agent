@@ -1,0 +1,154 @@
+id: F-4848212d
+slug: hop-base-shell
+title: "원본 HOP에서 이어받은 데스크톱 앱 셸이 HOP AI에서도 그대로 동작한다 — 문서 파일·명령·창·최근 문서·글꼴·PDF·Quick Look·저장 보정·rhwp 경계"
+status: in_progress
+modules:
+  - apps/desktop/src-tauri/src/main.rs
+  - apps/desktop/src-tauri/src/app_quit.rs
+  - apps/desktop/src-tauri/src/windows.rs
+  - apps/desktop/src-tauri/src/menu.rs
+  - apps/desktop/src-tauri/src/pending_open.rs
+  - apps/desktop/src-tauri/src/recent_documents.rs
+  - apps/desktop/src-tauri/src/macos_recent_documents.rs
+  - apps/desktop/src-tauri/src/updates.rs
+  - apps/desktop/src-tauri/src/font_catalog.rs
+  - apps/desktop/src-tauri/src/pdf_export.rs
+  - apps/desktop/src-tauri/src/pdf_font_fallbacks.rs
+  - apps/desktop/src-tauri/src/hwp_lineseg_fix.rs
+  - apps/desktop/src-tauri/src/linux_runtime.rs
+  - apps/desktop/src-tauri/src/linux_runtime_tests.rs
+  - apps/desktop/src-tauri/src/linux_runtime_tests/graphics.rs
+  - apps/desktop/src-tauri/src/linux_runtime_tests/ime.rs
+  - apps/desktop/rhwp-adapter/src/lib.rs
+  - apps/desktop/quicklook/rust/src/lib.rs
+  - apps/desktop/quicklook/rust/src/pdf.rs
+  - apps/desktop/quicklook/rust/src/tests.rs
+  - apps/desktop/quicklook/Sources/Preview/HwpPreviewProvider.swift
+  - apps/desktop/quicklook/Sources/Thumbnail/HwpThumbnailProvider.swift
+  - apps/desktop/quicklook/Sources/Shared/HopQuickLookFFI.swift
+  - apps/studio-host/src/command/commands/edit.ts
+  - apps/studio-host/src/command/commands/edit.test.ts
+  - apps/studio-host/src/command/commands/file.ts
+  - apps/studio-host/src/command/commands/file.test.ts
+  - apps/studio-host/src/command/replace-upstream-commands.ts
+  - apps/studio-host/src/command/replace-upstream-commands.test.ts
+  - apps/studio-host/src/core/bridge-factory.ts
+  - apps/studio-host/src/core/chunked-fs.ts
+  - apps/studio-host/src/core/chunked-fs.test.ts
+  - apps/studio-host/src/core/desktop-chrome.ts
+  - apps/studio-host/src/core/desktop-chrome.test.ts
+  - apps/studio-host/src/core/desktop-events.ts
+  - apps/studio-host/src/core/desktop-events.test.ts
+  - apps/studio-host/src/core/desktop-local-fonts.ts
+  - apps/studio-host/src/core/document-files.ts
+  - apps/studio-host/src/core/document-files.test.ts
+  - apps/studio-host/src/core/font-authoring-policy.ts
+  - apps/studio-host/src/core/font-authoring-policy.test.ts
+  - apps/studio-host/src/core/font-catalog.ts
+  - apps/studio-host/src/core/font-loader.ts
+  - apps/studio-host/src/core/font-loader.test.ts
+  - apps/studio-host/src/core/local-fonts.ts
+  - apps/studio-host/src/core/local-fonts.test.ts
+  - apps/studio-host/src/core/platform.ts
+  - apps/studio-host/src/core/platform.test.ts
+  - apps/studio-host/src/host/renderer-session.ts
+  - apps/studio-host/src/host/renderer-session.test.ts
+  - apps/studio-host/src/ui/about-dialog.ts
+  - apps/studio-host/src/ui/custom-select.ts
+  - apps/studio-host/src/ui/custom-select.test.ts
+  - apps/studio-host/src/ui/dialog.ts
+  - apps/studio-host/src/ui/dialog.test.ts
+  - apps/studio-host/src/ui/home-screen.ts
+  - apps/studio-host/src/ui/preview-svg.ts
+  - apps/studio-host/src/ui/print-dialog.ts
+  - apps/studio-host/src/ui/print-dialog.test.ts
+  - apps/studio-host/src/ui/recent-documents-dialog.ts
+  - apps/studio-host/src/ui/toolbar.ts
+  - apps/studio-host/src/ui/toolbar.test.ts
+  - apps/studio-host/src/ui/update-notice.ts
+  - apps/studio-host/src/ui/update-notice.test.ts
+  - apps/studio-host/src/upstream/clipboard.ts
+  - apps/studio-host/src/upstream/clipboard.test.ts
+  - apps/studio-host/src/upstream/commands.ts
+  - apps/studio-host/src/upstream/core.ts
+  - apps/studio-host/src/upstream/editor.ts
+  - apps/studio-host/src/upstream/local-fonts.ts
+  - apps/studio-host/src/upstream/shortcuts.ts
+  - apps/studio-host/src/upstream/ui.ts
+  - apps/studio-host/src/upstream/view.ts
+  - apps/studio-host/src/vite-env.d.ts
+  - scripts/build-quicklook-macos.mjs
+  - scripts/test-quicklook-macos.mjs
+  - scripts/generate-app-icons.mjs
+  - scripts/hwp_lineseg_dump.py
+  - scripts/lib/rhwp-upstream.mjs
+  - scripts/update-rhwp-upstream.mjs
+  - scripts/verify-rhwp-upstream.mjs
+  - site/downloads.js
+  - apps/studio-host/src/style.css
+  - apps/studio-host/src/styles/about-dialog.css
+  - apps/studio-host/src/styles/custom-select.css
+  - apps/studio-host/src/styles/font-set-dialog.css
+  - apps/studio-host/src/styles/home-screen.css
+  - apps/studio-host/src/styles/recent-documents-dialog.css
+  - apps/studio-host/src/styles/update-notice.css
+  - site/index.html
+  - site/styles.css
+acceptance_criteria:
+  - id: AC-ccd24bee
+    ears: ubiquitous
+    text: "The system shall 파일(새로·열기·최근·저장·다른 이름으로·PDF·인쇄)과 편집(오려두기·복사·붙이기) 명령을 HOP 구현으로 바꿔 끼워 등록하고, 명령 ID와 단축키가 겹치지 않으며 화면의 모든 data-cmd가 등록된 명령을 가리킨다."
+    test_refs:
+      - apps/studio-host/src/command/commands/file.test.ts
+      - apps/studio-host/src/command/commands/edit.test.ts
+      - apps/studio-host/src/command/replace-upstream-commands.test.ts
+  - id: AC-dca9f014
+    ears: ubiquitous
+    text: "The system shall 데스크톱 문서 수명주기(열기 대기열·최근 문서·여러 창·저장 안 한 문서 종료 확인)를 네이티브에서 관리하고, 프런트는 문서 파일 입출력을 청크로 주고받는다."
+    test_refs:
+      - apps/desktop/src-tauri/src/pending_open.rs
+      - apps/desktop/src-tauri/src/recent_documents.rs
+      - apps/desktop/src-tauri/src/windows.rs
+      - apps/desktop/src-tauri/src/app_quit.rs
+      - apps/studio-host/src/core/document-files.test.ts
+      - apps/studio-host/src/core/chunked-fs.test.ts
+      - apps/studio-host/src/core/desktop-events.test.ts
+  - id: AC-48d94ed9
+    ears: ubiquitous
+    text: "The system shall 문서 작성용 글꼴을 번들 카탈로그와 로컬 글꼴에서 찾아 쓰고, PDF로 내보낼 때 한글 글꼴이 없으면 번들 대체 글꼴로 채운다."
+    test_refs:
+      - apps/desktop/src-tauri/src/font_catalog.rs
+      - apps/desktop/src-tauri/src/pdf_export.rs
+      - apps/desktop/src-tauri/src/pdf_font_fallbacks.rs
+      - apps/studio-host/src/core/font-loader.test.ts
+      - apps/studio-host/src/core/local-fonts.test.ts
+      - apps/studio-host/src/core/font-authoring-policy.test.ts
+  - id: AC-12dd23f0
+    ears: event
+    condition: "When HWP를 저장할 때"
+    text: "The system shall 줄 배치(PARA_LINE_SEG) 세로 위치를 포맷 표준인 쪽 기준으로 보정해 2쪽 이상 문서가 다른 뷰어에서 겹쳐 보이지 않게 한다."
+    test_refs:
+      - apps/desktop/src-tauri/src/hwp_lineseg_fix.rs
+  - id: AC-d74b20a6
+    ears: ubiquitous
+    text: "The system shall macOS Finder의 HWP/HWPX 미리보기·썸네일을 Quick Look 확장으로 제공한다."
+    test_refs:
+      - apps/desktop/quicklook/rust/src/tests.rs
+  - id: AC-daf3dc41
+    ears: ubiquitous
+    text: "The system shall rhwp를 어댑터(데스크톱)와 포트(스튜디오)로만 쓰고, 고정한 rhwp 커밋·WASM 산출물·오버라이드 기준선이 서로 맞는지 검사한다."
+    test_refs:
+      - tests/rhwp-boundary.test.mjs
+      - tests/rhwp-baseline.test.mjs
+      - tests/update-upstream.test.mjs
+  - id: AC-26f6acf4
+    ears: ubiquitous
+    text: "The system shall 앱 셸 UI(인쇄·대화상자·사용자 지정 선택 상자·툴바·업데이트 알림)를 앱 테마에 맞춰 보이고, 데스크톱 플랫폼을 판별해 단축키 표기와 창 장식을 맞춘다."
+    test_refs:
+      - apps/studio-host/src/ui/print-dialog.test.ts
+      - apps/studio-host/src/ui/dialog.test.ts
+      - apps/studio-host/src/ui/custom-select.test.ts
+      - apps/studio-host/src/ui/toolbar.test.ts
+      - apps/studio-host/src/ui/update-notice.test.ts
+      - apps/studio-host/src/core/platform.test.ts
+      - apps/studio-host/src/core/desktop-chrome.test.ts

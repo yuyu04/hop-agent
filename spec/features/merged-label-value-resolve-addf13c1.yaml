@@ -4,6 +4,7 @@ title: "가로 병합 라벨 칸의 값칸 해석 교정 — 병합에 가려진
 status: done
 modules:
   - apps/studio-host/src/core/ai-apply.ts
+  - apps/studio-host/src/core/merged-label-value-resolve.test.ts
 acceptance_criteria:
   - id: AC-a5b8e2fc
     ears: event

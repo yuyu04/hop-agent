@@ -7,6 +7,7 @@ modules:
   - apps/desktop/src-tauri/src/ai/schema.rs
   - apps/desktop/src-tauri/src/ai/mod.rs
   - apps/studio-host/src/core/ai-apply.ts
+  - apps/studio-host/src/core/ai-apply.F-220afd.test.ts
 acceptance_criteria:
   - id: AC-1e8cbf
     ears: event

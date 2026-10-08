@@ -8,6 +8,7 @@ modules:
   - apps/studio-host/src/core/model-catalog.ts
   - apps/studio-host/src/core/tauri-bridge.ts
   - apps/studio-host/src/ui/agent-sidebar.ts
+  - apps/studio-host/src/core/model-catalog.test.ts
 acceptance_criteria:
   - id: AC-acd66837
     ears: event

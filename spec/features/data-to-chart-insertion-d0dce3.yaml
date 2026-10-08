@@ -7,6 +7,7 @@ modules:
   - apps/studio-host/src/ui/agent-sidebar.ts
   - apps/desktop/src-tauri/src/ai/schema.rs
   - apps/desktop/src-tauri/src/ai/mod.rs
+  - apps/studio-host/src/core/chart-render.test.ts
 acceptance_criteria:
   - id: AC-fc97c4
     ears: event

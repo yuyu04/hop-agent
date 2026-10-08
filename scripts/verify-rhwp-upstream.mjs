@@ -29,6 +29,16 @@ import {
   vendorDir,
 } from './lib/rhwp-upstream.mjs';
 
+/**
+ * CI(actions/checkout submodules)는 서브모듈을 얕게(depth 1) 받아 release 커밋까지의 계보가 없다.
+ * 계보 확인에 필요한 만큼만 포크 커밋에서 더 받는다(포크는 release 바로 위 몇 커밋이다).
+ */
+function ensureForkHistory(lock) {
+  const shallow = run('git', ['rev-parse', '--is-shallow-repository'], { cwd: upstreamDir }).trim() === 'true';
+  if (!shallow) return;
+  run('git', ['fetch', '--no-tags', '--depth=64', 'origin', lock.fork.commit], { cwd: upstreamDir });
+}
+
 export async function verifyRhwpUpstream() {
   const lock = await readJson(upstreamLockPath);
   assert.equal(lock.schemaVersion, 1);
@@ -55,6 +65,7 @@ export async function verifyRhwpUpstream() {
   );
   if (lock.fork) {
     // 포크는 공식 release 위에만 올린다 — release 커밋을 조상으로 가져야 한다.
+    ensureForkHistory(lock);
     run('git', ['merge-base', '--is-ancestor', lock.commit, lock.fork.commit], { cwd: upstreamDir });
   }
 

@@ -7,6 +7,8 @@ modules:
   - apps/studio-host/src/core/ai-bridge.ts
   - apps/studio-host/src/ui/agent-sidebar.ts
   - apps/desktop/src-tauri/src/ai/docx.rs
+  - apps/studio-host/src/core/cover-fill.test.ts
+  - apps/studio-host/src/tools/clad-smoke.smoke.ts
 acceptance_criteria:
   - id: AC-8e9b6a9c
     ears: event

@@ -4,17 +4,18 @@
 # Prune the list to the ones you actually want to forbid before committing.
 layers:
   - name: apps
-    modules: ["apps/**"]
-    forbidden_imports: ["desktop:quicklook", "desktop:src-tauri", "scripts", "studio-host:command", "studio-host:core", "studio-host:ui", "studio-host:view", "third_party"]
+    # 우리가 소유한 소스만 — node_modules·target·vendor(WASM 산출물)·rhwp 원본은 제외한다.
+    modules: ["apps/studio-host/src/**", "apps/desktop/src-tauri/src/**", "apps/desktop/rhwp-adapter/src/**", "apps/desktop/quicklook/rust/src/**", "apps/desktop/quicklook/Sources/**"]
+    forbidden_imports: ["desktop:quicklook", "desktop:src-tauri", "scripts", "studio-host:command", "studio-host:core", "studio-host:ui", "studio-host:view"]
   - name: desktop:quicklook
     modules: ["desktop:quicklook/**"]
-    forbidden_imports: ["apps", "desktop:src-tauri", "scripts", "studio-host:command", "studio-host:core", "studio-host:ui", "studio-host:view", "third_party"]
+    forbidden_imports: ["apps", "desktop:src-tauri", "scripts", "studio-host:command", "studio-host:core", "studio-host:ui", "studio-host:view"]
   - name: desktop:src-tauri
     modules: ["desktop:src-tauri/**"]
-    forbidden_imports: ["apps", "desktop:quicklook", "scripts", "studio-host:command", "studio-host:core", "studio-host:ui", "studio-host:view", "third_party"]
+    forbidden_imports: ["apps", "desktop:quicklook", "scripts", "studio-host:command", "studio-host:core", "studio-host:ui", "studio-host:view"]
   - name: scripts
     modules: ["scripts/**"]
-    forbidden_imports: ["apps", "desktop:quicklook", "desktop:src-tauri", "studio-host:command", "studio-host:core", "studio-host:ui", "studio-host:view", "third_party"]
+    forbidden_imports: ["apps", "desktop:quicklook", "desktop:src-tauri", "studio-host:command", "studio-host:core", "studio-host:ui", "studio-host:view"]
   - name: site
     modules: ["site/**"]
     forbidden_imports: []
@@ -23,16 +24,13 @@ layers:
     forbidden_imports: []
   - name: studio-host:command
     modules: ["studio-host:command/**"]
-    forbidden_imports: ["apps", "desktop:quicklook", "desktop:src-tauri", "scripts", "studio-host:core", "studio-host:ui", "studio-host:view", "third_party"]
+    forbidden_imports: ["apps", "desktop:quicklook", "desktop:src-tauri", "scripts", "studio-host:core", "studio-host:ui", "studio-host:view"]
   - name: studio-host:core
     modules: ["studio-host:core/**"]
-    forbidden_imports: ["apps", "desktop:quicklook", "desktop:src-tauri", "scripts", "studio-host:command", "studio-host:ui", "studio-host:view", "third_party"]
+    forbidden_imports: ["apps", "desktop:quicklook", "desktop:src-tauri", "scripts", "studio-host:command", "studio-host:ui", "studio-host:view"]
   - name: studio-host:ui
     modules: ["studio-host:ui/**"]
-    forbidden_imports: ["apps", "desktop:quicklook", "desktop:src-tauri", "scripts", "studio-host:command", "studio-host:core", "studio-host:view", "third_party"]
+    forbidden_imports: ["apps", "desktop:quicklook", "desktop:src-tauri", "scripts", "studio-host:command", "studio-host:core", "studio-host:view"]
   - name: studio-host:view
     modules: ["studio-host:view/**"]
-    forbidden_imports: ["apps", "desktop:quicklook", "desktop:src-tauri", "scripts", "studio-host:command", "studio-host:core", "studio-host:ui", "third_party"]
-  - name: third_party
-    modules: ["third_party/**"]
-    forbidden_imports: ["apps", "desktop:quicklook", "desktop:src-tauri", "scripts", "studio-host:command", "studio-host:core", "studio-host:ui", "studio-host:view"]
+    forbidden_imports: ["apps", "desktop:quicklook", "desktop:src-tauri", "scripts", "studio-host:command", "studio-host:core", "studio-host:ui"]
