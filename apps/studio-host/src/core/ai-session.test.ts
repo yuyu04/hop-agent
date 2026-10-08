@@ -1,3 +1,4 @@
+// 회귀 테스트: 편집 단위별 수락/거절 (per-edit accept/reject) (F-dc4b99).
 import { describe, expect, it, vi } from 'vitest';
 import { AiSessionMachine } from './ai-session';
 

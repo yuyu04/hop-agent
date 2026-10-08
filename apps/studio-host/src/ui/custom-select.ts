@@ -1,3 +1,4 @@
+// 기본 select를 앱 테마에 맞는 사용자 지정 선택 상자로 바꾼다.
 const ENHANCED = Symbol('rhwp-custom-select');
 
 type EnhancedSelect = HTMLSelectElement & {

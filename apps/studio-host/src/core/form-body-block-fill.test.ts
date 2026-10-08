@@ -1,3 +1,4 @@
+// 회귀 테스트: 양식 본문 통셀 채움 (F-4d5d3e00).
 import { describe, it, expect } from 'vitest';
 import {
   buildFormFillMapping,

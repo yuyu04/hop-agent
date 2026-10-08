@@ -1,3 +1,4 @@
+// 회귀 테스트: 채워진 양식의 값칸도 덮어쓰기 (F-f6c643d1).
 import { describe, it, expect } from 'vitest';
 import {
   buildFormFillMapping,

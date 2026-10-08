@@ -1,3 +1,4 @@
+// 회귀 테스트: docx 본문 이미지를 HWP 본문 셀에 삽입 (F-46554fae).
 import { describe, it, expect } from 'vitest';
 import {
   buildFormFillMapping,

@@ -1,3 +1,4 @@
+// 아이콘 툴바·서식 도구 모음의 상태 갱신과 명령 연결.
 import type { CharProperties, EventBus, FontSet, ParaProperties, WasmBridge } from '@/upstream/core';
 import { userSettings } from '@/upstream/core';
 import type { CommandDispatcher } from '@/upstream/commands';

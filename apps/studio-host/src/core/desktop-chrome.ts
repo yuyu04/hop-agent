@@ -1,3 +1,4 @@
+// 플랫폼별 창 장식·단축키 표기(⌘/Ctrl)와 편집기 밖 오른쪽 클릭 메뉴를 맞춘다.
 import { normalizeShortcutLabel, type DesktopPlatform } from './platform';
 
 const NON_EDITOR_CHROME_SELECTOR = '#menu-bar, #icon-toolbar, #style-bar, #status-bar';

@@ -1,3 +1,4 @@
+// 새 버전 알림(자동 업데이트 확인·설치 안내).
 import type { DesktopBridgeApi, DesktopUpdateState } from '@/core/tauri-bridge';
 
 export type UpdateNoticeActions = Partial<

@@ -1,3 +1,4 @@
+// 데스크톱에서 사용자가 추가한 로컬 글꼴을 저장·복원한다.
 import type {
   DetectLocalFontsOptions,
   GetLocalFontsOptions,

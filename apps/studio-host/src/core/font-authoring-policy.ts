@@ -1,3 +1,4 @@
+// 작성에 쓰면 안 되는 글꼴(대체·심볼 등)을 걸러 문서 글꼴 목록을 정리한다.
 const SANS_FALLBACK = '함초롬돋움';
 const SERIF_FALLBACK = '함초롬바탕';
 

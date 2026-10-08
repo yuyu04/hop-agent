@@ -1,3 +1,4 @@
+// 브라우저 로컬 글꼴 접근 API로 설치 글꼴을 찾는다(지원 여부 판별 포함).
 import { upstreamLocalFonts } from '@/upstream/local-fonts';
 import type {
   DetectLocalFontsOptions,

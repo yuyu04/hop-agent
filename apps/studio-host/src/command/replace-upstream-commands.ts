@@ -1,3 +1,4 @@
+// upstream 명령 묶음에서 HOP 구현으로 바꿀 명령만 같은 자리에 갈아 끼운다(ID 중복 금지).
 import type { CommandDef } from '@/upstream/commands';
 
 /** Replaces known upstream commands and fails loudly if an override target disappears. */

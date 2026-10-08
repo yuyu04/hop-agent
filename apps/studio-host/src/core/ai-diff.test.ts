@@ -1,3 +1,4 @@
+// 회귀 테스트: AI 패널이 커서 채팅처럼 보이고 동작한다 (F-15098e10).
 import { describe, expect, it } from 'vitest';
 import { buildDiffModel } from './ai-diff';
 import type { ActionScript, DocumentContext } from './ai-bridge';

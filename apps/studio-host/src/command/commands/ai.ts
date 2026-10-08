@@ -1,3 +1,4 @@
+// AI 편집 패널 열기/닫기 명령(view:ai-panel — 툴바·보기 메뉴·Ctrl/⌘+J 공용).
 import type { CommandDef } from '@/upstream/commands';
 
 /**

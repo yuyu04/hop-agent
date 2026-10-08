@@ -1,3 +1,4 @@
+// upstream 명령 모듈 포트 — HOP 코드는 이 경로로만 rhwp-studio 명령을 쓴다.
 export { CommandRegistry } from '@upstream/command/registry';
 export { CommandDispatcher } from '@upstream/command/dispatcher';
 export type {

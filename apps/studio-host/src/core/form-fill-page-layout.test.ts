@@ -1,3 +1,4 @@
+// 회귀 테스트: 양식 변환 페이지 배치 (F-32a1a7d2).
 import { describe, it, expect } from 'vitest';
 import { buildFormFillEdits, applyActionScript, type FormSourceTable, type WasmEditing } from './ai-apply';
 import type { ActionScript } from './ai-bridge';

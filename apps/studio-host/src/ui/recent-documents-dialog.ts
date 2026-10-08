@@ -1,3 +1,4 @@
+// 최근 문서 목록 대화상자.
 import type { RecentDocument } from '@/core/tauri-bridge';
 
 export function openRecentDocumentsDialog(

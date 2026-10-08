@@ -1,3 +1,4 @@
+// 네이티브가 보내는 문서 열기·창 이벤트를 받아 편집기 상태에 반영한다.
 import type { CommandDispatcher } from '@/upstream/commands';
 import type { EventBus } from '@/upstream/core';
 import { isTauriRuntime } from '@/core/bridge-factory';

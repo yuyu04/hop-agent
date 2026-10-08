@@ -1,3 +1,4 @@
+// upstream 뷰 모듈 포트 — HOP 코드는 이 경로로만 rhwp-studio 뷰를 쓴다.
 export { CanvasPool } from '@upstream/view/canvas-pool';
 export { CanvasView } from '@upstream/view/canvas-view';
 export { CoordinateSystem } from '@upstream/view/coordinate-system';

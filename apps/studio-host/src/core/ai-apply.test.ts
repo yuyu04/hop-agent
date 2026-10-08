@@ -1,3 +1,4 @@
+// 회귀 테스트: AI가 새 문서를 쓸 때 긴 문서도 끝까지 오고, 문서 유형에 맞는 지침·분량·한국 문서 관례로 쓴다 (F-a7b2c7ba).
 import { describe, expect, it } from 'vitest';
 import { applyActionScript, type WasmEditing } from './ai-apply';
 import type { ActionScript } from './ai-bridge';

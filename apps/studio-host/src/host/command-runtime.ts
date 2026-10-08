@@ -1,3 +1,4 @@
+// 명령 레지스트리·디스패처·편집기 컨텍스트를 HOP 의존성으로 조립한다.
 import type { CanvasView } from '@/upstream/view';
 import type { InputHandler } from '@/upstream/editor';
 import {

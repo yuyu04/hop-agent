@@ -1,3 +1,4 @@
+// 인쇄 대화상자 — 쪽 미리보기 SVG를 만들어 OS 인쇄로 넘긴다.
 import type { PageInfo } from '@/upstream/core';
 
 interface PrintableDocument {

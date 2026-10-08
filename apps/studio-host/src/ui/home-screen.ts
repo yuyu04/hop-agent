@@ -1,3 +1,4 @@
+// 문서를 열지 않았을 때의 시작 화면(새 문서·열기·최근 문서).
 import type { DesktopBridgeApi, RecentDocument } from '@/core/tauri-bridge';
 import { parsePreviewSvg } from '@/ui/preview-svg';
 

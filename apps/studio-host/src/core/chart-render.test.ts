@@ -1,3 +1,4 @@
+// 회귀 테스트: 데이터 → 차트 이미지 생성 삽입 (F-d0dce3).
 import { describe, expect, it } from 'vitest';
 import { renderChartToPng, validateChartData, type ChartData } from './chart-render';
 

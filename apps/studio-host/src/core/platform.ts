@@ -1,3 +1,4 @@
+// 실행 중인 데스크톱 플랫폼(macOS/Windows/Linux)을 판별한다.
 export type DesktopPlatform = 'macos' | 'windows' | 'linux' | 'unknown';
 
 type NavigatorLike = Pick<Navigator, 'platform' | 'userAgent'> | undefined;

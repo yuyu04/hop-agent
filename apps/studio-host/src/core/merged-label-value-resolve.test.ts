@@ -1,3 +1,4 @@
+// 회귀 테스트: 가로 병합 라벨 칸의 값칸 해석 교정 (F-addf13c1).
 import { describe, it, expect } from 'vitest';
 import {
   resolveValueCell,

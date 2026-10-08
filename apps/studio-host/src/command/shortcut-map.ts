@@ -1,3 +1,4 @@
+// HOP 단축키 표 — upstream 기본값 위에 HOP 전용(새 창·최근 문서·다른 이름 저장·AI 패널)을 얹는다.
 import {
   defaultShortcuts as upstreamDefaultShortcuts,
 } from '@/upstream/shortcuts';

@@ -1,3 +1,4 @@
+// 회귀 테스트: 글쓰기 스킬은 사용자가 고르지 않는다 (F-fb6592e9).
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AiEventHandlers } from '@/core/ai-bridge';
 

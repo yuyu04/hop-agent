@@ -1,3 +1,4 @@
+// 회귀 테스트: 목차 페이지 분할 (F-85327e55).
 import { describe, it, expect } from 'vitest';
 import {
   chunkTocItems,

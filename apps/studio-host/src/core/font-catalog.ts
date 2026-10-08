@@ -1,3 +1,4 @@
+// 앱에 번들된 글꼴 카탈로그(이름·파일·대체 관계).
 import { filterAuthoringFontFamilies } from './font-authoring-policy';
 
 export interface FontEntry {

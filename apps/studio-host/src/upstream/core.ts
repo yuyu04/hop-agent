@@ -1,3 +1,4 @@
+// upstream 코어 모듈 포트 — HOP 코드는 이 경로로만 rhwp-studio 코어를 쓴다.
 export { WasmBridge } from '@upstream/core/wasm-bridge';
 export { EventBus } from '@upstream/core/event-bus';
 export { DocumentDirtyState } from '@upstream/core/document-dirty-state';

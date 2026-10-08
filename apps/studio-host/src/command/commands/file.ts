@@ -1,3 +1,4 @@
+// HOP 파일 명령 — 새로·열기·최근·저장·다른 이름으로·PDF·인쇄를 데스크톱 네이티브 경로로 처리한다.
 import { fileCommands as upstreamFileCommands } from '@/upstream/commands';
 import type { CommandDef, CommandServices } from '@/upstream/commands';
 import type { DesktopBridgeApi } from '@/core/tauri-bridge';

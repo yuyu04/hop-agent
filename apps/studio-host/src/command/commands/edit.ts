@@ -1,3 +1,4 @@
+// HOP 편집 명령 — 클립보드(오려두기·복사·붙이기)를 표 셀 선택까지 포함해 upstream 구현 대신 쓴다.
 import { editCommands as upstreamEditCommands } from '@/upstream/commands';
 import type { CommandDef, CommandServices } from '@/upstream/commands';
 import type { DocumentPosition } from '@/upstream/core';

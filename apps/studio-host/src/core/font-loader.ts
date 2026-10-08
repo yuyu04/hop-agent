@@ -1,3 +1,4 @@
+// 문서 렌더링용 웹 글꼴을 등록·로드하고 OS 글꼴을 감지한다.
 import { detectLocalFontEntries, ensureLocalFontsAvailable } from './local-fonts';
 import { isAuthoringBlockedFontFamily } from './font-authoring-policy';
 import { FONT_LIST, REGISTERED_FONTS } from './font-catalog';

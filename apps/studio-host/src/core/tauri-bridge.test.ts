@@ -1,3 +1,4 @@
+// 회귀 테스트: AI가 저장하지 않은 화면의 문서(직전 AI 결과 포함)를 그대로 본다 (F-6c323309).
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { hashBytes } from './chunked-fs';
 import { TauriBridge } from './tauri-bridge';

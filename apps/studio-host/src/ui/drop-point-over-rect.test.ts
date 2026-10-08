@@ -1,3 +1,4 @@
+// 회귀 테스트: 문서 첨부 = 네이티브 open 다이얼로그(경로 확보) + 드롭 위치 판정 dpr 관대화 (F-157aa77d).
 import { describe, it, expect } from 'vitest';
 import { dropPointOverRect } from './agent-sidebar';
 

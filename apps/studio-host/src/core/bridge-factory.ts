@@ -1,3 +1,4 @@
+// 실행 환경(Tauri 데스크톱/웹)에 맞는 문서 브리지를 만든다.
 import { WasmBridge } from '@/upstream/core';
 import { TauriBridge } from './tauri-bridge';
 

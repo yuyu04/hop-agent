@@ -1,3 +1,4 @@
+// 제품 정보 대화상자 — upstream 것에 HOP 버전을 덧붙인다.
 import { AboutDialog as UpstreamAboutDialog } from '@/upstream/ui';
 
 export class AboutDialog extends UpstreamAboutDialog {

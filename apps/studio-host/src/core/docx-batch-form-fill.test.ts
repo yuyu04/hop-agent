@@ -1,3 +1,4 @@
+// 회귀 테스트: 연구노트 docx 일괄 변환 (F-beb35fbb).
 import { describe, it, expect } from 'vitest';
 import {
   entryRecordToFormFillEntry,

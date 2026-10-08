@@ -1,3 +1,4 @@
+// HOP 스튜디오 진입점 — 편집기·명령·툴바·데스크톱 이벤트·AI 패널을 조립한다.
 import { createBridge, isTauriRuntime } from '@/core/bridge-factory';
 import {
   applyDesktopChromePlatformState,

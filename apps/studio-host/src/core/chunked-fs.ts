@@ -1,3 +1,4 @@
+// 큰 문서 파일을 청크로 읽고 써서 IPC 한 번에 담기 어려운 크기도 주고받는다.
 import { open as openFs, stat } from '@tauri-apps/plugin-fs';
 
 const FILE_IO_CHUNK_SIZE = 4 * 1024 * 1024;

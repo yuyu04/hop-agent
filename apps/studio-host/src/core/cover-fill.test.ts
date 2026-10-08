@@ -1,3 +1,4 @@
+// 회귀 테스트: docx 표지 메타를 HWP 표지에 채움 (F-1e6d84d6).
 import { describe, it, expect } from 'vitest';
 import {
   pickCoverTable,

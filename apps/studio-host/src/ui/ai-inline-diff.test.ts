@@ -1,3 +1,4 @@
+// 회귀 테스트: 문서 위에서 AI 변경을 커서처럼 검토한다 (F-21ca4efe).
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearInlineDiff, showInlineDiff, type InlineDiffEntry } from './ai-inline-diff';
 

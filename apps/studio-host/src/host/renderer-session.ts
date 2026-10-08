@@ -1,3 +1,4 @@
+// 문서 렌더러 세션(캔버스 렌더 큐) 수명주기를 관리한다.
 import { RendererSession } from '@/upstream/view';
 
 /** Compose rhwp's renderer lifecycle with HOP's fixed Canvas2D product policy. */

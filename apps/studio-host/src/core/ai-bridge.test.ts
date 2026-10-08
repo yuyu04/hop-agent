@@ -1,3 +1,4 @@
+// 회귀 테스트: AI가 문단 번호·정렬·줄간격, 쪽 방향·여백, 자동 쪽 번호, 글꼴·형광펜까지 직접 지정한다 (F-45cee3df).
 import { describe, expect, it } from 'vitest';
 import { interpretAiFailure, parseActionScript } from './ai-bridge';
 

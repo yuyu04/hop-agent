@@ -1,3 +1,4 @@
+// 회귀 테스트: 목차 재생성 (F-9a5045da).
 import { describe, it, expect } from 'vitest';
 import {
   pickTocTable,

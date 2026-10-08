@@ -1,3 +1,4 @@
+// 인쇄 미리보기용 SVG를 안전하게 파싱한다.
 const BLOCKED_PREVIEW_ELEMENTS = 'script, foreignObject, iframe, object, embed, link, meta';
 const URL_ATTRIBUTE_NAMES = new Set(['href', 'xlink:href', 'src']);
 
